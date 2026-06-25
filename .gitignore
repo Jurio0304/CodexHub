@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+src-tauri/target/
+src-tauri/target_check_tmp/
+.toolchains/
+
+# Logs and local state
+*.log
+*.pid
+_tmp_*
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

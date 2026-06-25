@@ -1,0 +1,30 @@
+{
+  "name": "codexhub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "dev:web": "vite --config vite.config.mjs --host 127.0.0.1 --port 1420",
+    "dev:mock": "node ./scripts/mock-dev.mjs",
+    "build": "pnpm build:web && tauri build",
+    "build:web": "vite build --config vite.config.mjs",
+    "preview": "vite preview --config vite.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node ./scripts/smoke-test.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}
