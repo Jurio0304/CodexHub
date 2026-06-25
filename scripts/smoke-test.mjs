@@ -90,8 +90,11 @@ for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Setti
 }
 
 const settings = read("src/settings.ts");
-for (const fontPreset of ["System Default", "Chinese Optimized", "English Optimized", "Cross Platform"]) {
+for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
   if (!settings.includes(fontPreset)) fail(`missing font preset: ${fontPreset}`);
+}
+for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Optimized", "Cross Platform"]) {
+  if (settings.includes(oldFontPreset)) fail(`old font preset should not remain: ${oldFontPreset}`);
 }
 
 const styles = read("src/styles.css");

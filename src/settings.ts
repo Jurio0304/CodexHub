@@ -1,5 +1,5 @@
 ﻿export type ThemeChoice = "system" | "light" | "dark";
-export type FontPreset = "system" | "chinese" | "english" | "cross-platform";
+export type FontPreset = "english" | "zh-cn";
 
 export type AppSettings = {
   theme: ThemeChoice;
@@ -8,7 +8,6 @@ export type AppSettings = {
 
 type FontPresetDefinition = {
   label: string;
-  description: string;
   fontUi: string;
   fontMono: string;
 };
@@ -17,49 +16,29 @@ export const settingsStorageKey = "codexhub.settings.v1";
 
 export const defaultSettings: AppSettings = {
   theme: "system",
-  fontPreset: "system"
+  fontPreset: "english"
 };
 
-const systemUi = '"Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif';
-const systemMono = '"Cascadia Mono", "Cascadia Code", "Consolas", monospace';
-const chineseOptimizedUi = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif';
-const chineseOptimizedMono = '"Cascadia Mono", "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace';
-const englishOptimizedUi = '"Segoe UI Variable", "Segoe UI", "Aptos", system-ui, sans-serif';
-const crossPlatformUi = '"Segoe UI Variable", "Segoe UI", "San Francisco", "Helvetica Neue", "PingFang SC", "Noto Sans", system-ui, sans-serif';
+const uiFont = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif';
+const monoFont = '"Cascadia Mono", "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace';
 
 export const fontPresets: Record<FontPreset, FontPresetDefinition> = {
-  system: {
-    label: "System Default",
-    description: "Follow the Windows system UI stack with a safe monospace default.",
-    fontUi: systemUi,
-    fontMono: systemMono
-  },
-  chinese: {
-    label: "Chinese Optimized",
-    description: "Prioritize Microsoft YaHei for clearer Simplified Chinese labels.",
-    fontUi: chineseOptimizedUi,
-    fontMono: chineseOptimizedMono
-  },
   english: {
-    label: "English Optimized",
-    description: "Favor Segoe UI Variable and Aptos for English-heavy workflows.",
-    fontUi: englishOptimizedUi,
-    fontMono: systemMono
+    label: "English",
+    fontUi: uiFont,
+    fontMono: monoFont
   },
-  "cross-platform": {
-    label: "Cross Platform",
-    description: "Use a broader fallback stack for machines that move between platforms.",
-    fontUi: crossPlatformUi,
-    fontMono: systemMono
+  "zh-cn": {
+    label: "简体中文",
+    fontUi: uiFont,
+    fontMono: monoFont
   }
 };
 
 const themeValues: ThemeChoice[] = ["system", "light", "dark"];
 
 function normalizeFontPreset(value: unknown): FontPreset {
-  if (value === "chinese" || value === "english" || value === "cross-platform") return value;
-  if (value === "zh-cn") return "chinese";
-  return "system";
+  return value === "zh-cn" ? "zh-cn" : "english";
 }
 
 export function normalizeSettings(value: unknown): AppSettings {
@@ -100,11 +79,11 @@ export function applyThemeChoice(theme: ThemeChoice) {
 }
 
 export function applyFontPreset(fontPreset: FontPreset) {
-  const preset = fontPresets[fontPreset] ?? fontPresets.system;
+  const preset = fontPresets[fontPreset] ?? fontPresets.english;
   const root = document.documentElement;
   root.style.setProperty("--font-ui", preset.fontUi);
   root.style.setProperty("--font-mono", preset.fontMono);
-  root.setAttribute("lang", fontPreset === "chinese" ? "zh-CN" : "en");
+  root.setAttribute("lang", fontPreset === "zh-cn" ? "zh-CN" : "en");
 }
 
 export function applyAppSettings(settings: AppSettings) {

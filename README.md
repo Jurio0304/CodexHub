@@ -18,7 +18,7 @@ Window 2 adds local Windows SSH initialization and SSH config management on top 
 - macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
 - Dashboard server matrix with mock host data, empty-state handling, an Add Server entry, and recent task cards.
 - Light/dark mode support with native-feeling cards, tables, and status badges.
-- Settings / Appearance includes System Default, Chinese Optimized, English Optimized, and Cross Platform font presets.
+- Settings / Appearance includes a three-button theme control plus English / 简体中文 global font and language presets.
 - Settings / Local SSH detects Ed25519 and RSA keys, can generate a non-overwriting Ed25519 key, and shows/copies public keys only.
 - Hosts can add, update, and delete CodexHub-managed blocks in `%USERPROFILE%\.ssh\config` with timestamped backups and unmanaged block preservation.
 - Mock Tauri commands remain for profile, skill-pack, task, and connection-test data until remote SSH/SFTP is connected.
@@ -80,7 +80,7 @@ The SSH key and SSH config commands are real Windows local filesystem operations
 
 ## Settings Persistence
 
-Appearance settings are applied immediately. In the desktop app, `get_settings` and `save_settings` persist the selected theme and font preset to the Tauri app config directory. In web-only mode, the same values fall back to `localStorage` under `codexhub.settings.v1`; this fallback can be migrated to a shared backend settings store later.
+Appearance settings are applied immediately. In the desktop app, `get_settings` and `save_settings` persist the selected theme and English / 简体中文 font-language preset to the Tauri app config directory. In web-only mode, the same values fall back to `localStorage` under `codexhub.settings.v1`; this fallback can be migrated to a shared backend settings store later.
 
 ## Web-Only Dev
 
