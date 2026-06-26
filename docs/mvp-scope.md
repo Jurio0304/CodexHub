@@ -12,10 +12,11 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Windows-first UI and local smoke/mock mode.
 - Local server inventory model.
 - Read-only parsing of `%USERPROFILE%\.ssh\config`.
+- Read-only auto-import of safe existing SSH `Host` aliases into CodexHub inventory.
 - Optional SSH host-block generator.
 - Optional append/update of CodexHub-managed SSH config blocks with backup.
 - SSH connectivity check through Windows OpenSSH.
-- Remote Codex probe: `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
+- Remote system and Codex probe: OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
 - Remote `~/.codex/config.toml` read, diff, backup, render, and replace.
 - Local profile templates rendered to remote config.
 - Remote `~/.codex/skills/` sync for selected skill folders.

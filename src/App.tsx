@@ -7,6 +7,10 @@ import type {
   HostStatus,
   Profile,
   SkillPack,
+  SshBootstrapProgressEvent,
+  SshBootstrapResult,
+  SshBootstrapStep,
+  SshBootstrapStepStatus,
   SshConfigHost,
   SshHostDraft,
   SshKeyInfo,
@@ -19,6 +23,7 @@ import type { AppSettings, FontPreset, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
 type Locale = "en" | "zh";
+type HostBusyAction = "test" | "probe" | "bootstrap";
 
 const uiCopy = {
   en: {
@@ -105,12 +110,13 @@ const uiCopy = {
     hosts: {
       sshManager: "SSH config manager",
       addServerTitle: "Add server",
+      addCodexHubHost: "Add SSH Host",
       writesTo: "Writes to",
       userOwnedPreserved: "User-owned blocks are preserved.",
       localPathsLoaded: "local paths loaded",
       webPreview: "web preview",
-      formIntro: "CodexHub writes only managed Host blocks and backs up existing config first.",
-      writing: "Writing SSH config...",
+      formIntro: "Enter the remote password once. CodexHub logs in, installs your local public key, sets permissions, then tests ssh HostAlias. Passwords are never stored.",
+      writing: "Connecting...",
       savedHost: (alias: string) => `Saved Host ${alias}.`,
       editingHost: (alias: string) => `Editing managed Host ${alias}. Submit with the same alias to update it in place.`,
       deleteConfirm: (alias: string) => `Delete CodexHub-managed Host ${alias} from SSH config?`,
@@ -120,18 +126,43 @@ const uiCopy = {
       port: "Port",
       user: "User",
       identityFile: "IdentityFile",
+      bootstrapPassword: "One-time password",
+      bootstrapPasswordHelp: "Optional. Used once to log in, append your public key to ~/.ssh/authorized_keys, then test key login.",
+      cancel: "Cancel",
       saving: "Saving...",
-      writeSshConfig: "Write SSH Config",
+      writeSshConfig: "Connect",
       reset: "Reset",
       codexhubManaged: "CodexHub managed",
       sshHostBlocks: "SSH Host blocks",
       repeatedSaves: "Repeated saves update the same alias instead of appending duplicates.",
       newHost: "New Host",
       noManagedHosts: "No managed SSH hosts",
-      noManagedHostsBody: "Add a server above to create the first CodexHub-managed block in SSH config.",
+      noManagedHostsBody: "Click Add Server in the Hosts header to connect and create the first CodexHub-managed block in SSH config.",
+      detectedSshHosts: "Detected SSH hosts",
+      detectedSshHostsBody: "CodexHub scans local SSH config in read-only mode and imports safe HostAlias entries into the inventory.",
+      refreshDetected: "Refresh detected hosts",
+      readOnlySource: "read-only",
+      source: "Source",
+      probe: "Probe",
+      probing: "Probing...",
+      bootstrapping: "Bootstrapping...",
+      testing: "Testing...",
+      details: "Host details",
+      detailsBody: "Connection status and remote Codex readiness from the latest test or probe.",
+      sshStatus: "SSH status",
+      arch: "Arch",
+      shell: "Shell",
+      pathLocalBin: "PATH has ~/.local/bin",
+      codexInstalled: "Codex installed",
+      codexVersion: "Codex version",
+      configExists: "Config exists",
+      skillsCount: "Skills count",
+      yes: "Yes",
+      no: "No",
+      unknown: "Unknown",
       mockInventory: "Mock inventory",
       existingHosts: "Existing app hosts",
-      mockInventoryBody: "These rows still exercise list_hosts, delete_host, and test_ssh_connection while real config management lands.",
+      mockInventoryBody: "Inventory rows combine discovered SSH config hosts, CodexHub-managed hosts, and mock rows in web mode.",
       alias: "Alias",
       name: "Name",
       endpoint: "Endpoint",
@@ -174,11 +205,20 @@ const uiCopy = {
       taskLog: "TaskLog",
       noTask: "No task",
       noLogs: "No logs yet.",
+      command: "Command",
+      stdout: "stdout",
+      stderr: "stderr",
+      exitCode: "Exit",
+      duration: "Duration",
+      timedOut: "Timed out",
+      noOutput: "(no output)",
       actionLabels: {
         "Apply profile": "Apply profile",
         "Test SSH connection": "Test SSH connection",
+        "Bootstrap SSH key": "Bootstrap SSH key",
         "Sync skill pack": "Sync skill pack",
-        "Preview profile": "Preview profile"
+        "Preview profile": "Preview profile",
+        "Probe remote system": "Probe remote system"
       }
     },
     settings: {
@@ -247,9 +287,9 @@ const uiCopy = {
     ] satisfies Array<{ id: SectionId; label: string; description: string }>,
     sections: {
       dashboard: {
-        title: "控制台",
+        title: "控制面板",
         eyebrow: "仪表盘",
-        body: "用于第一版 CodexHub 桌面壳的 mock SSH 清单、配置状态和最近操作。"
+        body: "用于 CodexHub 桌面壳的 SSH 清单、配置状态和最近操作。"
       },
       hosts: {
         title: "主机",
@@ -259,7 +299,7 @@ const uiCopy = {
       profiles: {
         title: "配置",
         eyebrow: "Codex 配置",
-        body: "为远程 ~/.codex/config.toml 草拟受管理的配置预设。"
+        body: "为远端 ~/.codex/config.toml 草拟受管理的配置预设。"
       },
       skills: {
         title: "技能",
@@ -269,7 +309,7 @@ const uiCopy = {
       tasks: {
         title: "任务",
         eyebrow: "任务运行",
-        body: "跟踪 mock 后端命令、生成日志和待处理主机操作。"
+        body: "跟踪后端命令、生成日志和待处理主机操作。"
       },
       settings: {
         title: "设置",
@@ -309,7 +349,7 @@ const uiCopy = {
       wrapper: "包装器",
       serverMatrix: "服务器矩阵",
       mockHosts: "Mock 主机",
-      matrixBody: "清单卡片用于展示未来 SSH 连接矩阵的结构。",
+      matrixBody: "清单卡片用于展示 SSH 连接矩阵的结构。",
       noHosts: "还没有主机",
       noHostsBody: "添加第一个 SSH 目标后会填充服务器矩阵。",
       noSkillPacks: "无技能包",
@@ -318,14 +358,15 @@ const uiCopy = {
       viewAll: "查看全部"
     },
     hosts: {
-      sshManager: "SSH 配置管理",
+      sshManager: "SSH 连接管理",
       addServerTitle: "添加服务器",
+      addCodexHubHost: "新增 SSH Host",
       writesTo: "写入",
       userOwnedPreserved: "用户已有配置块会被保留。",
       localPathsLoaded: "本地路径已加载",
       webPreview: "网页预览",
-      formIntro: "CodexHub 只写入受管理的 Host 块，并会先备份现有配置。",
-      writing: "正在写入 SSH config...",
+      formIntro: "输入一次远端密码。CodexHub 会登录远端、安装本地公钥、设置权限，并用 ssh Host 别名测试；密码不会保存。",
+      writing: "正在连接...",
       savedHost: (alias: string) => `已保存 Host ${alias}。`,
       editingHost: (alias: string) => `正在编辑受管理的 Host ${alias}。用相同别名提交会原地更新。`,
       deleteConfirm: (alias: string) => `确定要从 SSH config 删除 CodexHub 管理的 Host ${alias} 吗？`,
@@ -335,18 +376,43 @@ const uiCopy = {
       port: "端口",
       user: "用户",
       identityFile: "IdentityFile",
+      bootstrapPassword: "一次性密码",
+      bootstrapPasswordHelp: "可选。仅用于首次登录，把本地公钥追加到远端 ~/.ssh/authorized_keys，然后测试密钥登录。",
+      cancel: "取消",
       saving: "保存中...",
-      writeSshConfig: "写入 SSH Config",
+      writeSshConfig: "连接",
       reset: "重置",
       codexhubManaged: "CodexHub 管理",
       sshHostBlocks: "SSH Host 块",
       repeatedSaves: "重复保存会更新同一别名，不会追加重复块。",
       newHost: "新建 Host",
       noManagedHosts: "没有受管理的 SSH 主机",
-      noManagedHostsBody: "在上方添加服务器后，会在 SSH config 中创建第一个 CodexHub 管理块。",
+      noManagedHostsBody: "点击主机页右上角“添加服务器”，连接成功后会创建第一个 CodexHub 管理块。",
+      detectedSshHosts: "已检测 SSH hosts",
+      detectedSshHostsBody: "CodexHub 只读扫描本地 SSH config，并把安全的 HostAlias 自动加入清单。",
+      refreshDetected: "刷新检测",
+      readOnlySource: "只读",
+      source: "来源",
+      probe: "探测",
+      probing: "探测中...",
+      bootstrapping: "连接中...",
+      testing: "测试中...",
+      details: "主机详情",
+      detailsBody: "展示最近一次测试或探测得到的连接状态与远端 Codex 就绪度。",
+      sshStatus: "SSH 状态",
+      arch: "架构",
+      shell: "Shell",
+      pathLocalBin: "PATH 含 ~/.local/bin",
+      codexInstalled: "Codex 已安装",
+      codexVersion: "Codex 版本",
+      configExists: "Config 存在",
+      skillsCount: "Skills 数量",
+      yes: "是",
+      no: "否",
+      unknown: "未知",
       mockInventory: "Mock 清单",
       existingHosts: "现有应用主机",
-      mockInventoryBody: "这些行仍用于验证 list_hosts、delete_host 和 test_ssh_connection，直到真实配置管理完成接入。",
+      mockInventoryBody: "清单行合并自动发现的 SSH config hosts、CodexHub 管理 hosts 和 web 模式 mock rows。",
       alias: "别名",
       name: "名称",
       endpoint: "端点",
@@ -380,7 +446,7 @@ const uiCopy = {
     tasks: {
       runs: "运行",
       taskHistory: "任务历史",
-      body: "Mock TaskRun 行用于展示本地任务模型和未来工作队列。",
+      body: "TaskRun 行用于展示本地任务模型和工作队列。",
       action: "操作",
       host: "主机",
       status: "状态",
@@ -389,11 +455,20 @@ const uiCopy = {
       taskLog: "任务日志",
       noTask: "无任务",
       noLogs: "暂无日志。",
+      command: "命令",
+      stdout: "stdout",
+      stderr: "stderr",
+      exitCode: "退出码",
+      duration: "耗时",
+      timedOut: "超时",
+      noOutput: "（无输出）",
       actionLabels: {
         "Apply profile": "应用配置",
         "Test SSH connection": "测试 SSH 连接",
+        "Bootstrap SSH key": "配置 SSH 密钥",
         "Sync skill pack": "同步技能包",
-        "Preview profile": "预览配置"
+        "Preview profile": "预览配置",
+        "Probe remote system": "探测远端系统"
       }
     },
     settings: {
@@ -467,15 +542,22 @@ function App() {
   const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
   const [loading, setLoading] = useState(true);
   const [sshBusy, setSshBusy] = useState(false);
+  const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
+  const [hostModalOpen, setHostModalOpen] = useState(false);
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
 
   const refreshSshState = async () => {
-    const [nextSshStatus, nextSshConfigHosts] = await Promise.all([api.getSshStatus(), api.listSshConfigHosts()]);
+    const [nextSshStatus, nextSshConfigHosts, nextHosts] = await Promise.all([
+      api.getSshStatus(),
+      api.listSshConfigHosts(),
+      api.refreshDiscoveredHosts()
+    ]);
     setSshStatus(nextSshStatus);
     setSshConfigHosts(nextSshConfigHosts);
+    setHosts(nextHosts);
   };
 
   useEffect(() => {
@@ -528,6 +610,7 @@ function App() {
 
   const handleAddHost = () => {
     setActiveSection("hosts");
+    setHostModalOpen(true);
     setNotice(copy.notices.addHost);
   };
 
@@ -539,10 +622,58 @@ function App() {
     setNotice(copy.notices.mockHostRemoved(host?.name ?? copy.common.host));
   };
 
-  const handleSaveSshConfigHost = async (draft: SshHostDraft) => {
-    const result = await api.upsertSshConfigHost(draft);
-    await refreshSshState();
-    setNotice(result.backupPath ? `${result.message} Backup: ${result.backupPath}` : result.message);
+  const handleConnectSshHost = async (
+    draft: SshHostDraft,
+    password: string,
+    requestId: string,
+    onProgress: (event: SshBootstrapProgressEvent) => void
+  ): Promise<SshBootstrapResult> => {
+    const hostAlias = draft.alias || draft.hostName;
+    setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
+    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+
+    try {
+      const result = await api.connectSshHost(draft, password, requestId, onProgress);
+      setTasks((current) => [result.task, ...current]);
+      setNotice(result.message);
+      if (!result.ok) {
+        if (result.writeResult.action === "rolled_back") {
+          await refreshSshState();
+        }
+        setHosts((current) =>
+          current.map((host) =>
+            host.hostAlias === result.hostAlias
+              ? {
+                  ...host,
+                  status: "offline",
+                  latencyMs: null
+                }
+              : host
+          )
+        );
+        return result;
+      }
+      await refreshSshState();
+      setHosts((current) =>
+        current.map((host) =>
+          host.hostAlias === result.hostAlias
+            ? {
+                ...host,
+                status: "online",
+                latencyMs: result.latencyMs,
+                lastSeen: copy.common.justNow
+              }
+            : host
+        )
+      );
+      return result;
+    } finally {
+      setHostBusy((current) => {
+        const next = { ...current };
+        delete next[hostAlias];
+        return next;
+      });
+    }
   };
 
   const handleDeleteSshConfigHost = async (alias: string) => {
@@ -574,14 +705,21 @@ function App() {
     }
   };
 
-  const handleTestHost = async (id: string) => {
-    const target = hosts.find((host) => host.id === id);
-    setHosts((current) => current.map((host) => (host.id === id ? { ...host, status: "testing" } : host)));
+  const handleRefreshDetectedHosts = async () => {
+    await refreshSshState();
+    setNotice(copy.hosts.detectedSshHostsBody);
+  };
 
-    const result = await api.testSshConnection(id);
+  const handleTestHost = async (idOrAlias: string) => {
+    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+    const hostAlias = target?.hostAlias ?? idOrAlias;
+    setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
+    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+
+    const result = await api.sshCheck(hostAlias);
     setHosts((current) =>
       current.map((host) =>
-        host.id === id
+        host.hostAlias === result.hostAlias
           ? {
               ...host,
               status: result.ok ? "online" : "offline",
@@ -591,7 +729,84 @@ function App() {
           : host
       )
     );
-    setNotice(`${target?.name ?? "Host"}: ${result.message}`);
+    setTasks((current) => [result.task, ...current]);
+    setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
+    setHostBusy((current) => {
+      const next = { ...current };
+      delete next[hostAlias];
+      return next;
+    });
+  };
+
+  const handleBootstrapExistingHost = async (idOrAlias: string, password: string) => {
+    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+    const hostAlias = target?.hostAlias ?? idOrAlias;
+    setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
+    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+
+    try {
+      const result = await api.bootstrapExistingSshHost(hostAlias, password);
+      await refreshSshState();
+      setHosts((current) =>
+        current.map((host) =>
+          host.hostAlias === result.hostAlias
+            ? {
+                ...host,
+                status: result.ok ? "online" : "offline",
+                latencyMs: result.latencyMs,
+                lastSeen: result.ok ? copy.common.justNow : host.lastSeen
+              }
+            : host
+        )
+      );
+      setTasks((current) => [result.task, ...current]);
+      setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
+      if (!result.ok) throw new Error(result.message);
+      return result.message;
+    } finally {
+      setHostBusy((current) => {
+        const next = { ...current };
+        delete next[hostAlias];
+        return next;
+      });
+    }
+  };
+
+  const handleProbeHost = async (idOrAlias: string) => {
+    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+    const hostAlias = target?.hostAlias ?? idOrAlias;
+    setHostBusy((current) => ({ ...current, [hostAlias]: "probe" }));
+    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+
+    const result = await api.remoteProbeCodex(hostAlias);
+    setHosts((current) =>
+      current.map((host) =>
+        host.hostAlias === result.hostAlias
+          ? {
+              ...host,
+              status: result.sshStatus,
+              os: result.os,
+              arch: result.arch,
+              shell: result.shell,
+              path: result.path,
+              pathHasLocalBin: result.pathHasLocalBin,
+              codexInstalled: result.codexInstalled,
+              codexVersion: result.codexVersion,
+              configExists: result.configExists,
+              skillsExists: result.skillsExists,
+              skillsCount: result.skillsCount,
+              lastSeen: result.sshStatus === "online" ? copy.common.justNow : host.lastSeen
+            }
+          : host
+      )
+    );
+    setTasks((current) => [result.task, ...current]);
+    setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
+    setHostBusy((current) => {
+      const next = { ...current };
+      delete next[hostAlias];
+      return next;
+    });
   };
 
   const handleApplyProfile = async (profileId: string) => {
@@ -623,6 +838,7 @@ function App() {
             activeTasks={activeTasks}
             copy={copy}
             health={health}
+            hostBusy={hostBusy}
             hosts={hosts}
             loading={loading}
             notice={notice}
@@ -632,7 +848,7 @@ function App() {
             tasks={tasks}
             profileById={profileById}
             skillPackById={skillPackById}
-            onAddHost={handleAddHost}
+            onProbeHost={handleProbeHost}
             onSelectSection={setActiveSection}
             onTestHost={handleTestHost}
           />
@@ -642,14 +858,21 @@ function App() {
           <HostsView
             copy={copy}
             hosts={hosts}
+            hostBusy={hostBusy}
             profileById={profileById}
             skillPackById={skillPackById}
             sshConfigHosts={sshConfigHosts}
             sshStatus={sshStatus}
-            onAddHost={handleAddHost}
+            addHostOpen={hostModalOpen}
+            sshBusy={sshBusy}
+            onCloseAddHost={() => setHostModalOpen(false)}
+            onConnectSshHost={handleConnectSshHost}
             onDeleteHost={handleDeleteHost}
             onDeleteSshConfigHost={handleDeleteSshConfigHost}
-            onSaveSshConfigHost={handleSaveSshConfigHost}
+            onGenerateEd25519Key={handleGenerateEd25519Key}
+            onOpenAddHost={handleAddHost}
+            onProbeHost={handleProbeHost}
+            onRefreshDetectedHosts={handleRefreshDetectedHosts}
             onTestHost={handleTestHost}
           />
         );
@@ -717,7 +940,9 @@ function App() {
           </div>
           <div className="topActions">
             <Badge tone={health.mode === "tauri" ? "green" : "gray"}>{health.mode}</Badge>
-            <button className="primaryButton" type="button" onClick={handleAddHost}>{copy.common.addServer}</button>
+            {activeSection === "hosts" ? (
+              <button className="primaryButton" type="button" onClick={handleAddHost}>{copy.common.addServer}</button>
+            ) : null}
           </div>
         </header>
 
@@ -731,6 +956,7 @@ function DashboardView({
   activeTasks,
   copy,
   health,
+  hostBusy,
   hosts,
   loading,
   notice,
@@ -740,13 +966,14 @@ function DashboardView({
   skillPackById,
   skillPacks,
   tasks,
-  onAddHost,
+  onProbeHost,
   onSelectSection,
   onTestHost
 }: {
   activeTasks: number;
   copy: UICopy;
   health: Health;
+  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   loading: boolean;
   notice: string;
@@ -756,7 +983,7 @@ function DashboardView({
   skillPackById: Map<string, SkillPack>;
   skillPacks: SkillPack[];
   tasks: TaskRun[];
-  onAddHost: () => void;
+  onProbeHost: (id: string) => void;
   onSelectSection: (section: SectionId) => void;
   onTestHost: (id: string) => void;
 }) {
@@ -781,7 +1008,7 @@ function DashboardView({
         </div>
       </section>
 
-      <ServerMatrix copy={copy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} onAddHost={onAddHost} onTestHost={onTestHost} />
+      <ServerMatrix copy={copy} hostBusy={hostBusy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} onProbeHost={onProbeHost} onTestHost={onTestHost} />
       <RecentTasks copy={copy} tasks={tasks} onViewAll={() => onSelectSection("tasks")} />
     </div>
   );
@@ -799,17 +1026,19 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
 
 function ServerMatrix({
   copy,
+  hostBusy,
   hosts,
   profileById,
   skillPackById,
-  onAddHost,
+  onProbeHost,
   onTestHost
 }: {
   copy: UICopy;
+  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   profileById: Map<string, Profile>;
   skillPackById: Map<string, SkillPack>;
-  onAddHost: () => void;
+  onProbeHost: (id: string) => void;
   onTestHost: (id: string) => void;
 }) {
   return (
@@ -820,7 +1049,6 @@ function ServerMatrix({
           <h2>{copy.dashboard.mockHosts}</h2>
           <p>{copy.dashboard.matrixBody}</p>
         </div>
-        <button className="secondaryButton" type="button" onClick={onAddHost}>{copy.common.addServer}</button>
       </div>
 
       {hosts.length === 0 ? (
@@ -828,7 +1056,6 @@ function ServerMatrix({
           <div className="emptyIcon" aria-hidden="true" />
           <h3>{copy.dashboard.noHosts}</h3>
           <p>{copy.dashboard.noHostsBody}</p>
-          <button className="primaryButton" type="button" onClick={onAddHost}>{copy.common.addServer}</button>
         </div>
       ) : (
         <div className="matrixGrid">
@@ -845,11 +1072,11 @@ function ServerMatrix({
               <dl className="hostMeta">
                 <div>
                   <dt>{copy.hosts.os}</dt>
-                  <dd>{host.os}</dd>
+                  <dd>{host.os}{host.arch && host.arch !== "Unknown" ? ` / ${host.arch}` : ""}</dd>
                 </div>
                 <div>
                   <dt>{copy.hosts.codex}</dt>
-                  <dd>{host.codexVersion}</dd>
+                  <dd>{formatBoolean(host.codexInstalled, copy)} · {host.codexVersion}</dd>
                 </div>
                 <div>
                   <dt>{copy.hosts.profile}</dt>
@@ -869,7 +1096,14 @@ function ServerMatrix({
                 {host.skillPackIds.length > 0 ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ") : copy.dashboard.noSkillPacks}
               </div>
 
-              <button className="tertiaryButton" type="button" onClick={() => onTestHost(host.id)}>{copy.hosts.testSsh}</button>
+              <div className="hostCardActions">
+                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onTestHost(host.hostAlias)}>
+                  {hostBusy[host.hostAlias] === "test" ? copy.hosts.testing : copy.hosts.testSsh}
+                </button>
+                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onProbeHost(host.hostAlias)}>
+                  {hostBusy[host.hostAlias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
+                </button>
+              </div>
             </article>
           ))}
         </div>
@@ -905,136 +1139,96 @@ function RecentTasks({ copy, tasks, onViewAll }: { copy: UICopy; tasks: TaskRun[
 }
 
 function HostsView({
+  addHostOpen,
   copy,
+  hostBusy,
   hosts,
   profileById,
   skillPackById,
+  sshBusy,
   sshConfigHosts,
   sshStatus,
-  onAddHost,
+  onCloseAddHost,
+  onConnectSshHost,
   onDeleteHost,
   onDeleteSshConfigHost,
-  onSaveSshConfigHost,
+  onGenerateEd25519Key,
+  onOpenAddHost,
+  onProbeHost,
+  onRefreshDetectedHosts,
   onTestHost
 }: {
+  addHostOpen: boolean;
   copy: UICopy;
+  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   profileById: Map<string, Profile>;
   skillPackById: Map<string, SkillPack>;
+  sshBusy: boolean;
   sshConfigHosts: SshConfigHost[];
   sshStatus: SshStatus | null;
-  onAddHost: () => void;
+  onCloseAddHost: () => void;
+  onConnectSshHost: (draft: SshHostDraft, password: string, requestId: string, onProgress: (event: SshBootstrapProgressEvent) => void) => Promise<SshBootstrapResult>;
   onDeleteHost: (id: string) => void;
   onDeleteSshConfigHost: (alias: string) => Promise<void>;
-  onSaveSshConfigHost: (draft: SshHostDraft) => Promise<void>;
+  onGenerateEd25519Key: () => Promise<void>;
+  onOpenAddHost: () => void;
+  onProbeHost: (id: string) => void;
+  onRefreshDetectedHosts: () => Promise<void>;
   onTestHost: (id: string) => void;
 }) {
-  const defaultIdentityFile = sshStatus?.preferredIdentityFile ?? "%USERPROFILE%\\.ssh\\id_ed25519";
-  const [draft, setDraft] = useState<SshHostDraft>(() => emptySshHostDraft(defaultIdentityFile));
-  const [saving, setSaving] = useState(false);
-  const [formMessage, setFormMessage] = useState<string>(copy.hosts.formIntro);
+  const identityFile = sshStatus?.ed25519.privateExists ? sshStatus.ed25519.privatePath : "";
+  const [selectedHostAlias, setSelectedHostAlias] = useState<string | null>(hosts[0]?.hostAlias ?? null);
+  const [editingDraft, setEditingDraft] = useState<SshHostDraft | null>(null);
+  const selectedHost = hosts.find((host) => host.hostAlias === selectedHostAlias) ?? hosts[0] ?? null;
 
   useEffect(() => {
-    setDraft((current) => (current.identityFile ? current : { ...current, identityFile: defaultIdentityFile }));
-  }, [defaultIdentityFile]);
+    if (!selectedHostAlias && hosts[0]) setSelectedHostAlias(hosts[0].hostAlias);
+  }, [hosts, selectedHostAlias]);
 
   useEffect(() => {
-    setFormMessage(copy.hosts.formIntro);
-  }, [copy.hosts.formIntro]);
-
-  const updateDraft = (key: keyof SshHostDraft, value: string | number) => {
-    setDraft((current) => ({ ...current, [key]: value }));
-  };
-
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setSaving(true);
-    setFormMessage(copy.hosts.writing);
-    try {
-      await onSaveSshConfigHost(draft);
-      setFormMessage(copy.hosts.savedHost(draft.alias));
-      setDraft(emptySshHostDraft(defaultIdentityFile));
-    } catch (error) {
-      setFormMessage(formatError(error));
-    } finally {
-      setSaving(false);
-    }
-  };
+    if (!addHostOpen) setEditingDraft(null);
+  }, [addHostOpen]);
 
   const handleEdit = (host: SshConfigHost) => {
-    setDraft({
+    setEditingDraft({
       alias: host.alias,
       hostName: host.hostName,
       port: host.port,
       user: host.user,
-      identityFile: host.identityFile
+      identityFile: host.identityFile || identityFile
     });
-    setFormMessage(copy.hosts.editingHost(host.alias));
+    onOpenAddHost();
   };
 
   const handleDelete = async (alias: string) => {
     const confirmed = window.confirm(copy.hosts.deleteConfirm(alias));
     if (!confirmed) return;
-    setSaving(true);
-    try {
-      await onDeleteSshConfigHost(alias);
-      setFormMessage(copy.hosts.deletedHost(alias));
-    } catch (error) {
-      setFormMessage(formatError(error));
-    } finally {
-      setSaving(false);
-    }
+    await onDeleteSshConfigHost(alias);
   };
 
   return (
     <div className="hostsGrid">
-      <section className="panel spanWide">
-        <div className="panelHeader">
-          <div>
-            <div className="eyebrow">{copy.hosts.sshManager}</div>
-            <h2>{copy.hosts.addServerTitle}</h2>
-            <p>{copy.hosts.writesTo} {sshStatus?.configPath ?? "%USERPROFILE%\\.ssh\\config"}. {copy.hosts.userOwnedPreserved}</p>
-          </div>
-          <Badge tone={sshStatus ? "green" : "gray"}>{sshStatus ? copy.hosts.localPathsLoaded : copy.hosts.webPreview}</Badge>
-        </div>
-
-        <form className="sshForm" onSubmit={handleSubmit}>
-          <label className="fieldGroup compactField">
-            <span>{copy.hosts.hostAlias}</span>
-            <input value={draft.alias} onChange={(event) => updateDraft("alias", event.target.value)} placeholder="lab-box" required />
-          </label>
-          <label className="fieldGroup compactField">
-            <span>{copy.hosts.hostName}</span>
-            <input value={draft.hostName} onChange={(event) => updateDraft("hostName", event.target.value)} placeholder="192.168.31.50" required />
-          </label>
-          <label className="fieldGroup compactField">
-            <span>{copy.hosts.port}</span>
-            <input min={1} max={65535} type="number" value={draft.port} onChange={(event) => updateDraft("port", Number(event.target.value))} required />
-          </label>
-          <label className="fieldGroup compactField">
-            <span>{copy.hosts.user}</span>
-            <input value={draft.user} onChange={(event) => updateDraft("user", event.target.value)} placeholder="codex" required />
-          </label>
-          <label className="fieldGroup compactField identityField">
-            <span>{copy.hosts.identityFile}</span>
-            <input value={draft.identityFile} onChange={(event) => updateDraft("identityFile", event.target.value)} required />
-          </label>
-          <div className="formActions">
-            <button className="primaryButton" disabled={saving} type="submit">{saving ? copy.hosts.saving : copy.hosts.writeSshConfig}</button>
-            <button className="secondaryButton" type="button" onClick={() => setDraft(emptySshHostDraft(defaultIdentityFile))}>{copy.hosts.reset}</button>
-          </div>
-        </form>
-        <p className="mutedText">{formMessage}</p>
-      </section>
+      <SshHostModal
+        copy={copy}
+        defaultIdentityFile={identityFile}
+        initialDraft={editingDraft}
+        open={addHostOpen}
+        sshBusy={sshBusy}
+        sshStatus={sshStatus}
+        onClose={onCloseAddHost}
+        onConnect={onConnectSshHost}
+        onGenerateEd25519Key={onGenerateEd25519Key}
+      />
 
       <section className="panel spanWide">
         <div className="panelHeader">
           <div>
             <div className="eyebrow">{copy.hosts.codexhubManaged}</div>
-            <h2>{copy.hosts.sshHostBlocks}</h2>
-            <p>{copy.hosts.repeatedSaves}</p>
+            <h2>{copy.hosts.detectedSshHosts}</h2>
+            <p>{copy.hosts.detectedSshHostsBody}</p>
           </div>
-          <button className="secondaryButton" type="button" onClick={onAddHost}>{copy.hosts.newHost}</button>
+          <button className="secondaryButton" type="button" onClick={() => void onRefreshDetectedHosts()}>{copy.hosts.refreshDetected}</button>
         </div>
 
         {sshConfigHosts.length === 0 ? (
@@ -1049,6 +1243,7 @@ function HostsView({
               <thead>
                 <tr>
                   <th>{copy.hosts.alias}</th>
+                  <th>{copy.hosts.source}</th>
                   <th>{copy.hosts.hostName}</th>
                   <th>{copy.hosts.port}</th>
                   <th>{copy.hosts.user}</th>
@@ -1058,15 +1253,26 @@ function HostsView({
               </thead>
               <tbody>
                 {sshConfigHosts.map((host) => (
-                  <tr key={host.alias}>
+                  <tr className="selectableRow" data-selected={selectedHost?.hostAlias === host.alias} key={host.alias} onClick={() => setSelectedHostAlias(host.alias)}>
                     <td><strong>{host.alias}</strong></td>
+                    <td><Badge tone={host.managed ? "blue" : "gray"}>{host.managed ? copy.hosts.codexhubManaged : copy.hosts.readOnlySource}</Badge></td>
                     <td>{host.hostName}</td>
                     <td>{host.port}</td>
                     <td>{host.user}</td>
-                    <td><code>{host.identityFile}</code></td>
+                    <td><code>{host.identityFile || "-"}</code></td>
                     <td className="tableActions">
-                      <button className="miniButton" type="button" onClick={() => handleEdit(host)}>{copy.hosts.edit}</button>
-                      <button className="miniButton danger" type="button" onClick={() => handleDelete(host.alias)}>{copy.hosts.delete}</button>
+                      <button className="miniButton" disabled={Boolean(hostBusy[host.alias])} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(host.alias); }}>
+                        {hostBusy[host.alias] === "test" ? copy.hosts.testing : copy.hosts.test}
+                      </button>
+                      <button className="miniButton" disabled={Boolean(hostBusy[host.alias])} type="button" onClick={(event) => { event.stopPropagation(); onProbeHost(host.alias); }}>
+                        {hostBusy[host.alias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
+                      </button>
+                      {host.managed ? (
+                        <>
+                          <button className="miniButton" type="button" onClick={(event) => { event.stopPropagation(); handleEdit(host); }}>{copy.hosts.edit}</button>
+                          <button className="miniButton danger" type="button" onClick={(event) => { event.stopPropagation(); void handleDelete(host.alias); }}>{copy.hosts.delete}</button>
+                        </>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -1075,6 +1281,8 @@ function HostsView({
           </div>
         )}
       </section>
+
+      <HostDetailsPanel copy={copy} host={selectedHost} />
 
       <section className="panel spanWide">
         <div className="panelHeader">
@@ -1090,6 +1298,7 @@ function HostsView({
             <thead>
               <tr>
                 <th>{copy.hosts.name}</th>
+                <th>{copy.hosts.source}</th>
                 <th>{copy.hosts.endpoint}</th>
                 <th>{copy.hosts.status}</th>
                 <th>{copy.hosts.profile}</th>
@@ -1103,15 +1312,21 @@ function HostsView({
                 <tr key={host.id}>
                   <td>
                     <strong>{host.name}</strong>
-                    <span>{host.os}</span>
+                    <span>{host.hostAlias} / {host.os}</span>
                   </td>
+                  <td><Badge tone={host.source === "mock" ? "gray" : host.source === "managed" ? "blue" : "green"}>{host.source}</Badge></td>
                   <td>{formatEndpoint(host)}</td>
                   <td><StatusBadge copy={copy} status={host.status} /></td>
                   <td>{host.profileId ? profileById.get(host.profileId)?.name ?? host.profileId : copy.common.unassigned}</td>
                   <td>{host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ") || "-"}</td>
                   <td>{host.lastSeen}</td>
                   <td className="tableActions">
-                    <button className="miniButton" type="button" onClick={() => onTestHost(host.id)}>{copy.hosts.test}</button>
+                    <button className="miniButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onTestHost(host.hostAlias)}>
+                      {hostBusy[host.hostAlias] === "test" ? copy.hosts.testing : copy.hosts.test}
+                    </button>
+                    <button className="miniButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onProbeHost(host.hostAlias)}>
+                      {hostBusy[host.hostAlias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
+                    </button>
                     <button className="miniButton danger" type="button" onClick={() => onDeleteHost(host.id)}>{copy.hosts.delete}</button>
                   </td>
                 </tr>
@@ -1121,6 +1336,283 @@ function HostsView({
         </div>
       </section>
     </div>
+  );
+}
+
+function SshHostModal({
+  copy,
+  defaultIdentityFile,
+  initialDraft,
+  open,
+  sshBusy,
+  sshStatus,
+  onClose,
+  onConnect,
+  onGenerateEd25519Key
+}: {
+  copy: UICopy;
+  defaultIdentityFile: string;
+  initialDraft: SshHostDraft | null;
+  open: boolean;
+  sshBusy: boolean;
+  sshStatus: SshStatus | null;
+  onClose: () => void;
+  onConnect: (draft: SshHostDraft, password: string, requestId: string, onProgress: (event: SshBootstrapProgressEvent) => void) => Promise<SshBootstrapResult>;
+  onGenerateEd25519Key: () => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<SshHostDraft>(() => initialDraft ?? emptySshHostDraft(defaultIdentityFile));
+  const [password, setPassword] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [message, setMessage] = useState<string>(copy.hosts.formIntro);
+  const [showProgress, setShowProgress] = useState(false);
+  const [steps, setSteps] = useState(createInitialBootstrapSteps());
+  const hasIdentityFile = Boolean(defaultIdentityFile);
+  const canGenerateKey = Boolean(sshStatus?.sshKeygenAvailable && !sshStatus.ed25519.privateExists && !sshStatus.ed25519.publicExists);
+  const canConnect = Boolean(draft.alias.trim() && draft.hostName.trim() && draft.port > 0 && draft.user.trim() && password && hasIdentityFile && !connecting);
+
+  useEffect(() => {
+    if (!open) return;
+    const nextDraft = initialDraft ?? emptySshHostDraft(defaultIdentityFile);
+    setDraft({ ...nextDraft, identityFile: nextDraft.identityFile || defaultIdentityFile });
+    setPassword("");
+    setConnecting(false);
+    setMessage(copy.hosts.formIntro);
+    setShowProgress(false);
+    setSteps(createInitialBootstrapSteps());
+  }, [copy.hosts.formIntro, defaultIdentityFile, initialDraft, open]);
+
+  useEffect(() => {
+    setDraft((current) => ({ ...current, identityFile: current.identityFile || defaultIdentityFile }));
+  }, [defaultIdentityFile]);
+
+  if (!open) return null;
+
+  const updateDraft = (key: keyof SshHostDraft, value: string | number) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const closeModal = () => {
+    if (connecting && !window.confirm("连接仍在进行，确定要关闭窗口吗？")) return;
+    onClose();
+  };
+
+  const handleGenerateKey = async () => {
+    try {
+      await onGenerateEd25519Key();
+      setMessage("已新建本地 .ssh\\id_ed25519。");
+    } catch (error) {
+      setMessage(formatError(error));
+    }
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!hasIdentityFile) {
+      setMessage("未检测到本地 id_ed25519，请先点击新建。");
+      return;
+    }
+    const requestId = `bootstrap-${Date.now()}-${draft.alias || draft.hostName}`;
+    setConnecting(true);
+    setShowProgress(true);
+    setSteps(createInitialBootstrapSteps());
+    setMessage("正在连接，请等待四个步骤完成...");
+    try {
+      const result = await onConnect({ ...draft, identityFile: defaultIdentityFile }, password, requestId, (progress) => {
+        setSteps((current) => updateBootstrapStep(current, progress));
+      });
+      if (!result.ok) {
+        const detail = result.message || "连接失败";
+        setMessage(detail);
+        setSteps((current) => markBootstrapFailureIfNeeded(current, detail));
+        return;
+      }
+      setMessage("成功连接");
+    } catch (error) {
+      const detail = formatError(error);
+      setMessage(detail);
+      setSteps((current) => markBootstrapFailureIfNeeded(current, detail));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <div className="sshHostModal" role="dialog" aria-modal="true" aria-labelledby="ssh-host-modal-title">
+        <button className="modalCloseButton" type="button" onClick={closeModal} aria-label="Close">×</button>
+        <div className="modalHero">
+          <h2 id="ssh-host-modal-title">新增 SSH Host</h2>
+        </div>
+
+        <form className="modalForm" onSubmit={handleSubmit}>
+          <label className="fieldGroup">
+            <span>{copy.hosts.hostAlias}</span>
+            <input disabled={connecting} value={draft.alias} onChange={(event) => updateDraft("alias", event.target.value)} placeholder="HostAlias" required />
+          </label>
+          <label className="fieldGroup">
+            <span>Host IP</span>
+            <input disabled={connecting} value={draft.hostName} onChange={(event) => updateDraft("hostName", event.target.value)} placeholder="127.0.0.1" required />
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.hosts.port}</span>
+            <input disabled={connecting} min={1} max={65535} type="number" value={draft.port} onChange={(event) => updateDraft("port", Number(event.target.value))} required />
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.hosts.user}</span>
+            <input disabled={connecting} value={draft.user} onChange={(event) => updateDraft("user", event.target.value)} placeholder="Username" required />
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.hosts.bootstrapPassword}</span>
+            <input autoComplete="new-password" disabled={connecting} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" required />
+          </label>
+          <div className="fieldGroup identityRow">
+            <span>IDFile</span>
+            <input readOnly value={hasIdentityFile ? "id_ed25519 detected" : "id_ed25519 not detected"} />
+            {!hasIdentityFile ? (
+              <button className="secondaryButton" disabled={!canGenerateKey || sshBusy || connecting} type="button" onClick={() => void handleGenerateKey()}>
+                {sshBusy ? copy.settings.generating : "新建"}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="modalActions">
+            <button className="primaryButton" disabled={!canConnect} type="submit">{connecting ? "连接中..." : "连接"}</button>
+          </div>
+        </form>
+
+        {showProgress ? <BootstrapProgressLog steps={steps} /> : null}
+      </div>
+    </div>
+  );
+}
+
+type BootstrapStepState = {
+  step: SshBootstrapStep;
+  label: string;
+  status: SshBootstrapStepStatus;
+  message: string;
+  detail: string;
+  stdout: string;
+  stderr: string;
+};
+
+function createInitialBootstrapSteps(): BootstrapStepState[] {
+  return [
+    { step: "password_login", label: "1. 密码登录远端", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" },
+    { step: "install_public_key", label: "2. 安装本地公钥", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" },
+    { step: "set_permissions", label: "3. 设置远端权限", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" },
+    { step: "verify_alias_login", label: "4. ssh Host 别名测试", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" }
+  ];
+}
+
+function updateBootstrapStep(steps: BootstrapStepState[], progress: SshBootstrapProgressEvent): BootstrapStepState[] {
+  return steps.map((step) =>
+    step.step === progress.step
+      ? {
+          ...step,
+          status: progress.status,
+          message: progress.message,
+          detail: progress.detail ?? "",
+          stdout: progress.stdout ?? "",
+          stderr: progress.stderr ?? ""
+        }
+      : step
+  );
+}
+
+function markBootstrapFailureIfNeeded(steps: BootstrapStepState[], detail: string): BootstrapStepState[] {
+  if (steps.some((step) => step.status === "failed")) return steps;
+  const firstRunning = steps.find((step) => step.status === "running")?.step ?? "password_login";
+  return steps.map((step) => (step.step === firstRunning ? { ...step, status: "failed", message: "连接失败", detail } : step));
+}
+
+function BootstrapProgressLog({ steps }: { steps: BootstrapStepState[] }) {
+  return (
+    <section className="bootstrapLogCard">
+      <div className="bootstrapLogHeader">
+        <strong>连接进程</strong>
+        <span>实时引导日志</span>
+      </div>
+      <div className="bootstrapStepList">
+        {steps.map((step) => (
+          <article className="bootstrapStep" data-status={step.status} key={step.step}>
+            <div className="bootstrapStepMain">
+              <div>
+                <strong>{step.label}</strong>
+                <span>{step.message}</span>
+              </div>
+              <StepStatusIcon status={step.status} />
+            </div>
+            {step.status === "failed" ? (
+              <div className="bootstrapFailureDetail">
+                <strong>详细失败日志</strong>
+                <pre>{step.stderr || step.detail || step.stdout || "未返回详细日志"}</pre>
+              </div>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StepStatusIcon({ status }: { status: SshBootstrapStepStatus }) {
+  if (status === "success") return <span className="stepIcon success">✓</span>;
+  if (status === "failed") return <span className="stepIcon failed">×</span>;
+  if (status === "running") return <span className="stepIcon running" aria-label="running" />;
+  return <span className="stepIcon pending" />;
+}
+function HostDetailsPanel({ copy, host }: { copy: UICopy; host: Host | null }) {
+  return (
+    <section className="panel spanWide">
+      <div className="panelHeader">
+        <div>
+          <div className="eyebrow">{copy.hosts.details}</div>
+          <h2>{host?.name ?? copy.hosts.unknown}</h2>
+          <p>{copy.hosts.detailsBody}</p>
+        </div>
+        {host ? <StatusBadge copy={copy} status={host.status} /> : <Badge tone="gray">{copy.hosts.unknown}</Badge>}
+      </div>
+
+      <dl className="detailGrid">
+        <div>
+          <dt>{copy.hosts.sshStatus}</dt>
+          <dd>{host ? copy.status.host[host.status] : copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.os}</dt>
+          <dd>{host?.os ?? copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.arch}</dt>
+          <dd>{host?.arch ?? copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.shell}</dt>
+          <dd>{host?.shell ?? copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.pathLocalBin}</dt>
+          <dd>{host ? formatNullableBoolean(host.pathHasLocalBin, copy) : copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.codexInstalled}</dt>
+          <dd>{host ? formatBoolean(host.codexInstalled, copy) : copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.codexVersion}</dt>
+          <dd>{host?.codexVersion ?? copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.configExists}</dt>
+          <dd>{host ? formatNullableBoolean(host.configExists, copy) : copy.hosts.unknown}</dd>
+        </div>
+        <div>
+          <dt>{copy.hosts.skillsCount}</dt>
+          <dd>{host?.skillsCount ?? copy.hosts.unknown}</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -1248,11 +1740,41 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
         </div>
         <div className="logList">
           {selectedTask?.logs.map((log) => (
-            <article className="logLine" data-level={log.level} key={log.id}>
-              <span>{log.timestamp}</span>
-              <strong>{copy.status.log[log.level]}</strong>
-              <p>{log.message}</p>
-            </article>
+            <details className="logLine" data-level={log.level} key={log.id}>
+              <summary>
+                <span>{log.timestamp}</span>
+                <strong>{copy.status.log[log.level]}</strong>
+                <p>{log.message}</p>
+              </summary>
+              <div className="logMetaGrid">
+                <div>
+                  <span>{copy.tasks.command}</span>
+                  <code>{log.command ?? "-"}</code>
+                </div>
+                <div>
+                  <span>{copy.tasks.exitCode}</span>
+                  <code>{log.exitCode ?? "-"}</code>
+                </div>
+                <div>
+                  <span>{copy.tasks.duration}</span>
+                  <code>{typeof log.durationMs === "number" ? `${log.durationMs} ms` : "-"}</code>
+                </div>
+                <div>
+                  <span>{copy.tasks.timedOut}</span>
+                  <code>{log.timedOut ? copy.hosts.yes : copy.hosts.no}</code>
+                </div>
+              </div>
+              <div className="streamGrid">
+                <div>
+                  <span>{copy.tasks.stdout}</span>
+                  <pre>{log.stdout || copy.tasks.noOutput}</pre>
+                </div>
+                <div>
+                  <span>{copy.tasks.stderr}</span>
+                  <pre>{log.stderr || copy.tasks.noOutput}</pre>
+                </div>
+              </div>
+            </details>
           )) ?? <p className="mutedText">{copy.tasks.noLogs}</p>}
         </div>
       </section>
@@ -1290,10 +1812,15 @@ function SettingsView({
     "upsert_ssh_config_host",
     "delete_ssh_config_host",
     "list_hosts",
+    "refresh_discovered_hosts",
     "add_host",
     "update_host",
     "delete_host",
     "test_ssh_connection",
+    "ssh_check",
+    "bootstrap_ssh_host",
+    "bootstrap_existing_ssh_host",
+    "remote_probe_codex",
     "list_profiles",
     "apply_profile",
     "list_tasks"
@@ -1453,7 +1980,17 @@ function localizeTaskAction(action: string, copy: UICopy) {
 }
 
 function formatEndpoint(host: Host) {
-  return `${host.username}@${host.address}:${host.port}`;
+  const user = host.username ? `${host.username}@` : "";
+  return `${user}${host.address}:${host.port}`;
+}
+
+function formatBoolean(value: boolean, copy: UICopy) {
+  return value ? copy.hosts.yes : copy.hosts.no;
+}
+
+function formatNullableBoolean(value: boolean | null, copy: UICopy) {
+  if (value === null) return copy.hosts.unknown;
+  return formatBoolean(value, copy);
 }
 
 function emptySshHostDraft(identityFile: string): SshHostDraft {
@@ -1461,7 +1998,7 @@ function emptySshHostDraft(identityFile: string): SshHostDraft {
     alias: "",
     hostName: "",
     port: 22,
-    user: "codex",
+    user: "",
     identityFile
   };
 }

@@ -537,6 +537,17 @@ dd {
   margin-top: auto;
 }
 
+.hostCardActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: auto;
+}
+
+.hostCardActions .tertiaryButton {
+  margin-top: 0;
+}
+
 .linkButton {
   border: 0;
   padding: 6px 0;
@@ -681,15 +692,25 @@ tr:last-child td {
 }
 
 .logLine {
-  display: grid;
-  grid-template-columns: 68px 52px 1fr;
-  gap: 10px;
-  align-items: start;
+  display: block;
   border: 1px solid var(--border);
   border-left: 4px solid var(--gray);
   border-radius: 12px;
   padding: 10px;
   background: var(--surface-solid);
+}
+
+.logLine summary {
+  display: grid;
+  grid-template-columns: 68px 52px 1fr;
+  gap: 10px;
+  align-items: start;
+  cursor: pointer;
+  list-style: none;
+}
+
+.logLine summary::-webkit-details-marker {
+  display: none;
 }
 
 .logLine[data-level="info"] { border-left-color: var(--blue); }
@@ -705,6 +726,73 @@ tr:last-child td {
 .logLine p {
   color: var(--text-muted);
   line-height: 1.45;
+}
+
+.logMetaGrid,
+.streamGrid,
+.detailGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.logMetaGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.streamGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.logMetaGrid div,
+.streamGrid div,
+.detailGrid div {
+  display: grid;
+  gap: 5px;
+}
+
+.logMetaGrid span,
+.streamGrid span {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.streamGrid pre {
+  min-height: 86px;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-muted);
+}
+
+.detailGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detailGrid dt {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.detailGrid dd {
+  color: var(--text);
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
 }
 
 .settingsGrid .panel:first-child,
@@ -870,7 +958,11 @@ tr:last-child td {
   }
 
   .hostMeta,
-  .logLine {
+  .logLine summary,
+  .logMetaGrid,
+  .streamGrid,
+  .detailGrid,
+  .hostCardActions {
     grid-template-columns: 1fr;
   }
 
@@ -910,6 +1002,37 @@ tr:last-child td {
   align-items: center;
 }
 
+.inlineSetup {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  margin-top: 12px;
+  background: var(--surface-muted);
+}
+
+.inlineSetup div {
+  display: grid;
+  gap: 3px;
+}
+
+.inlineSetup span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.inlineSetup input {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--surface-solid);
+}
+
 .fieldGroup input,
 .fieldGroup select {
   width: 100%;
@@ -924,6 +1047,203 @@ tr:last-child td {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(21, 23, 31, 0.42);
+  backdrop-filter: blur(14px);
+}
+
+.sshHostModal {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  width: min(620px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+}
+
+.modalCloseButton {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(190, 18, 60, 0.3);
+  border-radius: 999px;
+  color: #b91c1c;
+  background: rgba(254, 226, 226, 0.82);
+}
+
+.modalHero {
+  padding: 2px 44px 4px 0;
+}
+
+.modalHero h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  letter-spacing: 0;
+}
+
+.modalForm {
+  display: grid;
+  gap: 10px;
+}
+
+.sshHostModal .fieldGroup {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 72px;
+  gap: 10px;
+  align-items: center;
+}
+
+.sshHostModal .fieldGroup > span {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-align: left;
+}
+
+.sshHostModal .fieldGroup input,
+.sshHostModal .fieldGroup select {
+  grid-column: 2;
+  min-height: 38px;
+}
+
+.identityRow button {
+  grid-column: 3;
+  min-height: 38px;
+  padding-inline: 10px;
+}
+
+.modalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.bootstrapLogCard {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--surface-muted);
+}
+
+.bootstrapLogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bootstrapLogHeader span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.bootstrapStepList {
+  display: grid;
+  gap: 8px;
+}
+
+.bootstrapStep {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface-solid);
+}
+
+.bootstrapStep[data-status="failed"] {
+  border-color: rgba(220, 38, 38, 0.36);
+}
+
+.bootstrapStepMain {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bootstrapStepMain div {
+  display: grid;
+  gap: 2px;
+}
+
+.bootstrapStepMain span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.stepIcon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-weight: 800;
+}
+
+.stepIcon.pending {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.stepIcon.success {
+  color: #fff;
+  background: #16a34a;
+}
+
+.stepIcon.failed {
+  color: #fff;
+  background: #dc2626;
+}
+
+.stepIcon.running {
+  border: 3px solid rgba(190, 18, 60, 0.2);
+  border-top-color: #be123c;
+  animation: spin 0.9s linear infinite;
+}
+
+.bootstrapFailureDetail {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  color: #991b1b;
+}
+
+.bootstrapFailureDetail pre {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 8px;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #7f1d1d;
+  background: rgba(254, 226, 226, 0.82);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .keyStatusGrid {
@@ -968,15 +1288,22 @@ td code {
 }
 
 @media (max-width: 1120px) {
-  .sshForm {
+  .sshForm,
+  .inlineSetup {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 700px) {
   .sshForm,
+  .inlineSetup,
   .keyStatusGrid {
     grid-template-columns: 1fr;
+  }
+
+  .sshHostModal .fieldGroup {
+    grid-template-columns: 92px minmax(0, 1fr) 64px;
+    gap: 8px;
   }
 
   .identityField {
@@ -986,5 +1313,9 @@ td code {
   .formActions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .modalActions {
+    justify-content: flex-end;
   }
 }

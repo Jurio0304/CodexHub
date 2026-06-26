@@ -13,15 +13,18 @@ MVP direction:
 
 ## Current Status
 
-Window 2 adds local Windows SSH initialization and SSH config management on top of the first desktop UI shell:
+Window 3 adds read-only SSH host discovery, real OpenSSH connection checks, and remote system probes on top of the desktop UI shell:
 
 - macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
-- Dashboard server matrix with mock host data, empty-state handling, an Add Server entry, and recent task cards.
+- Dashboard server matrix with mock host data, empty-state handling, and recent task cards; the Add Server entry is scoped to the Hosts page.
 - Light/dark mode support with native-feeling cards, tables, and status badges.
 - Settings / Appearance includes a three-button theme control plus English / 简体中文 global font and language presets.
 - Settings / Local SSH detects Ed25519 and RSA keys, can generate a non-overwriting Ed25519 key, and shows/copies public keys only.
-- Hosts can add, update, and delete CodexHub-managed blocks in `%USERPROFILE%\.ssh\config` with timestamped backups and unmanaged block preservation.
-- Mock Tauri commands remain for profile, skill-pack, task, and connection-test data until remote SSH/SFTP is connected.
+- Hosts auto-detect safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode and import them into the in-memory inventory.
+- Hosts can still add, update, and delete only CodexHub-managed blocks in `%USERPROFILE%\.ssh\config` with timestamped backups; unmanaged user blocks are never modified or overwritten.
+- Real desktop commands can run `ssh <HostAlias> echo ok` with timeout control and probe remote Linux hosts for OS, arch, shell, PATH, Codex CLI, config presence, and skills count.
+- Task logs now capture each SSH/probe command with redacted stdout/stderr, exit code, duration, and timeout state.
+- Profile apply and skill sync remain mock/reserved workflows until the remote write path lands.
 
 ## Prerequisites For Full Desktop Dev
 
@@ -66,17 +69,22 @@ The desktop app currently exposes these Rust commands:
 - `upsert_ssh_config_host`
 - `delete_ssh_config_host`
 - `list_hosts`
+- `refresh_discovered_hosts`
 - `add_host`
 - `update_host`
 - `delete_host`
 - `test_ssh_connection`
+- `ssh_check`
+- `bootstrap_ssh_host`
+- `bootstrap_existing_ssh_host`
+- `remote_probe_codex`
 - `list_profiles`
 - `apply_profile`
 - `list_tasks`
 
 The Skills page is also backed by a mock `list_skill_packs` helper command so the first UI shell can render all sidebar sections.
 
-The SSH key and SSH config commands are real Windows local filesystem operations. They never read private key contents; public key text is the only key material returned to the UI.
+The SSH key and SSH config commands are real Windows local filesystem operations. They never read private key contents; public key text is the only key material returned to the UI. New CodexHub-managed hosts use a one-time password connection flow: log in to the remote host, install the local public key into `~/.ssh/authorized_keys`, set SSH permissions, write only a managed SSH config block, and verify with `ssh <HostAlias> echo ok`. The password is not stored or written to task logs.
 
 ## Settings Persistence
 

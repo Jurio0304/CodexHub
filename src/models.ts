@@ -10,13 +10,23 @@ export type AuthMethod = "ssh-key" | "password" | "agent";
 export type Host = {
   id: string;
   name: string;
+  hostAlias: string;
+  source: "managed" | "unmanaged-readonly" | "mock" | "manual" | string;
   address: string;
   port: number;
   username: string;
   authMethod: AuthMethod;
   status: HostStatus;
   os: string;
+  arch: string;
+  shell: string;
+  path: string | null;
+  pathHasLocalBin: boolean | null;
+  codexInstalled: boolean;
   codexVersion: string;
+  configExists: boolean | null;
+  skillsExists: boolean | null;
+  skillsCount: number | null;
   profileId: string | null;
   skillPackIds: string[];
   tags: string[];
@@ -66,6 +76,12 @@ export type TaskLog = {
   level: TaskLogLevel;
   timestamp: string;
   message: string;
+  command?: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  timedOut?: boolean;
 };
 
 export type TaskRun = {
@@ -84,6 +100,60 @@ export type ConnectionTest = {
   ok: boolean;
   latencyMs: number | null;
   message: string;
+};
+
+export type SshCheckResult = {
+  hostAlias: string;
+  ok: boolean;
+  latencyMs: number | null;
+  message: string;
+  task: TaskRun;
+};
+
+export type SshBootstrapResult = {
+  hostAlias: string;
+  ok: boolean;
+  latencyMs: number | null;
+  message: string;
+  generatedKey: boolean;
+  privateKeyPath: string;
+  publicKeyPath: string;
+  writeResult: SshConfigWriteResult;
+  task: TaskRun;
+};
+
+export type SshBootstrapStep = "password_login" | "install_public_key" | "set_permissions" | "verify_alias_login";
+export type SshBootstrapStepStatus = "pending" | "running" | "success" | "failed";
+
+export type SshBootstrapProgressEvent = {
+  requestId: string;
+  hostAlias: string;
+  step: SshBootstrapStep;
+  status: SshBootstrapStepStatus;
+  message: string;
+  detail: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+  timedOut: boolean | null;
+};
+
+export type RemoteProbeResult = {
+  hostAlias: string;
+  sshStatus: HostStatus;
+  os: string;
+  arch: string;
+  shell: string;
+  path: string | null;
+  pathHasLocalBin: boolean;
+  codexInstalled: boolean;
+  codexPath: string | null;
+  codexVersion: string;
+  configExists: boolean;
+  skillsExists: boolean;
+  skillsCount: number;
+  task: TaskRun;
 };
 
 export type SshKeyInfo = {
@@ -114,6 +184,7 @@ export type SshHostDraft = {
 
 export type SshConfigHost = SshHostDraft & {
   managed: boolean;
+  source: "managed" | "unmanaged-readonly" | "mock" | string;
 };
 
 export type SshConfigWriteResult = {

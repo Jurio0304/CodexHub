@@ -41,11 +41,14 @@ flowchart LR
 Planned Tauri commands:
 
 - `app_health()`: smoke-test command exposed by the skeleton.
-- `list_ssh_hosts()`: parse `%USERPROFILE%\.ssh\config` without modifying it.
+- `list_ssh_hosts()`: parse safe managed and unmanaged `%USERPROFILE%\.ssh\config` aliases without modifying user-owned blocks.
 - `generate_ssh_host_block(input)`: produce an idempotent suggested host block.
 - `append_ssh_host_block_with_backup(input)`: optional explicit write path with timestamped backup.
-- `ssh_check(server_id)`: run a non-invasive SSH command such as `printf codexhub-ok`.
-- `remote_probe_codex(server_id)`: check `codex --version`, `~/.codex`, and skill-root candidates.
+- `refresh_discovered_hosts()`: merge read-only local SSH aliases into the in-memory host inventory.
+- `ssh_check(host_alias)`: run `ssh <HostAlias> echo ok` through system OpenSSH with timeout and redacted logs.
+- `bootstrap_ssh_host(draft, password, request_id)`: use a one-time password through the Rust SSH client to log in, install the local public key, set `~/.ssh` permissions, emit four-step progress events, write only a CodexHub-managed SSH config block, then verify `ssh <HostAlias> echo ok` with system OpenSSH.
+- `bootstrap_existing_ssh_host(host_alias, password)`: run the same key setup for a host already discovered in SSH config without changing unmanaged blocks.
+- `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and `~/.codex/skills`.
 - `remote_read_config(server_id)`: download `~/.codex/config.toml` if present.
 - `render_profile_config(profile_id)`: render TOML from structured profile state.
 - `remote_apply_config(server_id, rendered_toml)`: backup, upload temp file, atomic replace.

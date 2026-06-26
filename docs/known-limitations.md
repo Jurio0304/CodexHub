@@ -23,9 +23,13 @@ OpenAI public docs currently show both `.agents/skills` style paths and `~/.code
 
 This repository contains a Tauri 2 skeleton. Full `pnpm dev` requires local Node/pnpm, Rust stable MSVC toolchain, and WebView2. The current smoke test is dependency-light and validates the skeleton without compiling Rust.
 
-## SSH Config Writes
+## SSH Config Discovery And Writes
 
-CodexHub will not modify `%USERPROFILE%\.ssh\config` by default. Any future write must be explicit, backed up, scoped to a CodexHub-managed block, and idempotent.
+CodexHub may scan `%USERPROFILE%\.ssh\config` to auto-import safe `Host` aliases, but this discovery path is read-only. User-owned unmanaged `Host` blocks must not be modified, deleted, reordered, or reformatted.
+
+Any SSH config write must be explicit, backed up, scoped to a CodexHub-managed marker block, and idempotent. If an alias already exists in an unmanaged block, CodexHub must reject the write instead of overwriting it.
+
+New CodexHub-managed hosts may be bootstrapped with a one-time remote password. CodexHub uses that password only for the current request, does not store it, installs the selected local public key to remote `~/.ssh/authorized_keys`, sets `~/.ssh` and `authorized_keys` permissions, and then verifies key login with system OpenSSH. The modal shows each step in real time and stops on the first failure. Successful OpenSSH checks use `StrictHostKeyChecking=accept-new`, so first-time host keys are trusted automatically while changed host keys still fail.
 
 ## No Wrapper Dependency
 

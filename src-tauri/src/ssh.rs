@@ -1,13 +1,27 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use russh::client;
+use russh::keys::ssh_key;
+use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
+use tokio::runtime::Builder;
 
 const MANAGED_START_PREFIX: &str = "# >>> CodexHub managed host:";
 const MANAGED_END_PREFIX: &str = "# <<< CodexHub managed host:";
+const DEFAULT_TIMEOUT_MS: u64 = 10_000;
+const MIN_TIMEOUT_MS: u64 = 1_000;
+const MAX_TIMEOUT_MS: u64 = 120_000;
+const AUTHORIZED_KEYS_INSTALL_SCRIPT: &str = "umask 077; mkdir -p \"$HOME/.ssh\" && touch \"$HOME/.ssh/authorized_keys\" && IFS= read -r key && if grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" 2>/dev/null; then printf 'authorized_keys already contains key\\n'; else printf '%s\\n' \"$key\" >> \"$HOME/.ssh/authorized_keys\" && printf 'authorized_keys updated\\n'; fi";
+const AUTHORIZED_KEYS_PERMISSIONS_SCRIPT: &str = "chmod 700 \"$HOME/.ssh\" && chmod 600 \"$HOME/.ssh/authorized_keys\" && printf 'permissions set\\n'";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +64,7 @@ pub struct SshConfigHost {
     pub user: String,
     pub identity_file: String,
     pub managed: bool,
+    pub source: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -70,6 +85,37 @@ pub struct SshKeyGenerationResult {
     pub public_path: String,
     pub status: SshStatus,
     pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalKeyPair {
+    pub private_path: PathBuf,
+    pub public_path: PathBuf,
+    pub public_key: String,
+    pub generated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SshCommandOutput {
+    pub command: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub timed_out: bool,
+}
+
+impl SshCommandOutput {
+    pub fn success(&self) -> bool {
+        self.exit_code == Some(0) && !self.timed_out
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordBootstrapStep {
+    PasswordLogin,
+    InstallPublicKey,
+    SetPermissions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,10 +167,13 @@ pub fn generate_ed25519_key() -> Result<SshKeyGenerationResult, String> {
     }
 
     if !command_available("ssh-keygen") {
-        return Err("ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into());
+        return Err(
+            "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
+        );
     }
 
-    fs::create_dir_all(&ssh_dir).map_err(|error| format!("Failed to create .ssh directory: {error}"))?;
+    fs::create_dir_all(&ssh_dir)
+        .map_err(|error| format!("Failed to create .ssh directory: {error}"))?;
     let comment = format!(
         "codexhub@{}",
         env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
@@ -156,6 +205,497 @@ pub fn generate_ed25519_key() -> Result<SshKeyGenerationResult, String> {
     })
 }
 
+pub fn ensure_identity_keypair(identity_file: &str) -> Result<LocalKeyPair, String> {
+    let private_path = expand_local_path(identity_file)?;
+    let public_path = public_key_path_for(&private_path);
+    let private_exists = private_path.exists();
+    let public_exists = public_path.exists();
+
+    match (private_exists, public_exists) {
+        (true, true) => Ok(LocalKeyPair {
+            public_key: read_public_key(&public_path)?,
+            private_path,
+            public_path,
+            generated: false,
+        }),
+        (false, false) => {
+            generate_keypair_at(&private_path)?;
+            Ok(LocalKeyPair {
+                public_key: read_public_key(&public_path)?,
+                private_path,
+                public_path,
+                generated: true,
+            })
+        }
+        (true, false) => {
+            derive_public_key(&private_path, &public_path)?;
+            Ok(LocalKeyPair {
+                public_key: read_public_key(&public_path)?,
+                private_path,
+                public_path,
+                generated: false,
+            })
+        }
+        (false, true) => Err(format!(
+            "Public key exists but private key is missing: {}",
+            path_string(&private_path)
+        )),
+    }
+}
+
+pub fn prepare_ssh_config_host(draft: SshHostDraft) -> Result<SshConfigHost, String> {
+    let draft = normalize_draft(draft)?;
+    let path = config_path()?;
+    let (existing, _) = read_optional_config(&path)?;
+    if unmanaged_aliases(&existing)?
+        .iter()
+        .any(|alias| alias.eq_ignore_ascii_case(&draft.alias))
+    {
+        return Err(format!(
+            "Host {} already exists in an unmanaged SSH config block. CodexHub will not overwrite it.",
+            draft.alias
+        ));
+    }
+    Ok(host_from_draft(&draft))
+}
+
+pub fn run_password_bootstrap_steps<F, G>(
+    draft: &SshHostDraft,
+    password: &str,
+    public_key: &str,
+    timeout_ms: u64,
+    mut on_started: F,
+    mut on_finished: G,
+) -> Vec<(PasswordBootstrapStep, SshCommandOutput)>
+where
+    F: FnMut(PasswordBootstrapStep),
+    G: FnMut(PasswordBootstrapStep, &SshCommandOutput),
+{
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let runtime = match Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return vec![(
+                PasswordBootstrapStep::PasswordLogin,
+                failed_output(
+                    login_display_command(draft),
+                    format!("Failed to start async SSH runtime: {error}"),
+                    0,
+                    false,
+                    password,
+                ),
+            )]
+        }
+    };
+
+    runtime.block_on(async move {
+        run_password_bootstrap_steps_async(
+            draft,
+            password,
+            public_key,
+            timeout_ms,
+            &mut on_started,
+            &mut on_finished,
+        )
+        .await
+    })
+}
+
+async fn run_password_bootstrap_steps_async<F, G>(
+    draft: &SshHostDraft,
+    password: &str,
+    public_key: &str,
+    timeout_ms: u64,
+    on_started: &mut F,
+    on_finished: &mut G,
+) -> Vec<(PasswordBootstrapStep, SshCommandOutput)>
+where
+    F: FnMut(PasswordBootstrapStep),
+    G: FnMut(PasswordBootstrapStep, &SshCommandOutput),
+{
+    let mut outputs = Vec::new();
+
+    on_started(PasswordBootstrapStep::PasswordLogin);
+    let login = password_login(draft, password, timeout_ms).await;
+    let login_output = login.output.clone();
+    on_finished(PasswordBootstrapStep::PasswordLogin, &login_output);
+    outputs.push((PasswordBootstrapStep::PasswordLogin, login_output.clone()));
+    if !login_output.success() {
+        return outputs;
+    }
+    let Some(mut session) = login.session else {
+        return outputs;
+    };
+
+    on_started(PasswordBootstrapStep::InstallPublicKey);
+    let install_output = run_remote_command(
+        &mut session,
+        install_display_command(draft),
+        AUTHORIZED_KEYS_INSTALL_SCRIPT,
+        Some(format!("{}\n", public_key.trim())),
+        timeout_ms,
+        password,
+    )
+    .await;
+    on_finished(PasswordBootstrapStep::InstallPublicKey, &install_output);
+    outputs.push((
+        PasswordBootstrapStep::InstallPublicKey,
+        install_output.clone(),
+    ));
+    if !install_output.success() {
+        let _ = session
+            .disconnect(Disconnect::ByApplication, "", "English")
+            .await;
+        return outputs;
+    }
+
+    on_started(PasswordBootstrapStep::SetPermissions);
+    let permissions_output = run_remote_command(
+        &mut session,
+        permissions_display_command(draft),
+        AUTHORIZED_KEYS_PERMISSIONS_SCRIPT,
+        None,
+        timeout_ms,
+        password,
+    )
+    .await;
+    on_finished(PasswordBootstrapStep::SetPermissions, &permissions_output);
+    outputs.push((
+        PasswordBootstrapStep::SetPermissions,
+        permissions_output.clone(),
+    ));
+
+    let _ = session
+        .disconnect(Disconnect::ByApplication, "", "English")
+        .await;
+    outputs
+}
+
+struct PasswordLoginResult {
+    session: Option<client::Handle<AcceptAllServerKey>>,
+    output: SshCommandOutput,
+}
+
+#[derive(Clone)]
+struct AcceptAllServerKey;
+
+impl client::Handler for AcceptAllServerKey {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &ssh_key::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+}
+
+async fn password_login(
+    draft: &SshHostDraft,
+    password: &str,
+    timeout_ms: u64,
+) -> PasswordLoginResult {
+    let start = Instant::now();
+    let command = login_display_command(draft);
+    let timeout = Duration::from_millis(timeout_ms);
+    let future = async {
+        let config = client::Config {
+            inactivity_timeout: Some(timeout),
+            ..Default::default()
+        };
+        let mut session = client::connect(
+            Arc::new(config),
+            (draft.host_name.as_str(), draft.port),
+            AcceptAllServerKey,
+        )
+        .await
+        .map_err(|error| format!("SSH connection failed: {error}"))?;
+
+        authenticate_with_one_time_password(&mut session, &draft.user, password).await?;
+
+        Ok::<client::Handle<AcceptAllServerKey>, String>(session)
+    };
+
+    match tokio::time::timeout(timeout, future).await {
+        Ok(Ok(session)) => PasswordLoginResult {
+            session: Some(session),
+            output: SshCommandOutput {
+                command,
+                stdout: "password authentication succeeded".into(),
+                stderr: String::new(),
+                exit_code: Some(0),
+                duration_ms: duration_ms(start),
+                timed_out: false,
+            },
+        },
+        Ok(Err(error)) => PasswordLoginResult {
+            session: None,
+            output: failed_output(command, error, duration_ms(start), false, password),
+        },
+        Err(_) => PasswordLoginResult {
+            session: None,
+            output: failed_output(
+                command,
+                format!("SSH password login timed out after {timeout_ms} ms."),
+                duration_ms(start),
+                true,
+                password,
+            ),
+        },
+    }
+}
+
+async fn authenticate_with_one_time_password(
+    session: &mut client::Handle<AcceptAllServerKey>,
+    user: &str,
+    password: &str,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    let advertised_methods = match session.authenticate_none(user.to_string()).await {
+        Ok(client::AuthResult::Success) => return Ok(()),
+        Ok(client::AuthResult::Failure {
+            remaining_methods, ..
+        }) => Some(remaining_methods),
+        Err(error) => {
+            failures.push(format!("method discovery failed: {error}"));
+            None
+        }
+    };
+
+    if allows_auth_method(advertised_methods.as_ref(), MethodKind::KeyboardInteractive) {
+        match keyboard_interactive_auth(session, user, password).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => failures.push("keyboard-interactive rejected".into()),
+            Err(error) => failures.push(error),
+        }
+    }
+
+    if allows_auth_method(advertised_methods.as_ref(), MethodKind::Password) {
+        match session
+            .authenticate_password(user.to_string(), password.to_string())
+            .await
+        {
+            Ok(client::AuthResult::Success) => return Ok(()),
+            Ok(client::AuthResult::Failure {
+                remaining_methods, ..
+            }) => failures.push(format!(
+                "password rejected; remaining methods: {}",
+                auth_methods_label(&remaining_methods)
+            )),
+            Err(error) => failures.push(format!("password authentication failed: {error}")),
+        }
+    }
+
+    let advertised = advertised_methods
+        .as_ref()
+        .map(auth_methods_label)
+        .unwrap_or_else(|| "unknown".into());
+    if failures.is_empty() {
+        failures.push(
+            "server did not advertise password or keyboard-interactive authentication".into(),
+        );
+    }
+    Err(format!(
+        "Permission denied. Server advertised authentication methods: {advertised}. Attempts: {}",
+        failures.join("; ")
+    ))
+}
+
+async fn keyboard_interactive_auth(
+    session: &mut client::Handle<AcceptAllServerKey>,
+    user: &str,
+    password: &str,
+) -> Result<bool, String> {
+    let mut response = session
+        .authenticate_keyboard_interactive_start(user.to_string(), Some("password".to_string()))
+        .await
+        .map_err(|error| format!("Keyboard-interactive authentication failed: {error}"))?;
+
+    for _ in 0..3 {
+        match response {
+            client::KeyboardInteractiveAuthResponse::Success => return Ok(true),
+            client::KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods, ..
+            } => {
+                return Err(format!(
+                    "Keyboard-interactive authentication was rejected; remaining methods: {}",
+                    auth_methods_label(&remaining_methods)
+                ))
+            }
+            client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                let prompt_count = prompts.len();
+                response = session
+                    .authenticate_keyboard_interactive_respond(
+                        prompts
+                            .iter()
+                            .map(|prompt| {
+                                keyboard_interactive_response(prompt, password, prompt_count)
+                            })
+                            .collect(),
+                    )
+                    .await
+                    .map_err(|error| {
+                        format!("Keyboard-interactive authentication failed: {error}")
+                    })?;
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn allows_auth_method(methods: Option<&MethodSet>, method: MethodKind) -> bool {
+    methods.map_or(true, |methods| methods.iter().any(|item| *item == method))
+}
+
+fn auth_methods_label(methods: &MethodSet) -> String {
+    if methods.is_empty() {
+        return "none".into();
+    }
+    methods
+        .iter()
+        .map(|method| match method {
+            MethodKind::None => "none",
+            MethodKind::Password => "password",
+            MethodKind::PublicKey => "publickey",
+            MethodKind::HostBased => "hostbased",
+            MethodKind::KeyboardInteractive => "keyboard-interactive",
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn keyboard_interactive_response(
+    prompt: &client::Prompt,
+    password: &str,
+    prompt_count: usize,
+) -> String {
+    let lower = prompt.prompt.to_ascii_lowercase();
+    if lower.contains("password") || (!prompt.echo && prompt_count == 1) {
+        password.to_string()
+    } else {
+        String::new()
+    }
+}
+
+async fn run_remote_command(
+    session: &mut client::Handle<AcceptAllServerKey>,
+    display_command: String,
+    command: &str,
+    stdin_input: Option<String>,
+    timeout_ms: u64,
+    password: &str,
+) -> SshCommandOutput {
+    let start = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms);
+    let future = async {
+        let mut channel = session
+            .channel_open_session()
+            .await
+            .map_err(|error| format!("Failed to open SSH session channel: {error}"))?;
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|error| format!("Failed to execute remote command: {error}"))?;
+        if let Some(input) = stdin_input {
+            channel
+                .data_bytes(input.into_bytes())
+                .await
+                .map_err(|error| format!("Failed to write remote stdin: {error}"))?;
+            channel
+                .eof()
+                .await
+                .map_err(|error| format!("Failed to close remote stdin: {error}"))?;
+        }
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut exit_code = None;
+
+        while let Some(message) = channel.wait().await {
+            match message {
+                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                ChannelMsg::ExitStatus { exit_status } => {
+                    exit_code = Some(i32::try_from(exit_status).unwrap_or(i32::MAX));
+                }
+                _ => {}
+            }
+        }
+
+        Ok::<(Vec<u8>, Vec<u8>, Option<i32>), String>((stdout, stderr, exit_code))
+    };
+
+    match tokio::time::timeout(timeout, future).await {
+        Ok(Ok((stdout, stderr, exit_code))) => SshCommandOutput {
+            command: display_command,
+            stdout: redact_password(
+                &redact_sensitive(&String::from_utf8_lossy(&stdout)),
+                password,
+            ),
+            stderr: redact_password(
+                &redact_sensitive(&String::from_utf8_lossy(&stderr)),
+                password,
+            ),
+            exit_code,
+            duration_ms: duration_ms(start),
+            timed_out: false,
+        },
+        Ok(Err(error)) => {
+            failed_output(display_command, error, duration_ms(start), false, password)
+        }
+        Err(_) => failed_output(
+            display_command,
+            format!("Remote command timed out after {timeout_ms} ms."),
+            duration_ms(start),
+            true,
+            password,
+        ),
+    }
+}
+
+fn failed_output(
+    command: String,
+    message: String,
+    duration_ms: u64,
+    timed_out: bool,
+    password: &str,
+) -> SshCommandOutput {
+    SshCommandOutput {
+        command,
+        stdout: String::new(),
+        stderr: redact_password(&redact_sensitive(&message), password),
+        exit_code: None,
+        duration_ms,
+        timed_out,
+    }
+}
+
+fn login_display_command(draft: &SshHostDraft) -> String {
+    format!(
+        "ssh password login {}@{}:{}",
+        draft.user, draft.host_name, draft.port
+    )
+}
+
+fn install_display_command(draft: &SshHostDraft) -> String {
+    format!(
+        "ssh password bootstrap {}@{}:{} install authorized_keys",
+        draft.user, draft.host_name, draft.port
+    )
+}
+
+fn permissions_display_command(draft: &SshHostDraft) -> String {
+    format!(
+        "ssh password bootstrap {}@{}:{} chmod .ssh",
+        draft.user, draft.host_name, draft.port
+    )
+}
+
 pub fn list_ssh_config_hosts() -> Result<Vec<SshConfigHost>, String> {
     let path = config_path()?;
     if !path.exists() {
@@ -164,7 +704,7 @@ pub fn list_ssh_config_hosts() -> Result<Vec<SshConfigHost>, String> {
 
     let content = fs::read_to_string(&path)
         .map_err(|error| format!("Failed to read SSH config {}: {error}", path_string(&path)))?;
-    parse_managed_hosts(&content)
+    parse_all_ssh_config_hosts(&content)
 }
 
 pub fn upsert_ssh_config_host(draft: SshHostDraft) -> Result<SshConfigWriteResult, String> {
@@ -229,10 +769,289 @@ pub fn delete_ssh_config_host(alias: String) -> Result<SshConfigWriteResult, Str
     })
 }
 
+pub fn normalize_timeout_ms(timeout_ms: Option<u64>) -> u64 {
+    timeout_ms
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+}
+
+pub fn validate_ssh_alias(alias: &str) -> Result<String, String> {
+    let alias = normalize_alias(alias)?;
+    if alias.starts_with('-') {
+        return Err(
+            "Host Alias cannot start with '-' because it would be parsed as an ssh option.".into(),
+        );
+    }
+    if alias
+        .chars()
+        .any(|ch| matches!(ch, '*' | '?' | '[' | ']' | '!' | '/' | '\\'))
+    {
+        return Err(
+            "Host Alias must be a concrete SSH alias without wildcards or path separators.".into(),
+        );
+    }
+    if !alias
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | '@' | ':'))
+    {
+        return Err("Host Alias contains characters CodexHub will not pass to ssh.".into());
+    }
+    Ok(alias)
+}
+
+pub fn run_ssh_echo_ok(host_alias: &str, timeout_ms: u64) -> Result<SshCommandOutput, String> {
+    run_ssh_command(
+        host_alias,
+        vec!["echo".into(), "ok".into()],
+        timeout_ms,
+        "echo ok",
+        vec![("StrictHostKeyChecking".into(), "accept-new".into())],
+    )
+}
+
+pub fn run_ssh_script(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
+    // OpenSSH sends the remote command through the user's login shell. Passing
+    // the whole script as one process argument preserves spaces such as
+    // `uname -m`; splitting it here would make the remote shell see only the
+    // first token as the command.
+    run_ssh_command(
+        host_alias,
+        vec![script.into()],
+        timeout_ms,
+        script,
+        Vec::new(),
+    )
+}
+
+fn run_ssh_command(
+    host_alias: &str,
+    remote_args: Vec<String>,
+    timeout_ms: u64,
+    display_remote_command: &str,
+    extra_options: Vec<(String, String)>,
+) -> Result<SshCommandOutput, String> {
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let (host_alias, connect_timeout_secs, args) =
+        build_ssh_args(host_alias, remote_args, timeout_ms, extra_options.clone())?;
+
+    let command = format!(
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} {}",
+        connect_timeout_secs,
+        display_extra_options(&extra_options),
+        host_alias,
+        display_remote_command
+    );
+    run_process_with_timeout("ssh", &args, &command, timeout_ms)
+}
+
+fn build_ssh_args(
+    host_alias: &str,
+    remote_args: Vec<String>,
+    timeout_ms: u64,
+    extra_options: Vec<(String, String)>,
+) -> Result<(String, String, Vec<String>), String> {
+    let host_alias = validate_ssh_alias(host_alias)?;
+    let connect_timeout_secs = ((timeout_ms + 999) / 1000).clamp(1, 120).to_string();
+    let mut args = vec![
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+        "-o".to_string(),
+        "NumberOfPasswordPrompts=0".to_string(),
+        "-o".to_string(),
+        format!("ConnectTimeout={connect_timeout_secs}"),
+        host_alias.clone(),
+    ];
+    for (key, value) in extra_options {
+        args.insert(args.len() - 1, "-o".to_string());
+        args.insert(args.len() - 1, format!("{key}={value}"));
+    }
+    args.extend(remote_args);
+
+    Ok((host_alias, connect_timeout_secs, args))
+}
+
+fn display_extra_options(extra_options: &[(String, String)]) -> String {
+    extra_options
+        .iter()
+        .map(|(key, value)| format!(" -o {key}={value}"))
+        .collect::<String>()
+}
+
+fn run_process_with_timeout(
+    program: &str,
+    args: &[String],
+    display_command: &str,
+    timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
+    run_process_with_timeout_input_env(program, args, display_command, timeout_ms, "", &[])
+}
+
+fn run_process_with_timeout_input_env(
+    program: &str,
+    args: &[String],
+    display_command: &str,
+    timeout_ms: u64,
+    stdin_input: &str,
+    envs: &[(&str, String)],
+) -> Result<SshCommandOutput, String> {
+    let start = Instant::now();
+    let mut child = Command::new(program)
+        .args(args)
+        .envs(envs.iter().map(|(key, value)| (*key, value)))
+        .stdin(if stdin_input.is_empty() {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to start {program}: {error}"))?;
+
+    if !stdin_input.is_empty() {
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(stdin_input.as_bytes())
+                .map_err(|error| format!("Failed to write stdin for {program}: {error}"))?;
+        }
+    }
+
+    let timeout = Duration::from_millis(timeout_ms);
+    loop {
+        if child
+            .try_wait()
+            .map_err(|error| format!("Failed to poll {program}: {error}"))?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .map_err(|error| format!("Failed to collect {program} output: {error}"))?;
+            return Ok(SshCommandOutput {
+                command: display_command.to_string(),
+                stdout: redact_sensitive(&String::from_utf8_lossy(&output.stdout)),
+                stderr: redact_sensitive(&String::from_utf8_lossy(&output.stderr)),
+                exit_code: output.status.code(),
+                duration_ms: duration_ms(start),
+                timed_out: false,
+            });
+        }
+
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let output = child.wait_with_output().map_err(|error| {
+                format!("Failed to collect timed-out {program} output: {error}")
+            })?;
+            return Ok(SshCommandOutput {
+                command: display_command.to_string(),
+                stdout: redact_sensitive(&String::from_utf8_lossy(&output.stdout)),
+                stderr: redact_sensitive(&String::from_utf8_lossy(&output.stderr)),
+                exit_code: output.status.code(),
+                duration_ms: duration_ms(start),
+                timed_out: true,
+            });
+        }
+
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+pub fn redact_sensitive(input: &str) -> String {
+    let mut lines = Vec::new();
+    let mut in_private_key = false;
+
+    for line in input.lines() {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("begin") && lower.contains("private key") {
+            lines.push("[redacted private key material]".into());
+            in_private_key = true;
+            continue;
+        }
+        if in_private_key {
+            if lower.contains("end") && lower.contains("private key") {
+                in_private_key = false;
+            }
+            continue;
+        }
+        lines.push(redact_sensitive_line(line));
+    }
+
+    lines.join("\n")
+}
+
+fn redact_password(input: &str, password: &str) -> String {
+    if password.is_empty() {
+        input.to_string()
+    } else {
+        input.replace(password, "[redacted]")
+    }
+}
+
+fn redact_sensitive_line(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    if lower.contains("private key") {
+        return "[redacted private key material]".into();
+    }
+
+    let mut redacted = Vec::new();
+    for token in line.split_whitespace() {
+        redacted.push(redact_sensitive_token(token));
+    }
+    let mut next = redacted.join(" ");
+
+    for key in [
+        "password",
+        "passphrase",
+        "token",
+        "secret",
+        "api_key",
+        "apikey",
+    ] {
+        next = redact_key_value(&next, key);
+    }
+
+    next
+}
+
+fn redact_sensitive_token(token: &str) -> String {
+    let trimmed = token.trim_matches(|ch: char| matches!(ch, '"' | '\'' | ',' | ';'));
+    if trimmed.starts_with("sk-")
+        || trimmed.starts_with("ghp_")
+        || trimmed.starts_with("github_pat_")
+        || trimmed.starts_with("xoxb-")
+    {
+        token.replace(trimmed, "[redacted]")
+    } else {
+        token.to_string()
+    }
+}
+
+fn redact_key_value(line: &str, key: &str) -> String {
+    let mut output = Vec::new();
+    for part in line.split_whitespace() {
+        let lower = part.to_ascii_lowercase();
+        let prefix_eq = format!("{key}=");
+        let prefix_colon = format!("{key}:");
+        if lower.starts_with(&prefix_eq) {
+            output.push(format!("{}=[redacted]", &part[..key.len()]));
+        } else if lower.starts_with(&prefix_colon) {
+            output.push(format!("{}:[redacted]", &part[..key.len()]));
+        } else {
+            output.push(part.to_string());
+        }
+    }
+    output.join(" ")
+}
+
 fn ssh_dir() -> Result<PathBuf, String> {
     let profile = env::var_os("USERPROFILE")
         .map(PathBuf::from)
-        .ok_or_else(|| "USERPROFILE is not set; cannot locate the Windows .ssh directory.".to_string())?;
+        .ok_or_else(|| {
+            "USERPROFILE is not set; cannot locate the Windows .ssh directory.".to_string()
+        })?;
     Ok(profile.join(".ssh"))
 }
 
@@ -280,6 +1099,118 @@ fn command_available(command: &str) -> bool {
     }
 }
 
+fn expand_local_path(input: &str) -> Result<PathBuf, String> {
+    let mut value = input.trim().to_string();
+    if value.starts_with("%USERPROFILE%") {
+        let profile = env::var("USERPROFILE")
+            .map_err(|_| "USERPROFILE is not set; cannot expand IdentityFile.".to_string())?;
+        value = value.replacen("%USERPROFILE%", &profile, 1);
+    } else if value == "~" || value.starts_with("~/") || value.starts_with("~\\") {
+        let profile = env::var("USERPROFILE")
+            .map_err(|_| "USERPROFILE is not set; cannot expand IdentityFile.".to_string())?;
+        value = format!("{profile}{}", &value[1..]);
+    }
+    Ok(PathBuf::from(value))
+}
+
+fn public_key_path_for(private_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.pub", private_path.to_string_lossy()))
+}
+
+fn read_public_key(public_path: &Path) -> Result<String, String> {
+    fs::read_to_string(public_path)
+        .map(|content| content.trim().to_string())
+        .map_err(|error| {
+            format!(
+                "Failed to read public key {}: {error}",
+                path_string(public_path)
+            )
+        })
+        .and_then(|content| {
+            if content.is_empty() {
+                Err(format!("Public key is empty: {}", path_string(public_path)))
+            } else {
+                Ok(content)
+            }
+        })
+}
+
+fn generate_keypair_at(private_path: &Path) -> Result<(), String> {
+    if !command_available("ssh-keygen") {
+        return Err(
+            "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
+        );
+    }
+    if let Some(parent) = private_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create SSH key directory: {error}"))?;
+    }
+    let comment = format!(
+        "codexhub@{}",
+        env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
+    );
+    let output = Command::new("ssh-keygen")
+        .arg("-t")
+        .arg("ed25519")
+        .arg("-f")
+        .arg(private_path)
+        .arg("-N")
+        .arg("")
+        .arg("-C")
+        .arg(comment)
+        .output()
+        .map_err(|error| format!("Failed to run ssh-keygen: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("ssh-keygen failed: {}", process_detail(&output)))
+    }
+}
+
+fn derive_public_key(private_path: &Path, public_path: &Path) -> Result<(), String> {
+    if !command_available("ssh-keygen") {
+        return Err(
+            "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
+        );
+    }
+    let output = Command::new("ssh-keygen")
+        .arg("-y")
+        .arg("-f")
+        .arg(private_path)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("Failed to derive public key: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Could not derive public key from {}: {}",
+            path_string(private_path),
+            process_detail(&output)
+        ));
+    }
+    let public_key = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if public_key.is_empty() {
+        return Err(format!(
+            "ssh-keygen returned an empty public key for {}",
+            path_string(private_path)
+        ));
+    }
+    fs::write(public_path, format!("{public_key}\n")).map_err(|error| {
+        format!(
+            "Failed to write derived public key {}: {error}",
+            path_string(public_path)
+        )
+    })
+}
+
+fn process_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return redact_sensitive(&stderr);
+    }
+    redact_sensitive(String::from_utf8_lossy(&output.stdout).trim())
+}
+
 fn read_optional_config(path: &Path) -> Result<(String, bool), String> {
     if path.exists() {
         fs::read_to_string(path)
@@ -290,9 +1221,14 @@ fn read_optional_config(path: &Path) -> Result<(String, bool), String> {
     }
 }
 
-fn write_config_with_backup(path: &Path, content: &str, existed: bool) -> Result<Option<PathBuf>, String> {
+fn write_config_with_backup(
+    path: &Path,
+    content: &str,
+    existed: bool,
+) -> Result<Option<PathBuf>, String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("Failed to create .ssh directory: {error}"))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create .ssh directory: {error}"))?;
     }
 
     let backup_path = if existed {
@@ -315,7 +1251,7 @@ fn write_config_with_backup(path: &Path, content: &str, existed: bool) -> Result
 
 fn normalize_draft(draft: SshHostDraft) -> Result<SshHostDraft, String> {
     Ok(SshHostDraft {
-        alias: normalize_alias(&draft.alias)?,
+        alias: validate_ssh_alias(&draft.alias)?,
         host_name: normalize_required("HostName", &draft.host_name)?,
         port: normalize_port(draft.port)?,
         user: normalize_required("User", &draft.user)?,
@@ -359,14 +1295,139 @@ fn host_from_draft(draft: &SshHostDraft) -> SshConfigHost {
         user: draft.user.clone(),
         identity_file: draft.identity_file.clone(),
         managed: true,
+        source: "managed".into(),
     }
 }
 
+#[cfg(test)]
 fn parse_managed_hosts(content: &str) -> Result<Vec<SshConfigHost>, String> {
     Ok(scan_managed_blocks(content)?
         .into_iter()
         .map(|block| block.host)
         .collect())
+}
+
+fn parse_all_ssh_config_hosts(content: &str) -> Result<Vec<SshConfigHost>, String> {
+    let managed_blocks = scan_managed_blocks(content)?;
+    let managed_ranges: Vec<Range<usize>> = managed_blocks
+        .iter()
+        .map(|block| block.range.clone())
+        .collect();
+    let mut hosts = Vec::new();
+    let mut seen = HashSet::new();
+
+    for block in managed_blocks {
+        if validate_ssh_alias(&block.host.alias).is_ok() {
+            seen.insert(block.host.alias.to_ascii_lowercase());
+            hosts.push(block.host);
+        }
+    }
+
+    for host in parse_unmanaged_hosts(content, &managed_ranges)? {
+        let key = host.alias.to_ascii_lowercase();
+        if seen.insert(key) {
+            hosts.push(host);
+        }
+    }
+
+    Ok(hosts)
+}
+
+fn parse_unmanaged_hosts(
+    content: &str,
+    managed_ranges: &[Range<usize>],
+) -> Result<Vec<SshConfigHost>, String> {
+    let lines = split_lines_inclusive(content);
+    let mut hosts = Vec::new();
+    let mut aliases: Vec<String> = Vec::new();
+    let mut host_name = String::new();
+    let mut port = 22;
+    let mut user = String::new();
+    let mut identity_file = String::new();
+
+    for (index, raw_line) in lines.iter().enumerate() {
+        if managed_ranges.iter().any(|range| range.contains(&index)) {
+            continue;
+        }
+
+        let line = trim_line(raw_line).trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let Some((keyword, value)) = split_directive(line) else {
+            continue;
+        };
+
+        if keyword.eq_ignore_ascii_case("Host") {
+            push_unmanaged_hosts(
+                &mut hosts,
+                &aliases,
+                &host_name,
+                port,
+                &user,
+                &identity_file,
+            );
+            aliases = value.split_whitespace().map(str::to_string).collect();
+            host_name.clear();
+            port = 22;
+            user.clear();
+            identity_file.clear();
+            continue;
+        }
+
+        if aliases.is_empty() {
+            continue;
+        }
+
+        match keyword.to_ascii_lowercase().as_str() {
+            "hostname" => host_name = unquote(value).to_string(),
+            "port" => {
+                if let Ok(parsed_port) = value.parse::<u16>() {
+                    port = parsed_port;
+                }
+            }
+            "user" => user = unquote(value).to_string(),
+            "identityfile" => identity_file = unquote(value).to_string(),
+            _ => {}
+        }
+    }
+
+    push_unmanaged_hosts(
+        &mut hosts,
+        &aliases,
+        &host_name,
+        port,
+        &user,
+        &identity_file,
+    );
+
+    Ok(hosts)
+}
+
+fn push_unmanaged_hosts(
+    hosts: &mut Vec<SshConfigHost>,
+    aliases: &[String],
+    host_name: &str,
+    port: u16,
+    user: &str,
+    identity_file: &str,
+) {
+    for alias in aliases {
+        if validate_ssh_alias(alias).is_err() {
+            continue;
+        }
+
+        hosts.push(SshConfigHost {
+            alias: alias.clone(),
+            host_name: host_name.to_string(),
+            port,
+            user: user.to_string(),
+            identity_file: identity_file.to_string(),
+            managed: false,
+            source: "unmanaged-readonly".into(),
+        });
+    }
 }
 
 fn upsert_managed_host_block(content: &str, draft: &SshHostDraft) -> Result<String, String> {
@@ -421,8 +1482,16 @@ fn scan_managed_blocks(content: &str) -> Result<Vec<ManagedBlock>, String> {
         if let Some(alias) = trimmed.strip_prefix(MANAGED_START_PREFIX) {
             let alias = alias.trim().to_string();
             let end = (index + 1..lines.len())
-                .find(|line_index| trim_line(&lines[*line_index]).trim().starts_with(MANAGED_END_PREFIX))
-                .ok_or_else(|| format!("Malformed CodexHub managed Host block for {alias}: missing end marker."))?;
+                .find(|line_index| {
+                    trim_line(&lines[*line_index])
+                        .trim()
+                        .starts_with(MANAGED_END_PREFIX)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Malformed CodexHub managed Host block for {alias}: missing end marker."
+                    )
+                })?;
             let host = parse_host_from_lines(&lines[index..=end], Some(alias.clone()))?;
             blocks.push(ManagedBlock {
                 alias,
@@ -438,7 +1507,10 @@ fn scan_managed_blocks(content: &str) -> Result<Vec<ManagedBlock>, String> {
     Ok(blocks)
 }
 
-fn parse_host_from_lines(lines: &[String], managed_alias: Option<String>) -> Result<SshConfigHost, String> {
+fn parse_host_from_lines(
+    lines: &[String],
+    managed_alias: Option<String>,
+) -> Result<SshConfigHost, String> {
     let mut alias = managed_alias.unwrap_or_default();
     let mut host_name = String::new();
     let mut port = 22;
@@ -456,7 +1528,11 @@ fn parse_host_from_lines(lines: &[String], managed_alias: Option<String>) -> Res
         match keyword.to_ascii_lowercase().as_str() {
             "host" => {
                 if alias.is_empty() {
-                    alias = value.split_whitespace().next().unwrap_or_default().to_string();
+                    alias = value
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_string();
                 }
             }
             "hostname" => host_name = unquote(value).to_string(),
@@ -478,6 +1554,7 @@ fn parse_host_from_lines(lines: &[String], managed_alias: Option<String>) -> Res
         user,
         identity_file,
         managed: true,
+        source: "managed".into(),
     })
 }
 
@@ -575,6 +1652,10 @@ fn timestamp_millis() -> u128 {
         .as_millis()
 }
 
+fn duration_ms(start: Instant) -> u64 {
+    start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,6 +1683,26 @@ mod tests {
     }
 
     #[test]
+    fn parser_returns_managed_and_unmanaged_readonly_hosts() {
+        let content = "Host github.com *.example.com *\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User jurio\n    IdentityFile C:\\Users\\PC\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\nHost runner\n    HostName 10.0.0.6\n    User codex\n";
+
+        let hosts = parse_all_ssh_config_hosts(content).expect("parse all hosts");
+
+        assert_eq!(
+            hosts
+                .iter()
+                .map(|host| host.alias.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lab", "github.com", "runner"]
+        );
+        assert_eq!(hosts[0].source, "managed");
+        assert_eq!(hosts[1].source, "unmanaged-readonly");
+        assert!(!hosts
+            .iter()
+            .any(|host| host.alias == "*" || host.alias == "*.example.com"));
+    }
+
+    #[test]
     fn add_managed_block_to_empty_config() {
         let next = upsert_managed_host_block("", &draft("lab")).expect("upsert");
 
@@ -621,7 +1722,8 @@ mod tests {
 
     #[test]
     fn update_managed_block_in_place() {
-        let first = upsert_managed_host_block("Host github.com\n    User git\n", &draft("lab")).expect("first");
+        let first = upsert_managed_host_block("Host github.com\n    User git\n", &draft("lab"))
+            .expect("first");
         let mut changed = draft("lab");
         changed.host_name = "10.1.2.3".into();
         changed.port = 2200;
@@ -653,8 +1755,9 @@ mod tests {
 
     #[test]
     fn unmanaged_alias_detection_ignores_managed_blocks() {
-        let content = upsert_managed_host_block("Host *.example.com other\n    User test\n", &draft("lab"))
-            .expect("add");
+        let content =
+            upsert_managed_host_block("Host *.example.com other\n    User test\n", &draft("lab"))
+                .expect("add");
         let aliases = unmanaged_aliases(&content).expect("aliases");
 
         assert!(aliases.contains(&"*.example.com".to_string()));
@@ -669,9 +1772,10 @@ mod tests {
         let config = root.join("config");
         fs::write(&config, "Host old\n    HostName old.example\n").expect("write config");
 
-        let backup = write_config_with_backup(&config, "Host new\n    HostName new.example\n", true)
-            .expect("write with backup")
-            .expect("backup path");
+        let backup =
+            write_config_with_backup(&config, "Host new\n    HostName new.example\n", true)
+                .expect("write with backup")
+                .expect("backup path");
 
         assert!(backup.exists());
         assert_eq!(
@@ -684,5 +1788,113 @@ mod tests {
         );
 
         fs::remove_dir_all(root).expect("cleanup temp root");
+    }
+
+    #[test]
+    fn ssh_alias_validation_rejects_wildcards_options_and_shell_tokens() {
+        assert!(validate_ssh_alias("lab-box_01").is_ok());
+        assert!(validate_ssh_alias("-oProxyCommand=bad").is_err());
+        assert!(validate_ssh_alias("*.example.com").is_err());
+        assert!(validate_ssh_alias("lab;rm").is_err());
+        assert!(validate_ssh_alias("two words").is_err());
+    }
+
+    #[test]
+    fn keyboard_interactive_password_prompt_receives_password_even_when_echo_is_set() {
+        let prompt = client::Prompt {
+            prompt: "Password:".into(),
+            echo: true,
+        };
+
+        assert_eq!(
+            keyboard_interactive_response(&prompt, "secret-pass", 1),
+            "secret-pass"
+        );
+    }
+
+    #[test]
+    fn keyboard_interactive_single_hidden_prompt_receives_password() {
+        let prompt = client::Prompt {
+            prompt: "Response:".into(),
+            echo: false,
+        };
+
+        assert_eq!(
+            keyboard_interactive_response(&prompt, "secret-pass", 1),
+            "secret-pass"
+        );
+    }
+
+    #[test]
+    fn ssh_script_is_sent_as_one_remote_command_argument() {
+        let (_, _, args) =
+            build_ssh_args("lab", vec!["uname -m".into()], 10_000, Vec::new()).expect("build args");
+
+        assert_eq!(args.last().map(String::as_str), Some("uname -m"));
+        assert!(!args.iter().any(|arg| arg == "sh" || arg == "-lc"));
+    }
+
+    #[test]
+    fn accept_new_option_is_before_host_alias() {
+        let (_, _, args) = build_ssh_args(
+            "lab",
+            vec!["echo".into(), "ok".into()],
+            10_000,
+            vec![("StrictHostKeyChecking".into(), "accept-new".into())],
+        )
+        .expect("build args");
+
+        let host_index = args
+            .iter()
+            .position(|arg| arg == "lab")
+            .expect("host alias");
+        let option_index = args
+            .iter()
+            .position(|arg| arg == "StrictHostKeyChecking=accept-new")
+            .expect("accept-new option");
+        assert!(option_index < host_index);
+    }
+
+    #[test]
+    fn process_timeout_kills_child() {
+        #[cfg(windows)]
+        let (program, args) = (
+            "powershell",
+            vec![
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Start-Sleep -Seconds 2".to_string(),
+            ],
+        );
+        #[cfg(not(windows))]
+        let (program, args) = ("sh", vec!["-c".to_string(), "sleep 2".to_string()]);
+
+        let output =
+            run_process_with_timeout(program, &args, "sleep", 100).expect("run timeout process");
+
+        assert!(output.timed_out);
+    }
+
+    #[test]
+    fn redaction_removes_secret_like_output() {
+        let output = redact_sensitive(
+            "token=sk-test123 password=hunter2\n-----BEGIN OPENSSH PRIVATE KEY-----\nabc123\n-----END OPENSSH PRIVATE KEY-----\nplain text",
+        );
+
+        assert!(output.contains("token=[redacted]"));
+        assert!(output.contains("password=[redacted]"));
+        assert!(output.contains("[redacted private key material]"));
+        assert!(output.contains("plain text"));
+        assert!(!output.contains("sk-test123"));
+        assert!(!output.contains("hunter2"));
+        assert!(!output.contains("abc123"));
+    }
+
+    #[test]
+    fn redaction_removes_one_time_password_value() {
+        let output = redact_password("Permission denied for password s3cret-pass", "s3cret-pass");
+
+        assert!(output.contains("[redacted]"));
+        assert!(!output.contains("s3cret-pass"));
     }
 }

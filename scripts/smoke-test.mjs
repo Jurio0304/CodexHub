@@ -73,10 +73,15 @@ for (const command of [
   "upsert_ssh_config_host",
   "delete_ssh_config_host",
   "list_hosts",
+  "refresh_discovered_hosts",
   "add_host",
   "update_host",
   "delete_host",
   "test_ssh_connection",
+  "ssh_check",
+  "bootstrap_ssh_host",
+  "bootstrap_existing_ssh_host",
+  "remote_probe_codex",
   "list_profiles",
   "apply_profile",
   "list_tasks"
@@ -85,8 +90,26 @@ for (const command of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font"]) {
+for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font", "Detected SSH hosts", "stdout", "stderr", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
+}
+if (app.includes("onAddHost={")) fail("Dashboard or non-Hosts Add Server handler should not remain");
+if (!app.includes("if (!result.ok)")) fail("SSH bootstrap modal must not treat failed results as success");
+if (!app.includes('result.writeResult.action === "rolled_back"')) fail("failed new SSH bootstrap should refresh only after managed-block rollback");
+if (app.includes('placeholder="10.39.2.30"') || app.includes('placeholder="jy"')) fail("SSH Host modal placeholders must not contain personal host details");
+if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay open after successful connection");
+if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
+if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");
+if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
+
+const api = read("src/api.ts");
+for (const token of ["connectSshHost", "ssh-bootstrap-progress", "mockSshBootstrapHostWithProgress"]) {
+  if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
+}
+
+const models = read("src/models.ts");
+for (const token of ["SshBootstrapProgressEvent", "password_login", "verify_alias_login"]) {
+  if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
 
 const settings = read("src/settings.ts");
@@ -100,6 +123,9 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 const styles = read("src/styles.css");
 for (const token of ["--font-ui", "--font-mono", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
+}
+for (const token of ["modalBackdrop", "bootstrapLogCard", "stepIcon.success", "stepIcon.failed"]) {
+  if (!styles.includes(token)) fail(`missing SSH modal style token: ${token}`);
 }
 
 console.log("SMOKE PASS: CodexHub docs and Tauri skeleton are present.");
