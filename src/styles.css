@@ -266,11 +266,11 @@ dd {
 }
 
 .topBar h1 {
-  margin-top: 8px;
+  margin-top: 0;
   color: var(--text);
   font-size: clamp(2.1rem, 4vw, 3.6rem);
   line-height: 0.96;
-  letter-spacing: -0.035em;
+  letter-spacing: 0;
 }
 
 .topBar p,
@@ -293,6 +293,10 @@ dd {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.tableActions {
+  flex-wrap: wrap;
 }
 
 .pageGrid,
@@ -504,6 +508,11 @@ dd {
 .badge[data-tone="blue"] { color: var(--blue); }
 .badge[data-tone="gray"] { color: var(--gray); }
 
+.largeStatus .badge {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
 .primaryButton,
 .secondaryButton,
 .tertiaryButton,
@@ -552,10 +561,6 @@ dd {
 
 .hostCardActions .tertiaryButton {
   margin-top: 0;
-}
-
-.profileCodexBar {
-  min-height: 0;
 }
 
 .linkButton {
@@ -660,6 +665,55 @@ td span {
 
 tr:last-child td {
   border-bottom: 0;
+}
+
+.sshHostsTable {
+  min-width: 0;
+  table-layout: auto;
+}
+
+.sshHostsTable th,
+.sshHostsTable td {
+  padding: 11px 9px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.sshHostsTable td strong {
+  display: inline;
+}
+
+.sshHostsTable .badge {
+  max-width: 100%;
+  line-height: 1.15;
+  white-space: normal;
+}
+
+.sshHostsTable .tableActions {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.sshHostsTable .sshHostsActionGroup {
+  width: max-content;
+  max-width: 100%;
+}
+
+.sshHostsTable .miniButton {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.sshHostsPortCol {
+  white-space: nowrap;
+}
+
+.sshHostsActionsCol,
+.sshHostsCodexCol {
+  white-space: nowrap;
 }
 
 .selectableRow {
@@ -953,6 +1007,39 @@ tr:last-child td {
   .cardGrid {
     grid-template-columns: 1fr;
   }
+
+  .sshHostsTable th,
+  .sshHostsTable td {
+    padding: 9px 6px;
+    font-size: 0.82rem;
+  }
+
+  .sshHostsTable th {
+    font-size: 0.68rem;
+  }
+
+  .sshHostsTable .miniButton {
+    padding: 4px 5px;
+    font-size: 0.74rem;
+  }
+
+  .sshHostsTable .badge {
+    padding: 3px 6px;
+    font-size: 0.7rem;
+  }
+
+  .sshHostsTable .tableActions {
+    flex-wrap: wrap;
+  }
+
+  .sshHostsTable .sshHostsActionGroup {
+    width: auto;
+  }
+
+  .sshHostsActionsCol,
+  .sshHostsCodexCol {
+    white-space: normal;
+  }
 }
 
 @media (max-width: 560px) {
@@ -978,6 +1065,26 @@ tr:last-child td {
   .topActions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .sshHostsTable th,
+  .sshHostsTable td {
+    padding: 8px 4px;
+    font-size: 0.78rem;
+  }
+
+  .sshHostsTable th {
+    font-size: 0.62rem;
+    letter-spacing: 0.04em;
+  }
+
+  .sshHostsTable .tableActions {
+    gap: 4px;
+  }
+
+  .sshHostsTable .miniButton {
+    padding: 3px 4px;
+    font-size: 0.7rem;
   }
 }
 
@@ -1161,22 +1268,16 @@ button:disabled {
 
 .codexOperationHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding-right: 44px;
 }
 
 .codexOperationHeader h2 {
-  margin: 2px 0 4px;
+  margin: 0;
   font-size: 1.28rem;
   letter-spacing: 0;
-}
-
-.codexOperationHeader p {
-  margin: 0;
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
 }
 
 .codexOperationSummary {
@@ -1225,10 +1326,12 @@ button:disabled {
 }
 
 .codexOperationLogRows {
-  display: grid;
-  gap: 7px;
+  display: block;
   max-height: 260px;
   overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
 }
 
 .codexOperationLogRow {
@@ -1236,11 +1339,16 @@ button:disabled {
   grid-template-columns: 66px minmax(0, 1fr);
   gap: 6px 10px;
   align-items: start;
-  border: 1px solid var(--border);
+  border: 0;
+  border-bottom: 1px solid var(--border);
   border-left: 3px solid var(--gray);
-  border-radius: 10px;
-  padding: 9px 10px;
-  background: var(--surface-solid);
+  border-radius: 0;
+  padding: 8px 10px;
+  background: transparent;
+}
+
+.codexOperationLogRow:last-child {
+  border-bottom: 0;
 }
 
 .codexOperationLogRow[data-level="info"] {
@@ -1264,15 +1372,18 @@ button:disabled {
   color: var(--text);
   font-size: 0.86rem;
   line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .codexOperationLogRow code {
   grid-column: 2;
   min-width: 0;
-  overflow: hidden;
   color: var(--text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .codexOperationActions {

@@ -283,7 +283,7 @@ export const fallbackSshConfigHosts: SshConfigHost[] = [
     user: "jurio",
     identityFile: "~/.ssh/id_ed25519",
     managed: false,
-    source: "unmanaged-readonly"
+    source: "local"
   },
   {
     alias: "linux-runner",
@@ -499,6 +499,7 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
   return {
     hostAlias: host.hostAlias,
     sshStatus: "online",
+    latencyMs: host.latencyMs,
     os: host.os,
     arch: host.arch,
     shell: host.shell,

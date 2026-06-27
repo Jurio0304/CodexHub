@@ -11,7 +11,7 @@ export type Host = {
   id: string;
   name: string;
   hostAlias: string;
-  source: "managed" | "unmanaged-readonly" | "mock" | "manual" | string;
+  source: "managed" | "local" | "mock" | "manual" | string;
   address: string;
   port: number;
   username: string;
@@ -142,6 +142,7 @@ export type SshBootstrapProgressEvent = {
 export type RemoteProbeResult = {
   hostAlias: string;
   sshStatus: HostStatus;
+  latencyMs: number | null;
   os: string;
   arch: string;
   shell: string;
@@ -216,7 +217,7 @@ export type SshHostDraft = {
 
 export type SshConfigHost = SshHostDraft & {
   managed: boolean;
-  source: "managed" | "unmanaged-readonly" | "mock" | string;
+  source: "managed" | "local" | "mock" | string;
 };
 
 export type SshConfigWriteResult = {

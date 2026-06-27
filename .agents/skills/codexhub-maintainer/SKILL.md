@@ -9,7 +9,7 @@ description: Use this project skill when developing, reviewing, testing, or main
 
 CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的 SSH 多服务器工作流。MVP 以 Tauri 2 + React + TypeScript + Vite + Rust 实现，通过 Windows OpenSSH/SSH/SFTP 管理远端 Codex 配置和技能目录，而不是替代 Codex App。
 
-当前进展：Window 2 已有桌面 UI 壳、本地外观设置持久化、本地 SSH key 状态检测、非覆盖式 Ed25519 key 生成，以及 `%USERPROFILE%\.ssh\config` 中 CodexHub 托管 Host 块的增删改查。远端 SSH/SFTP 配置读写、profile apply、skill sync 仍以 mock/预留命令为主。
+当前进展：Window 2 已有桌面 UI 壳、本地外观设置持久化、本地 SSH key 状态检测、非覆盖式 Ed25519 key 生成，以及 `%USERPROFILE%\.ssh\config` 中 CodexHub 托管与本地 Host 块的统一增删改查。主机页已经收敛远端 Codex 探测、安装、更新入口；配置页保留为空壳。远端 SSH/SFTP 配置读写、profile apply、skill sync 仍以 mock/预留命令为主。
 
 ## 开发优先级
 
@@ -23,8 +23,9 @@ CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的
 ## 安全边界
 
 - 不读取、显示、存储 SSH 私钥、passphrase、OpenAI token 或远端 secret；UI 只可返回/复制 public key。
-- 不整体覆盖 `%USERPROFILE%\.ssh\config`；只修改 `# >>> CodexHub managed host: <alias>` 到 `# <<< CodexHub managed host: <alias>` 标记块。
-- 若目标 alias 已存在于非托管 Host 块，必须拒绝覆盖并提示用户手动处理。
+- 不整体覆盖 `%USERPROFILE%\.ssh\config`；写入前创建 timestamped backup，只精确修改目标 Host 块或目标 alias。
+- CodexHub 托管块继续使用 `# >>> CodexHub managed host: <alias>` 到 `# <<< CodexHub managed host: <alias>` 标记；本地非托管块可统一编辑/删除，但必须保留无关内容、注释和其他 Host。
+- 本地单别名 Host 块可整块替换或删除；本地多别名 Host 块编辑时拆出目标 alias 的独立 Host 块，删除时只移除目标 alias。
 - 修改既有本地或远端文件前创建 timestamped backup；内容未变时报告 no changes，不制造新备份。
 - 操作日志和错误信息默认去除 key material、token、passphrase；必要时再考虑用户名/主机名脱敏。
 - Codex App 集成只能给出 Settings > Codex > Connections 的手动引导，除非后续有公开稳定 API。
@@ -58,6 +59,8 @@ cd src-tauri; cargo test
 ```
 
 如果本机 `node` 或 `pnpm` 不可用，优先使用 Codex 桌面提供的 bundled Node/pnpm 路径。完整 Tauri 桌面验证需要 Node 20+、pnpm、Rust stable MSVC、WebView2 和 Windows OpenSSH。
+
+不要打开 Codex App 内置浏览器做视觉或运行时检查：当前内置浏览器存在打开后导致 Codex App 闪退的已知问题。优先使用静态断言、CLI 验证、用户提供截图，必要时先征得用户同意再用外部浏览器或无头 Playwright。
 
 ## 维护流程
 

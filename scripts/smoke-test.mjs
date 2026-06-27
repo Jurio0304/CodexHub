@@ -98,18 +98,32 @@ for (const asyncCommand of ["async fn ssh_check", "async fn remote_probe_codex",
 if (!rustLib.includes("spawn_blocking(command)")) fail("long remote commands should run through the blocking worker pool");
 
 const app = read("src/App.tsx");
-for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font", "Detected SSH hosts", "stdout", "stderr", "Remote Codex", "Install Codex", "Update Codex", "Check Version", "Batch install", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
+for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font", "SSH Hosts", "Host IP", "Codex版本", "Test all", "一键测试", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
-if (!app.includes("profileCodexBar")) fail("Profiles page should expose the compact all-host remote Codex list");
+if (!app.includes("function ProfilesView()")) fail("Profiles page should be intentionally empty until config editing is implemented");
+if (app.includes("profileCodexBar")) fail("Profiles page should not expose the all-host remote Codex list");
 if (!app.includes("CodexOperationModal")) fail("Install/update should show a compact Codex operation progress modal");
 if (!app.includes("codexOperationModal")) fail("Codex operation modal state should be wired in App");
 if (!app.includes("RemoteCodexProgressEvent")) fail("Codex operation modal should consume real progress events");
+if (app.includes('event.status === "success" ? "success"') || app.includes('event.status === "failed" ? "failed"')) fail("Codex operation modal status should only change from the final result or catch path");
+if (!app.includes("logRowsRef") || !app.includes("logRows.scrollTop = logRows.scrollHeight") || !app.includes("ref={logRowsRef}")) fail("Codex operation log should auto-scroll to the latest row");
+if (app.includes('<div className="eyebrow">{copy.codexOperation.title}</div>') || app.includes("{operation.hostName} · {operation.hostAlias}")) fail("Codex operation header should only keep the title and status badge");
 if (app.includes("profileCard")) fail("Profiles page should use a compact table list instead of profile cards");
 if (app.includes("onApplyProfile")) fail("Profiles page should not show the old profile apply card/list actions");
-if (app.includes("onManageCodex(host.alias")) fail("Detected SSH hosts table should not expose remote Codex maintenance actions");
+if (!app.includes('onManageCodex(sshHost.alias, "install")') || !app.includes('onManageCodex(sshHost.alias, "update")')) fail("SSH Hosts table should expose remote Codex install/update actions");
+if (!app.includes('installCodex: "安装"') || !app.includes('updateCodex: "更新"')) fail("SSH Hosts Codex buttons should use short install/update labels");
+if (!app.includes('className="sshHostsTable"') || !app.includes("sshHostsActionsCol") || !app.includes("sshHostsCodexCol")) fail("SSH Hosts table should use the compact responsive table layout");
+if (app.includes('<td className="tableActions')) fail("SSH Hosts action cells must remain table cells; put flex on an inner button group");
+if (!app.includes('className="tableActions sshHostsActionGroup"')) fail("SSH Hosts action buttons should be wrapped in an inner flex group");
 if (app.includes("HostDetailsPanel copy={copy} host={selectedHost} hostBusy")) fail("Host details should not own remote Codex maintenance actions");
 if (app.includes("onAddHost={")) fail("Dashboard or non-Hosts Add Server handler should not remain");
+if (app.includes("<th>{copy.hosts.identityFile}</th>")) fail("SSH Hosts table should not show IdentityFile as a column");
+if (app.includes("onProbeHost")) fail("Probe button path should be removed from the UI");
+if (app.includes("existingHosts")) fail("Existing app hosts card should be removed");
+if (app.includes("<strong>{health.mode}</strong>")) fail("Sidebar footer should show Backend mode, not raw backend value");
+if (app.includes("{health.mode}</Badge>")) fail("UI should not render raw backend mode badges");
+if (app.includes("PATH 含 ~/.local/bin")) fail("Host details should show test latency instead of PATH local-bin status");
 if (!app.includes("if (!result.ok)")) fail("SSH bootstrap modal must not treat failed results as success");
 if (!app.includes('result.writeResult.action === "rolled_back"')) fail("failed new SSH bootstrap should refresh only after managed-block rollback");
 if (app.includes('placeholder="10.39.2.30"') || app.includes('placeholder="jy"')) fail("SSH Host modal placeholders must not contain personal host details");
@@ -143,5 +157,13 @@ for (const token of ["--font-ui", "--font-mono", "font-family: var(--font-ui)", 
 for (const token of ["modalBackdrop", "bootstrapLogCard", "stepIcon.success", "stepIcon.failed"]) {
   if (!styles.includes(token)) fail(`missing SSH modal style token: ${token}`);
 }
+for (const token of ["sshHostsTable", "table-layout: auto", "flex-wrap: nowrap", ".sshHostsCodexCol"]) {
+  if (!styles.includes(token)) fail(`missing SSH Hosts responsive table style token: ${token}`);
+}
+const codexLogRowsStyle = styles.match(/\.codexOperationLogRows\s*\{[^}]*\}/)?.[0] ?? "";
+if (!codexLogRowsStyle.includes("border: 1px solid var(--border)") || !codexLogRowsStyle.includes("background: var(--surface-muted)")) fail("Codex operation logs should render inside one unified panel");
+const codexLogCodeStyle = styles.match(/\.codexOperationLogRow code\s*\{[^}]*\}/)?.[0] ?? "";
+if (!codexLogCodeStyle.includes("overflow-wrap: anywhere") || !codexLogCodeStyle.includes("white-space: pre-wrap")) fail("Codex operation log detail should wrap long output");
+if (codexLogCodeStyle.includes("text-overflow") || codexLogCodeStyle.includes("white-space: nowrap")) fail("Codex operation log detail should not be ellipsized or forced onto one line");
 
 console.log("SMOKE PASS: CodexHub docs and Tauri skeleton are present.");

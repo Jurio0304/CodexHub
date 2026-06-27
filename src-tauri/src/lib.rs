@@ -218,6 +218,7 @@ struct SshBootstrapProgressEvent {
 struct RemoteProbeResult {
     host_alias: String,
     ssh_status: HostStatus,
+    latency_ms: Option<u64>,
     os: String,
     arch: String,
     shell: String,
@@ -1999,6 +2000,7 @@ fn run_remote_probe(
         return RemoteProbeResult {
             host_alias: alias,
             ssh_status: HostStatus::Offline,
+            latency_ms: None,
             os: "Unknown".into(),
             arch: "Unknown".into(),
             shell: "Unknown".into(),
@@ -2139,6 +2141,7 @@ fn run_remote_probe(
     RemoteProbeResult {
         host_alias: alias,
         ssh_status: HostStatus::Online,
+        latency_ms: Some(check_output.duration_ms),
         os,
         arch,
         shell,

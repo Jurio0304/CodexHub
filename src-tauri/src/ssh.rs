@@ -126,6 +126,25 @@ struct ManagedBlock {
     host: SshConfigHost,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalHostBlock {
+    aliases: Vec<String>,
+    range: Range<usize>,
+    host_name: String,
+    port: u16,
+    user: String,
+    identity_file: String,
+}
+
+struct LocalHostBlockBuilder {
+    aliases: Vec<String>,
+    start: usize,
+    host_name: String,
+    port: u16,
+    user: String,
+    identity_file: String,
+}
+
 pub fn get_ssh_status() -> Result<SshStatus, String> {
     let ssh_dir = ssh_dir()?;
     let config_path = ssh_dir.join("config");
@@ -248,14 +267,8 @@ pub fn prepare_ssh_config_host(draft: SshHostDraft) -> Result<SshConfigHost, Str
     let draft = normalize_draft(draft)?;
     let path = config_path()?;
     let (existing, _) = read_optional_config(&path)?;
-    if unmanaged_aliases(&existing)?
-        .iter()
-        .any(|alias| alias.eq_ignore_ascii_case(&draft.alias))
-    {
-        return Err(format!(
-            "Host {} already exists in an unmanaged SSH config block. CodexHub will not overwrite it.",
-            draft.alias
-        ));
+    if find_local_host_block(&existing, &draft.alias)?.is_some() {
+        return Ok(local_host_from_draft(&draft));
     }
     Ok(host_from_draft(&draft))
 }
@@ -712,24 +725,39 @@ pub fn upsert_ssh_config_host(draft: SshHostDraft) -> Result<SshConfigWriteResul
     let draft = normalize_draft(draft)?;
     let path = config_path()?;
     let (existing, existed) = read_optional_config(&path)?;
-    let next = upsert_managed_host_block(&existing, &draft)?;
+    let managed_exists = find_managed_host_block(&existing, &draft.alias)?.is_some();
+    let local_exists = find_local_host_block(&existing, &draft.alias)?.is_some();
+    let next = if managed_exists {
+        upsert_managed_host_block(&existing, &draft)?
+    } else if local_exists {
+        upsert_local_host_block(&existing, &draft)?
+    } else {
+        upsert_managed_host_block(&existing, &draft)?
+    };
 
     if next == existing {
+        let host = if local_exists {
+            local_host_from_draft(&draft)
+        } else {
+            host_from_draft(&draft)
+        };
         return Ok(SshConfigWriteResult {
             changed: false,
             action: "unchanged".into(),
             config_path: path_string(&path),
             backup_path: None,
-            host: Some(host_from_draft(&draft)),
+            host: Some(host),
             message: format!("Host {} is already up to date.", draft.alias),
         });
     }
 
     let backup_path = write_config_with_backup(&path, &next, existed)?;
-    let action = if find_managed_host_block(&existing, &draft.alias)?.is_some() {
-        "updated"
+    let (action, host, source_label) = if managed_exists {
+        ("updated", host_from_draft(&draft), "CodexHub-managed")
+    } else if local_exists {
+        ("local_updated", local_host_from_draft(&draft), "local")
     } else {
-        "added"
+        ("added", host_from_draft(&draft), "CodexHub-managed")
     };
 
     Ok(SshConfigWriteResult {
@@ -737,8 +765,11 @@ pub fn upsert_ssh_config_host(draft: SshHostDraft) -> Result<SshConfigWriteResul
         action: action.into(),
         config_path: path_string(&path),
         backup_path: backup_path.as_ref().map(|item| path_string(item)),
-        host: Some(host_from_draft(&draft)),
-        message: format!("Host {} was {} in SSH config.", draft.alias, action),
+        host: Some(host),
+        message: format!(
+            "Host {} was updated in the {source_label} SSH config block.",
+            draft.alias
+        ),
     })
 }
 
@@ -746,7 +777,15 @@ pub fn delete_ssh_config_host(alias: String) -> Result<SshConfigWriteResult, Str
     let alias = normalize_alias(&alias)?;
     let path = config_path()?;
     let (existing, existed) = read_optional_config(&path)?;
-    let next = delete_managed_host_block(&existing, &alias)?;
+    let managed_exists = find_managed_host_block(&existing, &alias)?.is_some();
+    let local_exists = find_local_host_block(&existing, &alias)?.is_some();
+    let next = if managed_exists {
+        delete_managed_host_block(&existing, &alias)?
+    } else if local_exists {
+        delete_local_host_block(&existing, &alias)?
+    } else {
+        existing.clone()
+    };
 
     if next == existing {
         return Ok(SshConfigWriteResult {
@@ -755,18 +794,23 @@ pub fn delete_ssh_config_host(alias: String) -> Result<SshConfigWriteResult, Str
             config_path: path_string(&path),
             backup_path: None,
             host: None,
-            message: format!("No CodexHub-managed Host {alias} was found."),
+            message: format!("No SSH config Host {alias} was found."),
         });
     }
 
     let backup_path = write_config_with_backup(&path, &next, existed)?;
+    let (action, source_label) = if managed_exists {
+        ("deleted", "CodexHub-managed")
+    } else {
+        ("local_deleted", "local")
+    };
     Ok(SshConfigWriteResult {
         changed: true,
-        action: "deleted".into(),
+        action: action.into(),
         config_path: path_string(&path),
         backup_path: backup_path.as_ref().map(|item| path_string(item)),
         host: None,
-        message: format!("Deleted CodexHub-managed Host {alias}."),
+        message: format!("Deleted Host {alias} from the {source_label} SSH config block."),
     })
 }
 
@@ -1666,6 +1710,18 @@ fn host_from_draft(draft: &SshHostDraft) -> SshConfigHost {
     }
 }
 
+fn local_host_from_draft(draft: &SshHostDraft) -> SshConfigHost {
+    SshConfigHost {
+        alias: draft.alias.clone(),
+        host_name: draft.host_name.clone(),
+        port: draft.port,
+        user: draft.user.clone(),
+        identity_file: draft.identity_file.clone(),
+        managed: false,
+        source: "local".into(),
+    }
+}
+
 #[cfg(test)]
 fn parse_managed_hosts(content: &str) -> Result<Vec<SshConfigHost>, String> {
     Ok(scan_managed_blocks(content)?
@@ -1690,30 +1746,42 @@ fn parse_all_ssh_config_hosts(content: &str) -> Result<Vec<SshConfigHost>, Strin
         }
     }
 
-    for host in parse_unmanaged_hosts(content, &managed_ranges)? {
-        let key = host.alias.to_ascii_lowercase();
-        if seen.insert(key) {
-            hosts.push(host);
+    for block in parse_local_host_blocks(content, &managed_ranges)? {
+        for alias in block.aliases {
+            if validate_ssh_alias(&alias).is_err() {
+                continue;
+            }
+            let key = alias.to_ascii_lowercase();
+            if seen.insert(key) {
+                hosts.push(SshConfigHost {
+                    alias,
+                    host_name: block.host_name.clone(),
+                    port: block.port,
+                    user: block.user.clone(),
+                    identity_file: block.identity_file.clone(),
+                    managed: false,
+                    source: "local".into(),
+                });
+            }
         }
     }
 
     Ok(hosts)
 }
 
-fn parse_unmanaged_hosts(
+fn parse_local_host_blocks(
     content: &str,
     managed_ranges: &[Range<usize>],
-) -> Result<Vec<SshConfigHost>, String> {
+) -> Result<Vec<LocalHostBlock>, String> {
     let lines = split_lines_inclusive(content);
-    let mut hosts = Vec::new();
-    let mut aliases: Vec<String> = Vec::new();
-    let mut host_name = String::new();
-    let mut port = 22;
-    let mut user = String::new();
-    let mut identity_file = String::new();
+    let mut blocks = Vec::new();
+    let mut current: Option<LocalHostBlockBuilder> = None;
 
     for (index, raw_line) in lines.iter().enumerate() {
         if managed_ranges.iter().any(|range| range.contains(&index)) {
+            if let Some(builder) = current.take() {
+                push_local_host_block(&mut blocks, builder, index);
+            }
             continue;
         }
 
@@ -1727,87 +1795,62 @@ fn parse_unmanaged_hosts(
         };
 
         if keyword.eq_ignore_ascii_case("Host") {
-            push_unmanaged_hosts(
-                &mut hosts,
-                &aliases,
-                &host_name,
-                port,
-                &user,
-                &identity_file,
-            );
-            aliases = value.split_whitespace().map(str::to_string).collect();
-            host_name.clear();
-            port = 22;
-            user.clear();
-            identity_file.clear();
+            if let Some(builder) = current.take() {
+                push_local_host_block(&mut blocks, builder, index);
+            }
+            current = Some(LocalHostBlockBuilder {
+                aliases: value.split_whitespace().map(str::to_string).collect(),
+                start: index,
+                host_name: String::new(),
+                port: 22,
+                user: String::new(),
+                identity_file: String::new(),
+            });
             continue;
         }
 
-        if aliases.is_empty() {
+        let Some(builder) = current.as_mut() else {
             continue;
-        }
-
+        };
         match keyword.to_ascii_lowercase().as_str() {
-            "hostname" => host_name = unquote(value).to_string(),
+            "hostname" => builder.host_name = unquote(value).to_string(),
             "port" => {
                 if let Ok(parsed_port) = value.parse::<u16>() {
-                    port = parsed_port;
+                    builder.port = parsed_port;
                 }
             }
-            "user" => user = unquote(value).to_string(),
-            "identityfile" => identity_file = unquote(value).to_string(),
+            "user" => builder.user = unquote(value).to_string(),
+            "identityfile" => builder.identity_file = unquote(value).to_string(),
             _ => {}
         }
     }
 
-    push_unmanaged_hosts(
-        &mut hosts,
-        &aliases,
-        &host_name,
-        port,
-        &user,
-        &identity_file,
-    );
+    if let Some(builder) = current.take() {
+        push_local_host_block(&mut blocks, builder, lines.len());
+    }
 
-    Ok(hosts)
+    Ok(blocks)
 }
 
-fn push_unmanaged_hosts(
-    hosts: &mut Vec<SshConfigHost>,
-    aliases: &[String],
-    host_name: &str,
-    port: u16,
-    user: &str,
-    identity_file: &str,
+fn push_local_host_block(
+    blocks: &mut Vec<LocalHostBlock>,
+    builder: LocalHostBlockBuilder,
+    end: usize,
 ) {
-    for alias in aliases {
-        if validate_ssh_alias(alias).is_err() {
-            continue;
-        }
-
-        hosts.push(SshConfigHost {
-            alias: alias.clone(),
-            host_name: host_name.to_string(),
-            port,
-            user: user.to_string(),
-            identity_file: identity_file.to_string(),
-            managed: false,
-            source: "unmanaged-readonly".into(),
-        });
+    if builder.aliases.is_empty() {
+        return;
     }
+    blocks.push(LocalHostBlock {
+        aliases: builder.aliases,
+        range: builder.start..end,
+        host_name: builder.host_name,
+        port: builder.port,
+        user: builder.user,
+        identity_file: builder.identity_file,
+    });
 }
 
 fn upsert_managed_host_block(content: &str, draft: &SshHostDraft) -> Result<String, String> {
-    if unmanaged_aliases(content)?
-        .iter()
-        .any(|alias| alias.eq_ignore_ascii_case(&draft.alias))
-    {
-        return Err(format!(
-            "Host {} already exists in an unmanaged SSH config block. CodexHub will not overwrite it.",
-            draft.alias
-        ));
-    }
-
     let rendered = render_managed_block(draft);
     if let Some(block) = find_managed_host_block(content, &draft.alias)? {
         let lines = split_lines_inclusive(content);
@@ -1819,6 +1862,44 @@ fn upsert_managed_host_block(content: &str, draft: &SshHostDraft) -> Result<Stri
     } else {
         Ok(append_managed_block(content, &rendered))
     }
+}
+
+fn upsert_local_host_block(content: &str, draft: &SshHostDraft) -> Result<String, String> {
+    let block = find_local_host_block(content, &draft.alias)?
+        .ok_or_else(|| format!("Host {} was not found in local SSH config.", draft.alias))?;
+    let lines = split_lines_inclusive(content);
+    let block_lines = &lines[block.range.clone()];
+    let mut next = String::new();
+    next.push_str(&lines[..block.range.start].concat());
+    if block.aliases.len() == 1 {
+        next.push_str(&rewrite_local_host_block(
+            block_lines,
+            &[draft.alias.clone()],
+            Some(draft),
+        ));
+    } else {
+        let remaining_aliases = block
+            .aliases
+            .iter()
+            .filter(|alias| !alias.eq_ignore_ascii_case(&draft.alias))
+            .cloned()
+            .collect::<Vec<_>>();
+        next.push_str(&rewrite_local_host_block(
+            block_lines,
+            &remaining_aliases,
+            None,
+        ));
+        if !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next.push_str(&rewrite_local_host_block(
+            block_lines,
+            &[draft.alias.clone()],
+            Some(draft),
+        ));
+    }
+    next.push_str(&lines[block.range.end..].concat());
+    Ok(next)
 }
 
 fn delete_managed_host_block(content: &str, alias: &str) -> Result<String, String> {
@@ -1833,10 +1914,49 @@ fn delete_managed_host_block(content: &str, alias: &str) -> Result<String, Strin
     }
 }
 
+fn delete_local_host_block(content: &str, alias: &str) -> Result<String, String> {
+    let Some(block) = find_local_host_block(content, alias)? else {
+        return Ok(content.into());
+    };
+    let lines = split_lines_inclusive(content);
+    let mut next = String::new();
+    next.push_str(&lines[..block.range.start].concat());
+    if block.aliases.len() > 1 {
+        let remaining_aliases = block
+            .aliases
+            .iter()
+            .filter(|item| !item.eq_ignore_ascii_case(alias))
+            .cloned()
+            .collect::<Vec<_>>();
+        next.push_str(&rewrite_local_host_block(
+            &lines[block.range.clone()],
+            &remaining_aliases,
+            None,
+        ));
+    }
+    next.push_str(&lines[block.range.end..].concat());
+    Ok(next)
+}
+
 fn find_managed_host_block(content: &str, alias: &str) -> Result<Option<ManagedBlock>, String> {
     Ok(scan_managed_blocks(content)?
         .into_iter()
         .find(|block| block.alias.eq_ignore_ascii_case(alias)))
+}
+
+fn find_local_host_block(content: &str, alias: &str) -> Result<Option<LocalHostBlock>, String> {
+    let managed_ranges: Vec<Range<usize>> = scan_managed_blocks(content)?
+        .into_iter()
+        .map(|block| block.range)
+        .collect();
+    Ok(parse_local_host_blocks(content, &managed_ranges)?
+        .into_iter()
+        .find(|block| {
+            block
+                .aliases
+                .iter()
+                .any(|item| item.eq_ignore_ascii_case(alias))
+        }))
 }
 
 fn scan_managed_blocks(content: &str) -> Result<Vec<ManagedBlock>, String> {
@@ -1925,6 +2045,7 @@ fn parse_host_from_lines(
     })
 }
 
+#[cfg(test)]
 fn unmanaged_aliases(content: &str) -> Result<Vec<String>, String> {
     let lines = split_lines_inclusive(content);
     let managed_ranges: Vec<Range<usize>> = scan_managed_blocks(content)?
@@ -1953,6 +2074,55 @@ fn unmanaged_aliases(content: &str) -> Result<Vec<String>, String> {
     }
 
     Ok(aliases)
+}
+
+fn rewrite_local_host_block(
+    block_lines: &[String],
+    aliases: &[String],
+    draft: Option<&SshHostDraft>,
+) -> String {
+    let mut next_lines = Vec::new();
+    let mut host_line_index = None;
+
+    for line in block_lines {
+        let trimmed = trim_line(line).trim();
+        let directive = if trimmed.is_empty() || trimmed.starts_with('#') {
+            None
+        } else {
+            split_directive(trimmed)
+        };
+
+        match directive {
+            Some((keyword, _)) if keyword.eq_ignore_ascii_case("Host") => {
+                host_line_index = Some(next_lines.len());
+                next_lines.push(format!("Host {}\n", aliases.join(" ")));
+            }
+            Some((keyword, _))
+                if draft.is_some()
+                    && matches!(
+                        keyword.to_ascii_lowercase().as_str(),
+                        "hostname" | "port" | "user" | "identityfile"
+                    ) => {}
+            _ => next_lines.push(line.clone()),
+        }
+    }
+
+    if let Some(draft) = draft {
+        let insert_index = host_line_index.map_or(0, |index| index + 1);
+        let mut directives = vec![
+            format!("    HostName {}\n", draft.host_name),
+            format!("    Port {}\n", draft.port),
+            format!("    User {}\n", draft.user),
+        ];
+        if !draft.identity_file.trim().is_empty() {
+            directives.push(format!("    IdentityFile {}\n", draft.identity_file));
+        }
+        for (offset, line) in directives.into_iter().enumerate() {
+            next_lines.insert(insert_index + offset, line);
+        }
+    }
+
+    next_lines.concat()
 }
 
 fn render_managed_block(draft: &SshHostDraft) -> String {
@@ -2050,7 +2220,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_returns_managed_and_unmanaged_readonly_hosts() {
+    fn parser_returns_managed_and_local_hosts() {
         let content = "Host github.com *.example.com *\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User jurio\n    IdentityFile C:\\Users\\PC\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\nHost runner\n    HostName 10.0.0.6\n    User codex\n";
 
         let hosts = parse_all_ssh_config_hosts(content).expect("parse all hosts");
@@ -2063,7 +2233,7 @@ mod tests {
             vec!["lab", "github.com", "runner"]
         );
         assert_eq!(hosts[0].source, "managed");
-        assert_eq!(hosts[1].source, "unmanaged-readonly");
+        assert_eq!(hosts[1].source, "local");
         assert!(!hosts
             .iter()
             .any(|host| host.alias == "*" || host.alias == "*.example.com"));
@@ -2103,11 +2273,36 @@ mod tests {
     }
 
     #[test]
-    fn reject_unmanaged_duplicate_alias() {
-        let content = "Host lab\n    HostName unmanaged.example\n";
-        let error = upsert_managed_host_block(content, &draft("lab")).expect_err("must reject");
+    fn update_local_single_alias_block_in_place() {
+        let content = "Host lab\n    HostName old.example\n    ProxyJump bastion\n";
+        let mut changed = draft("lab");
+        changed.host_name = "10.1.2.3".into();
+        changed.port = 2200;
+        changed.user = "alice".into();
+        let next = upsert_local_host_block(content, &changed).expect("update local");
 
-        assert!(error.contains("unmanaged SSH config block"));
+        assert!(next.contains("Host lab\n"));
+        assert!(next.contains("HostName 10.1.2.3"));
+        assert!(next.contains("Port 2200"));
+        assert!(next.contains("User alice"));
+        assert!(next.contains("ProxyJump bastion"));
+        assert!(!next.contains("old.example"));
+    }
+
+    #[test]
+    fn update_local_multi_alias_block_splits_target_alias() {
+        let content = "Host lab runner\n    HostName shared.example\n    User shared\n    ProxyJump bastion\n";
+        let mut changed = draft("runner");
+        changed.host_name = "10.9.8.7".into();
+        changed.user = "codex".into();
+        let next = upsert_local_host_block(content, &changed).expect("split local");
+
+        assert!(next.contains("Host lab\n"));
+        assert!(next.contains("Host runner\n"));
+        assert!(next.contains("HostName shared.example"));
+        assert!(next.contains("HostName 10.9.8.7"));
+        assert!(next.contains("User codex"));
+        assert_eq!(next.matches("ProxyJump bastion").count(), 2);
     }
 
     #[test]
@@ -2118,6 +2313,27 @@ mod tests {
 
         assert!(deleted.contains("Host github.com"));
         assert!(!deleted.contains("CodexHub managed host: lab"));
+    }
+
+    #[test]
+    fn delete_local_multi_alias_removes_only_target_alias() {
+        let content = "Host lab runner other\n    HostName shared.example\n    User codex\n";
+        let next = delete_local_host_block(content, "runner").expect("delete local alias");
+
+        assert!(next.contains("Host lab other\n"));
+        assert!(next.contains("HostName shared.example"));
+        assert!(!next.contains("runner"));
+    }
+
+    #[test]
+    fn delete_local_single_alias_removes_entire_block() {
+        let content = "Host github.com\n    User git\n\nHost runner\n    HostName 10.0.0.6\n    User codex\n\nHost tail\n    HostName tail.example\n";
+        let next = delete_local_host_block(content, "runner").expect("delete local block");
+
+        assert!(next.contains("Host github.com"));
+        assert!(next.contains("Host tail"));
+        assert!(!next.contains("Host runner"));
+        assert!(!next.contains("10.0.0.6"));
     }
 
     #[test]

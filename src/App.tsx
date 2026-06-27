@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, fallbackHealth } from "./api";
 import type {
@@ -25,7 +25,7 @@ import type { AppSettings, FontPreset, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
 type Locale = "en" | "zh";
-type HostBusyAction = "test" | "probe" | "bootstrap" | RemoteCodexAction;
+type HostBusyAction = "test" | "bootstrap" | RemoteCodexAction;
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   hostAlias: string;
@@ -55,7 +55,7 @@ const uiCopy = {
         body: "Mock SSH inventory, profile status, and recent operations for the first CodexHub desktop shell."
       },
       hosts: {
-        title: "Hosts",
+        title: "Host inventory",
         eyebrow: "Server inventory",
         body: "Add CodexHub-managed SSH config blocks without disturbing user-owned SSH settings."
       },
@@ -82,7 +82,7 @@ const uiCopy = {
     } satisfies Record<SectionId, { title: string; eyebrow: string; body: string }>,
     common: {
       addServer: "Add Server",
-      backendMode: "backend mode",
+      backendMode: "Backend mode",
       desktopMvp: "Desktop MVP",
       host: "Host",
       justNow: "just now",
@@ -137,10 +137,10 @@ const uiCopy = {
       writing: "Connecting...",
       savedHost: (alias: string) => `Saved Host ${alias}.`,
       editingHost: (alias: string) => `Editing managed Host ${alias}. Submit with the same alias to update it in place.`,
-      deleteConfirm: (alias: string) => `Delete CodexHub-managed Host ${alias} from SSH config?`,
+      deleteConfirm: (alias: string) => `Delete Host ${alias} from SSH config?`,
       deletedHost: (alias: string) => `Deleted Host ${alias}.`,
       hostAlias: "Host Alias",
-      hostName: "HostName",
+      hostName: "Host IP",
       port: "Port",
       user: "User",
       identityFile: "IdentityFile",
@@ -150,33 +150,33 @@ const uiCopy = {
       saving: "Saving...",
       writeSshConfig: "Connect",
       reset: "Reset",
-      codexhubManaged: "CodexHub managed",
+      codexhubManaged: "CodexHub",
       sshHostBlocks: "SSH Host blocks",
       repeatedSaves: "Repeated saves update the same alias instead of appending duplicates.",
       newHost: "New Host",
-      noManagedHosts: "No managed SSH hosts",
-      noManagedHostsBody: "Click Add Server in the Hosts header to connect and create the first CodexHub-managed block in SSH config.",
-      detectedSshHosts: "Detected SSH hosts",
-      detectedSshHostsBody: "CodexHub scans local SSH config in read-only mode and imports safe HostAlias entries into the inventory.",
-      refreshDetected: "Refresh detected hosts",
-      readOnlySource: "read-only",
+      noManagedHosts: "No SSH hosts",
+      noManagedHostsBody: "Click Add Server in the Hosts header to connect and create the first SSH config entry.",
+      detectedSshHosts: "SSH Hosts",
+      detectedSshHostsBody: "CodexHub lists local SSH config HostAlias entries for unified management.",
+      refreshDetected: "Test all",
+      testingAll: "Testing all...",
+      testedAll: "All hosts tested.",
+      localSource: "Local",
       source: "Source",
-      probe: "Probe",
-      probing: "Probing...",
       bootstrapping: "Bootstrapping...",
       testing: "Testing...",
       checkVersion: "Check Version",
       checkingVersion: "Checking...",
-      installCodex: "Install Codex",
+      installCodex: "Install",
       installingCodex: "Installing...",
-      updateCodex: "Update Codex",
+      updateCodex: "Update",
       updatingCodex: "Updating...",
       details: "Host details",
-      detailsBody: "Connection status and remote Codex readiness from the latest test or probe.",
+      detailsTitle: (alias: string) => `Host: ${alias}`,
+      detailsBody: "Connection status and remote Codex readiness from the latest test.",
       sshStatus: "SSH status",
       arch: "Arch",
       shell: "Shell",
-      pathLocalBin: "PATH has ~/.local/bin",
       codexInstalled: "Codex installed",
       codexVersion: "Codex version",
       configExists: "Config exists",
@@ -185,7 +185,6 @@ const uiCopy = {
       no: "No",
       unknown: "Unknown",
       mockInventory: "Mock inventory",
-      existingHosts: "Existing app hosts",
       mockInventoryBody: "Inventory rows combine discovered SSH config hosts, CodexHub-managed hosts, and mock rows in web mode.",
       alias: "Alias",
       name: "Name",
@@ -201,7 +200,7 @@ const uiCopy = {
       testSsh: "Test SSH",
       os: "OS",
       codex: "Codex",
-      latency: "Latency"
+      latency: "Test latency"
     },
     profiles: {
       codexPrep: "Remote Codex",
@@ -264,7 +263,7 @@ const uiCopy = {
         "Bootstrap SSH key": "Bootstrap SSH key",
         "Sync skill pack": "Sync skill pack",
         "Preview profile": "Preview profile",
-        "Probe remote system": "Probe remote system",
+        "Probe remote system": "Test remote system",
         "Check Codex version": "Check Codex version",
         "Install Codex": "Install Codex",
         "Update Codex": "Update Codex"
@@ -292,7 +291,7 @@ const uiCopy = {
       copyPublicKey: "Copy Public Key",
       publicKeyEmpty: "Generate or add an SSH public key to show it here.",
       commandReservations: "Command reservations",
-      commandSurface: "Tauri command surface",
+      commandSurface: "Command surface",
       privateFound: "private found",
       missing: "missing",
       privatePath: "Private path",
@@ -341,7 +340,7 @@ const uiCopy = {
         body: "用于 CodexHub 桌面壳的 SSH 清单、配置状态和最近操作。"
       },
       hosts: {
-        title: "主机",
+        title: "主机清单",
         eyebrow: "服务器清单",
         body: "添加 CodexHub 管理的 SSH config 块，不影响用户已有 SSH 设置。"
       },
@@ -423,10 +422,10 @@ const uiCopy = {
       writing: "正在连接...",
       savedHost: (alias: string) => `已保存 Host ${alias}。`,
       editingHost: (alias: string) => `正在编辑受管理的 Host ${alias}。用相同别名提交会原地更新。`,
-      deleteConfirm: (alias: string) => `确定要从 SSH config 删除 CodexHub 管理的 Host ${alias} 吗？`,
+      deleteConfirm: (alias: string) => `确定要从 SSH config 删除 Host ${alias} 吗？`,
       deletedHost: (alias: string) => `已删除 Host ${alias}。`,
       hostAlias: "Host 别名",
-      hostName: "HostName",
+      hostName: "Host IP",
       port: "端口",
       user: "用户",
       identityFile: "IdentityFile",
@@ -436,42 +435,41 @@ const uiCopy = {
       saving: "保存中...",
       writeSshConfig: "连接",
       reset: "重置",
-      codexhubManaged: "CodexHub 管理",
+      codexhubManaged: "CodexHub",
       sshHostBlocks: "SSH Host 块",
       repeatedSaves: "重复保存会更新同一别名，不会追加重复块。",
       newHost: "新建 Host",
-      noManagedHosts: "没有受管理的 SSH 主机",
-      noManagedHostsBody: "点击主机页右上角“添加服务器”，连接成功后会创建第一个 CodexHub 管理块。",
-      detectedSshHosts: "已检测 SSH hosts",
-      detectedSshHostsBody: "CodexHub 只读扫描本地 SSH config，并把安全的 HostAlias 自动加入清单。",
-      refreshDetected: "刷新检测",
-      readOnlySource: "只读",
+      noManagedHosts: "没有 SSH Hosts",
+      noManagedHostsBody: "点击主机页右上角“添加服务器”，连接成功后会创建第一个 SSH 配置项。",
+      detectedSshHosts: "SSH Hosts",
+      detectedSshHostsBody: "CodexHub 列出本地 SSH config 中的 HostAlias，用于统一管理。",
+      refreshDetected: "一键测试",
+      testingAll: "测试中...",
+      testedAll: "一键测试完成。",
+      localSource: "本地",
       source: "来源",
-      probe: "探测",
-      probing: "探测中...",
       bootstrapping: "连接中...",
       testing: "测试中...",
       checkVersion: "检查版本",
       checkingVersion: "检查中...",
-      installCodex: "安装 Codex",
+      installCodex: "安装",
       installingCodex: "安装中...",
-      updateCodex: "更新 Codex",
+      updateCodex: "更新",
       updatingCodex: "更新中...",
       details: "主机详情",
-      detailsBody: "展示最近一次测试或探测得到的连接状态与远端 Codex 就绪度。",
+      detailsTitle: (alias: string) => `主机：${alias}`,
+      detailsBody: "展示最近一次测试得到的连接状态与远端 Codex 就绪度。",
       sshStatus: "SSH 状态",
       arch: "架构",
       shell: "Shell",
-      pathLocalBin: "PATH 含 ~/.local/bin",
       codexInstalled: "Codex 已安装",
-      codexVersion: "Codex 版本",
+      codexVersion: "Codex版本",
       configExists: "Config 存在",
       skillsCount: "Skills 数量",
       yes: "是",
       no: "否",
       unknown: "未知",
       mockInventory: "Mock 清单",
-      existingHosts: "现有应用主机",
       mockInventoryBody: "清单行合并自动发现的 SSH config hosts、CodexHub 管理 hosts 和 web 模式 mock rows。",
       alias: "别名",
       name: "名称",
@@ -487,7 +485,7 @@ const uiCopy = {
       testSsh: "测试 SSH",
       os: "系统",
       codex: "Codex",
-      latency: "延迟"
+      latency: "测试延迟"
     },
     profiles: {
       codexPrep: "远端 Codex",
@@ -550,7 +548,7 @@ const uiCopy = {
         "Bootstrap SSH key": "配置 SSH 密钥",
         "Sync skill pack": "同步技能包",
         "Preview profile": "预览配置",
-        "Probe remote system": "探测远端系统",
+        "Probe remote system": "测试远端系统",
         "Check Codex version": "检查 Codex 版本",
         "Install Codex": "安装 Codex",
         "Update Codex": "更新 Codex"
@@ -578,7 +576,7 @@ const uiCopy = {
       copyPublicKey: "复制公钥",
       publicKeyEmpty: "生成或添加 SSH 公钥后会显示在这里。",
       commandReservations: "命令预留",
-      commandSurface: "Tauri 命令接口",
+      commandSurface: "命令接口",
       privateFound: "已找到私钥",
       missing: "缺失",
       privatePath: "私钥路径",
@@ -700,14 +698,6 @@ function App() {
     setNotice(copy.notices.addHost);
   };
 
-  const handleDeleteHost = async (id: string) => {
-    const host = hosts.find((item) => item.id === id);
-    const removed = await api.deleteHost(id);
-    if (!removed) return;
-    setHosts((current) => current.filter((item) => item.id !== id));
-    setNotice(copy.notices.mockHostRemoved(host?.name ?? copy.common.host));
-  };
-
   const handleConnectSshHost = async (
     draft: SshHostDraft,
     password: string,
@@ -791,37 +781,47 @@ function App() {
     }
   };
 
-  const handleRefreshDetectedHosts = async () => {
-    await refreshSshState();
-    setNotice(copy.hosts.detectedSshHostsBody);
-  };
-
   const handleTestHost = async (idOrAlias: string) => {
     const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
     const hostAlias = target?.hostAlias ?? idOrAlias;
     setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
     setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
 
-    const result = await api.sshCheck(hostAlias);
+    const result = await api.remoteProbeCodex(hostAlias);
     setHosts((current) =>
       current.map((host) =>
         host.hostAlias === result.hostAlias
           ? {
               ...host,
-              status: result.ok ? "online" : "offline",
+              status: result.sshStatus,
+              os: result.os,
+              arch: result.arch,
+              shell: result.shell,
+              path: result.path,
+              pathHasLocalBin: result.pathHasLocalBin,
+              codexInstalled: result.codexInstalled,
+              codexVersion: result.codexVersion,
+              configExists: result.configExists,
+              skillsExists: result.skillsExists,
+              skillsCount: result.skillsCount,
               latencyMs: result.latencyMs,
-              lastSeen: result.ok ? copy.common.justNow : host.lastSeen
+              lastSeen: result.sshStatus === "online" ? copy.common.justNow : host.lastSeen
             }
           : host
       )
     );
     setTasks((current) => [result.task, ...current]);
-    setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
+    setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
     setHostBusy((current) => {
       const next = { ...current };
       delete next[hostAlias];
       return next;
     });
+  };
+
+  const handleTestAllSshHosts = async () => {
+    await Promise.all(sshConfigHosts.map((host) => handleTestHost(host.alias)));
+    setNotice(copy.hosts.testedAll);
   };
 
   const handleBootstrapExistingHost = async (idOrAlias: string, password: string) => {
@@ -858,43 +858,6 @@ function App() {
     }
   };
 
-  const handleProbeHost = async (idOrAlias: string) => {
-    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
-    const hostAlias = target?.hostAlias ?? idOrAlias;
-    setHostBusy((current) => ({ ...current, [hostAlias]: "probe" }));
-    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
-
-    const result = await api.remoteProbeCodex(hostAlias);
-    setHosts((current) =>
-      current.map((host) =>
-        host.hostAlias === result.hostAlias
-          ? {
-              ...host,
-              status: result.sshStatus,
-              os: result.os,
-              arch: result.arch,
-              shell: result.shell,
-              path: result.path,
-              pathHasLocalBin: result.pathHasLocalBin,
-              codexInstalled: result.codexInstalled,
-              codexVersion: result.codexVersion,
-              configExists: result.configExists,
-              skillsExists: result.skillsExists,
-              skillsCount: result.skillsCount,
-              lastSeen: result.sshStatus === "online" ? copy.common.justNow : host.lastSeen
-            }
-          : host
-      )
-    );
-    setTasks((current) => [result.task, ...current]);
-    setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
-    setHostBusy((current) => {
-      const next = { ...current };
-      delete next[hostAlias];
-      return next;
-    });
-  };
-
   const handleRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
     const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
     const hostAlias = target?.hostAlias ?? idOrAlias;
@@ -918,11 +881,8 @@ function App() {
       const result = await api.remoteManageCodex(hostAlias, action, 120000, requestId, (event) => {
         setCodexOperationModal((current) => {
           if (!current || current.hostAlias !== event.hostAlias || current.action !== event.action) return current;
-          const nextStatus =
-            event.status === "success" ? "success" : event.status === "failed" ? "failed" : current.status;
           return {
             ...current,
-            status: nextStatus,
             message: event.step === "summary" ? event.message : current.message,
             logs: [...current.logs, event].slice(-80)
           };
@@ -997,7 +957,6 @@ function App() {
             activeTasks={activeTasks}
             copy={copy}
             health={health}
-            hostBusy={hostBusy}
             hosts={hosts}
             loading={loading}
             notice={notice}
@@ -1007,10 +966,7 @@ function App() {
             tasks={tasks}
             profileById={profileById}
             skillPackById={skillPackById}
-            onManageCodex={handleRemoteCodexAction}
-            onProbeHost={handleProbeHost}
             onSelectSection={setActiveSection}
-            onTestHost={handleTestHost}
           />
         );
       case "hosts":
@@ -1019,25 +975,22 @@ function App() {
             copy={copy}
             hosts={hosts}
             hostBusy={hostBusy}
-            profileById={profileById}
-            skillPackById={skillPackById}
             sshConfigHosts={sshConfigHosts}
             sshStatus={sshStatus}
             addHostOpen={hostModalOpen}
             sshBusy={sshBusy}
             onCloseAddHost={() => setHostModalOpen(false)}
             onConnectSshHost={handleConnectSshHost}
-            onDeleteHost={handleDeleteHost}
             onDeleteSshConfigHost={handleDeleteSshConfigHost}
             onGenerateEd25519Key={handleGenerateEd25519Key}
+            onManageCodex={handleRemoteCodexAction}
             onOpenAddHost={handleAddHost}
-            onProbeHost={handleProbeHost}
-            onRefreshDetectedHosts={handleRefreshDetectedHosts}
+            onTestAllSshHosts={handleTestAllSshHosts}
             onTestHost={handleTestHost}
           />
         );
       case "profiles":
-        return <ProfilesView copy={copy} hostBusy={hostBusy} hosts={hosts} onManageCodex={handleRemoteCodexAction} />;
+        return <ProfilesView />;
       case "skills":
         return <SkillsView copy={copy} skillPacks={skillPacks} />;
       case "tasks":
@@ -1085,8 +1038,7 @@ function App() {
         <div className="sidebarFooter">
           <span className="statusDot" data-status={health.mode === "tauri" ? "online" : "unknown"} />
           <div>
-            <strong>{health.mode}</strong>
-            <span>{copy.common.backendMode}</span>
+            <strong>{copy.common.backendMode}</strong>
           </div>
         </div>
       </aside>
@@ -1094,12 +1046,9 @@ function App() {
       <main className="contentShell">
         <header className="topBar">
           <div>
-            <div className="eyebrow">{selectedCopy.eyebrow}</div>
             <h1>{selectedCopy.title}</h1>
-            <p>{selectedCopy.body}</p>
           </div>
           <div className="topActions">
-            <Badge tone={health.mode === "tauri" ? "green" : "gray"}>{health.mode}</Badge>
             {activeSection === "hosts" ? (
               <button className="primaryButton" type="button" onClick={handleAddHost}>{copy.common.addServer}</button>
             ) : null}
@@ -1138,6 +1087,8 @@ function CodexOperationModal({
   const statusTone = operation.status === "success" ? "green" : operation.status === "failed" ? "red" : "yellow";
   const progressLogs = operation.logs.slice(-20);
   const taskLogs = operation.task?.logs.slice(-6) ?? [];
+  const taskLogCount = operation.task?.logs.length ?? 0;
+  const logRowsRef = useRef<HTMLDivElement | null>(null);
   const runningLogs = [
     { level: "info" as const, message: copy.codexOperation.started, detail: operation.hostAlias },
     { level: "info" as const, message: copy.codexOperation.waiting, detail: actionLabel },
@@ -1148,6 +1099,12 @@ function CodexOperationModal({
     }
   ];
 
+  useEffect(() => {
+    const logRows = logRowsRef.current;
+    if (!logRows) return;
+    logRows.scrollTop = logRows.scrollHeight;
+  }, [operation.logs.length, operation.status, taskLogCount]);
+
   return (
     <div className="modalBackdrop" role="presentation">
       <section className="codexOperationModal" role="dialog" aria-modal="true" aria-labelledby="codex-operation-modal-title">
@@ -1156,9 +1113,7 @@ function CodexOperationModal({
         </button>
         <div className="codexOperationHeader">
           <div>
-            <div className="eyebrow">{copy.codexOperation.title}</div>
             <h2 id="codex-operation-modal-title">{actionLabel}</h2>
-            <p>{operation.hostName} · {operation.hostAlias}</p>
           </div>
           <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
         </div>
@@ -1173,7 +1128,7 @@ function CodexOperationModal({
             <span>{copy.codexOperation.latestLog}</span>
             {operation.status === "running" ? <i aria-hidden="true" /> : null}
           </div>
-          <div className="codexOperationLogRows">
+          <div className="codexOperationLogRows" ref={logRowsRef}>
             {progressLogs.length > 0
               ? progressLogs.map((log, index) => (
                   <div className="codexOperationLogRow" data-level={progressLogLevel(log)} key={`${log.step}-${log.status}-${index}`}>
@@ -1226,7 +1181,6 @@ function DashboardView({
   activeTasks,
   copy,
   health,
-  hostBusy,
   hosts,
   loading,
   notice,
@@ -1236,15 +1190,11 @@ function DashboardView({
   skillPackById,
   skillPacks,
   tasks,
-  onManageCodex,
-  onProbeHost,
-  onSelectSection,
-  onTestHost
+  onSelectSection
 }: {
   activeTasks: number;
   copy: UICopy;
   health: Health;
-  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   loading: boolean;
   notice: string;
@@ -1254,10 +1204,7 @@ function DashboardView({
   skillPackById: Map<string, SkillPack>;
   skillPacks: SkillPack[];
   tasks: TaskRun[];
-  onManageCodex: (id: string, action: RemoteCodexAction) => void;
-  onProbeHost: (id: string) => void;
   onSelectSection: (section: SectionId) => void;
-  onTestHost: (id: string) => void;
 }) {
   return (
     <div className="pageGrid">
@@ -1280,7 +1227,7 @@ function DashboardView({
         </div>
       </section>
 
-      <ServerMatrix copy={copy} hostBusy={hostBusy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} onManageCodex={onManageCodex} onProbeHost={onProbeHost} onTestHost={onTestHost} />
+      <ServerMatrix copy={copy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} />
       <BatchOperationsPlaceholder copy={copy} />
       <RecentTasks copy={copy} tasks={tasks} onViewAll={() => onSelectSection("tasks")} />
     </div>
@@ -1317,22 +1264,14 @@ function BatchOperationsPlaceholder({ copy }: { copy: UICopy }) {
 
 function ServerMatrix({
   copy,
-  hostBusy,
   hosts,
   profileById,
-  skillPackById,
-  onManageCodex,
-  onProbeHost,
-  onTestHost
+  skillPackById
 }: {
   copy: UICopy;
-  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   profileById: Map<string, Profile>;
   skillPackById: Map<string, SkillPack>;
-  onManageCodex: (id: string, action: RemoteCodexAction) => void;
-  onProbeHost: (id: string) => void;
-  onTestHost: (id: string) => void;
 }) {
   return (
     <section className="panel spanWide">
@@ -1388,24 +1327,6 @@ function ServerMatrix({
               <div className="skillLine">
                 {host.skillPackIds.length > 0 ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ") : copy.dashboard.noSkillPacks}
               </div>
-
-              <div className="hostCardActions">
-                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onTestHost(host.hostAlias)}>
-                  {hostBusy[host.hostAlias] === "test" ? copy.hosts.testing : copy.hosts.testSsh}
-                </button>
-                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onProbeHost(host.hostAlias)}>
-                  {hostBusy[host.hostAlias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
-                </button>
-                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onManageCodex(host.hostAlias, "check-version")}>
-                  {remoteCodexButtonLabel(copy, hostBusy[host.hostAlias], "check-version")}
-                </button>
-                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onManageCodex(host.hostAlias, "install")}>
-                  {remoteCodexButtonLabel(copy, hostBusy[host.hostAlias], "install")}
-                </button>
-                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onManageCodex(host.hostAlias, "update")}>
-                  {remoteCodexButtonLabel(copy, hostBusy[host.hostAlias], "update")}
-                </button>
-              </div>
             </article>
           ))}
         </div>
@@ -1445,48 +1366,55 @@ function HostsView({
   copy,
   hostBusy,
   hosts,
-  profileById,
-  skillPackById,
   sshBusy,
   sshConfigHosts,
   sshStatus,
   onCloseAddHost,
   onConnectSshHost,
-  onDeleteHost,
   onDeleteSshConfigHost,
   onGenerateEd25519Key,
+  onManageCodex,
   onOpenAddHost,
-  onProbeHost,
-  onRefreshDetectedHosts,
+  onTestAllSshHosts,
   onTestHost
 }: {
   addHostOpen: boolean;
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
-  profileById: Map<string, Profile>;
-  skillPackById: Map<string, SkillPack>;
   sshBusy: boolean;
   sshConfigHosts: SshConfigHost[];
   sshStatus: SshStatus | null;
   onCloseAddHost: () => void;
   onConnectSshHost: (draft: SshHostDraft, password: string, requestId: string, onProgress: (event: SshBootstrapProgressEvent) => void) => Promise<SshBootstrapResult>;
-  onDeleteHost: (id: string) => void;
   onDeleteSshConfigHost: (alias: string) => Promise<void>;
   onGenerateEd25519Key: () => Promise<void>;
+  onManageCodex: (id: string, action: RemoteCodexAction) => void;
   onOpenAddHost: () => void;
-  onProbeHost: (id: string) => void;
-  onRefreshDetectedHosts: () => Promise<void>;
+  onTestAllSshHosts: () => Promise<void>;
   onTestHost: (id: string) => void;
 }) {
   const identityFile = sshStatus?.ed25519.privateExists ? sshStatus.ed25519.privatePath : "";
-  const [selectedHostAlias, setSelectedHostAlias] = useState<string | null>(hosts[0]?.hostAlias ?? null);
+  const hostByAlias = useMemo(
+    () => new Map(hosts.map((host) => [host.hostAlias.toLowerCase(), host])),
+    [hosts]
+  );
+  const [selectedHostAlias, setSelectedHostAlias] = useState<string | null>(sshConfigHosts[0]?.alias ?? hosts[0]?.hostAlias ?? null);
   const [editingDraft, setEditingDraft] = useState<SshHostDraft | null>(null);
-  const selectedHost = hosts.find((host) => host.hostAlias === selectedHostAlias) ?? hosts[0] ?? null;
+  const selectedHost =
+    selectedHostAlias ? hostByAlias.get(selectedHostAlias.toLowerCase()) ?? hosts.find((host) => host.hostAlias === selectedHostAlias) ?? null : hosts[0] ?? null;
+  const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
+  const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
 
   useEffect(() => {
-    if (!selectedHostAlias && hosts[0]) setSelectedHostAlias(hosts[0].hostAlias);
-  }, [hosts, selectedHostAlias]);
+    if (!selectedHostAlias && sshConfigHosts[0]) {
+      setSelectedHostAlias(sshConfigHosts[0].alias);
+      return;
+    }
+    if (selectedHostAlias && sshConfigHosts.length > 0 && !sshConfigHosts.some((host) => host.alias === selectedHostAlias)) {
+      setSelectedHostAlias(sshConfigHosts[0].alias);
+    }
+  }, [sshConfigHosts, selectedHostAlias]);
 
   useEffect(() => {
     if (!addHostOpen) setEditingDraft(null);
@@ -1526,11 +1454,11 @@ function HostsView({
       <section className="panel spanWide">
         <div className="panelHeader">
           <div>
-            <div className="eyebrow">{copy.hosts.codexhubManaged}</div>
             <h2>{copy.hosts.detectedSshHosts}</h2>
-            <p>{copy.hosts.detectedSshHostsBody}</p>
           </div>
-          <button className="secondaryButton" type="button" onClick={() => void onRefreshDetectedHosts()}>{copy.hosts.refreshDetected}</button>
+          <button className="secondaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
+            {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
+          </button>
         </div>
 
         {sshConfigHosts.length === 0 ? (
@@ -1541,43 +1469,58 @@ function HostsView({
           </div>
         ) : (
           <div className="tableWrap">
-            <table>
+            <table className="sshHostsTable">
               <thead>
                 <tr>
-                  <th>{copy.hosts.alias}</th>
-                  <th>{copy.hosts.source}</th>
-                  <th>{copy.hosts.hostName}</th>
-                  <th>{copy.hosts.port}</th>
-                  <th>{copy.hosts.user}</th>
-                  <th>{copy.hosts.identityFile}</th>
-                  <th>{copy.hosts.actions}</th>
+                  <th className="sshHostsAliasCol">{copy.hosts.alias}</th>
+                  <th className="sshHostsSourceCol">{copy.hosts.source}</th>
+                  <th className="sshHostsAddressCol">{copy.hosts.hostName}</th>
+                  <th className="sshHostsPortCol">{copy.hosts.port}</th>
+                  <th className="sshHostsUserCol">{copy.hosts.user}</th>
+                  <th className="sshHostsVersionCol">{copy.hosts.codexVersion}</th>
+                  <th className="sshHostsActionsCol">{copy.hosts.actions}</th>
+                  <th className="sshHostsCodexCol">{copy.hosts.codex}</th>
                 </tr>
               </thead>
               <tbody>
-                {sshConfigHosts.map((host) => (
-                  <tr className="selectableRow" data-selected={selectedHost?.hostAlias === host.alias} key={host.alias} onClick={() => setSelectedHostAlias(host.alias)}>
-                    <td><strong>{host.alias}</strong></td>
-                    <td><Badge tone={host.managed ? "blue" : "gray"}>{host.managed ? copy.hosts.codexhubManaged : copy.hosts.readOnlySource}</Badge></td>
-                    <td>{host.hostName}</td>
-                    <td>{host.port}</td>
-                    <td>{host.user}</td>
-                    <td><code>{host.identityFile || "-"}</code></td>
-                    <td className="tableActions">
-                      <button className="miniButton" disabled={Boolean(hostBusy[host.alias])} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(host.alias); }}>
-                        {hostBusy[host.alias] === "test" ? copy.hosts.testing : copy.hosts.test}
-                      </button>
-                      <button className="miniButton" disabled={Boolean(hostBusy[host.alias])} type="button" onClick={(event) => { event.stopPropagation(); onProbeHost(host.alias); }}>
-                        {hostBusy[host.alias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
-                      </button>
-                      {host.managed ? (
-                        <>
-                          <button className="miniButton" type="button" onClick={(event) => { event.stopPropagation(); handleEdit(host); }}>{copy.hosts.edit}</button>
-                          <button className="miniButton danger" type="button" onClick={(event) => { event.stopPropagation(); void handleDelete(host.alias); }}>{copy.hosts.delete}</button>
-                        </>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
+                {sshConfigHosts.map((sshHost) => {
+                  const host = hostByAlias.get(sshHost.alias.toLowerCase()) ?? null;
+                  const busy = hostBusy[sshHost.alias];
+                  const codexStatus = hostCodexStatus(copy, host, busy);
+                  const codexTested = isHostCodexTested(host);
+                  const installDisabled = Boolean(busy) || !codexTested || Boolean(host?.codexInstalled);
+                  const updateDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled;
+
+                  return (
+                    <tr className="selectableRow" data-selected={selectedHostAlias === sshHost.alias} key={sshHost.alias} onClick={() => setSelectedHostAlias(sshHost.alias)}>
+                      <td className="sshHostsAliasCol"><strong>{sshHost.alias}</strong></td>
+                      <td className="sshHostsSourceCol"><Badge tone={sshHost.managed ? "blue" : "gray"}>{sshHostSourceLabel(copy, sshHost)}</Badge></td>
+                      <td className="sshHostsAddressCol">{sshHost.hostName}</td>
+                      <td className="sshHostsPortCol">{sshHost.port}</td>
+                      <td className="sshHostsUserCol">{sshHost.user}</td>
+                      <td className="sshHostsVersionCol"><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
+                      <td className="sshHostsActionsCol">
+                        <div className="tableActions sshHostsActionGroup">
+                          <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(sshHost.alias); }}>
+                            {busy === "test" ? copy.hosts.testing : copy.hosts.test}
+                          </button>
+                          <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); handleEdit(sshHost); }}>{copy.hosts.edit}</button>
+                          <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); void handleDelete(sshHost.alias); }}>{copy.hosts.delete}</button>
+                        </div>
+                      </td>
+                      <td className="sshHostsCodexCol">
+                        <div className="tableActions sshHostsActionGroup">
+                          <button className="miniButton" disabled={installDisabled} type="button" onClick={(event) => { event.stopPropagation(); onManageCodex(sshHost.alias, "install"); }}>
+                            {remoteCodexButtonLabel(copy, busy, "install")}
+                          </button>
+                          <button className="miniButton" disabled={updateDisabled} type="button" onClick={(event) => { event.stopPropagation(); onManageCodex(sshHost.alias, "update"); }}>
+                            {remoteCodexButtonLabel(copy, busy, "update")}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1585,58 +1528,6 @@ function HostsView({
       </section>
 
       <HostDetailsPanel copy={copy} host={selectedHost} />
-
-      <section className="panel spanWide">
-        <div className="panelHeader">
-          <div>
-            <div className="eyebrow">{copy.hosts.mockInventory}</div>
-            <h2>{copy.hosts.existingHosts}</h2>
-            <p>{copy.hosts.mockInventoryBody}</p>
-          </div>
-        </div>
-
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{copy.hosts.name}</th>
-                <th>{copy.hosts.source}</th>
-                <th>{copy.hosts.endpoint}</th>
-                <th>{copy.hosts.status}</th>
-                <th>{copy.hosts.profile}</th>
-                <th>{copy.hosts.skills}</th>
-                <th>{copy.hosts.lastSeen}</th>
-                <th>{copy.hosts.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hosts.map((host) => (
-                <tr key={host.id}>
-                  <td>
-                    <strong>{host.name}</strong>
-                    <span>{host.hostAlias} / {host.os}</span>
-                  </td>
-                  <td><Badge tone={host.source === "mock" ? "gray" : host.source === "managed" ? "blue" : "green"}>{host.source}</Badge></td>
-                  <td>{formatEndpoint(host)}</td>
-                  <td><StatusBadge copy={copy} status={host.status} /></td>
-                  <td>{host.profileId ? profileById.get(host.profileId)?.name ?? host.profileId : copy.common.unassigned}</td>
-                  <td>{host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ") || "-"}</td>
-                  <td>{host.lastSeen}</td>
-                  <td className="tableActions">
-                    <button className="miniButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onTestHost(host.hostAlias)}>
-                      {hostBusy[host.hostAlias] === "test" ? copy.hosts.testing : copy.hosts.test}
-                    </button>
-                    <button className="miniButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onProbeHost(host.hostAlias)}>
-                      {hostBusy[host.hostAlias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
-                    </button>
-                    <button className="miniButton danger" type="button" onClick={() => onDeleteHost(host.id)}>{copy.hosts.delete}</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </div>
   );
 }
@@ -1737,22 +1628,23 @@ function SshHostModal({
       setConnecting(false);
     }
   };
+  const editing = Boolean(initialDraft);
 
   return (
     <div className="modalBackdrop" role="presentation">
       <div className="sshHostModal" role="dialog" aria-modal="true" aria-labelledby="ssh-host-modal-title">
         <button className="modalCloseButton" type="button" onClick={closeModal} aria-label="Close">×</button>
         <div className="modalHero">
-          <h2 id="ssh-host-modal-title">新增 SSH Host</h2>
+          <h2 id="ssh-host-modal-title">{editing ? copy.hosts.edit : copy.hosts.addCodexHubHost}</h2>
         </div>
 
         <form className="modalForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
             <span>{copy.hosts.hostAlias}</span>
-            <input disabled={connecting} value={draft.alias} onChange={(event) => updateDraft("alias", event.target.value)} placeholder="HostAlias" required />
+            <input disabled={connecting} readOnly={editing} value={draft.alias} onChange={(event) => updateDraft("alias", event.target.value)} placeholder="HostAlias" required />
           </label>
           <label className="fieldGroup">
-            <span>Host IP</span>
+            <span>{copy.hosts.hostName}</span>
             <input disabled={connecting} value={draft.hostName} onChange={(event) => updateDraft("hostName", event.target.value)} placeholder="127.0.0.1" required />
           </label>
           <label className="fieldGroup">
@@ -1875,11 +1767,9 @@ function HostDetailsPanel({
     <section className="panel spanWide">
       <div className="panelHeader">
         <div>
-          <div className="eyebrow">{copy.hosts.details}</div>
-          <h2>{host?.name ?? copy.hosts.unknown}</h2>
-          <p>{copy.hosts.detailsBody}</p>
+          <h2>{copy.hosts.detailsTitle(host?.hostAlias ?? copy.hosts.unknown)}</h2>
         </div>
-        <div className="calloutMeta">
+        <div className="calloutMeta largeStatus">
           {host ? <StatusBadge copy={copy} status={host.status} /> : <Badge tone="gray">{copy.hosts.unknown}</Badge>}
         </div>
       </div>
@@ -1902,8 +1792,8 @@ function HostDetailsPanel({
           <dd>{host?.shell ?? copy.hosts.unknown}</dd>
         </div>
         <div>
-          <dt>{copy.hosts.pathLocalBin}</dt>
-          <dd>{host ? formatNullableBoolean(host.pathHasLocalBin, copy) : copy.hosts.unknown}</dd>
+          <dt>{copy.hosts.latency}</dt>
+          <dd>{formatLatency(host?.latencyMs, copy)}</dd>
         </div>
         <div>
           <dt>{copy.hosts.codexInstalled}</dt>
@@ -1926,67 +1816,8 @@ function HostDetailsPanel({
   );
 }
 
-function ProfilesView({
-  copy,
-  hostBusy,
-  hosts,
-  onManageCodex
-}: {
-  copy: UICopy;
-  hostBusy: Record<string, HostBusyAction>;
-  hosts: Host[];
-  onManageCodex: (id: string, action: RemoteCodexAction) => void;
-}) {
-  return (
-    <div className="profilesStack">
-      <section className="panel profileCodexBar" aria-label={copy.profiles.codexPrep}>
-        {hosts.length > 0 ? (
-          <div className="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>{copy.hosts.name}</th>
-                  <th>{copy.hosts.status}</th>
-                  <th>{copy.hosts.codex}</th>
-                  <th>{copy.hosts.actions}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hosts.map((host) => {
-                  const busy = hostBusy[host.hostAlias];
-                  const codexStatus = profileCodexStatus(copy, host, busy);
-
-                  return (
-                    <tr key={host.id}>
-                      <td>
-                        <strong>{host.name}</strong>
-                        <span>{host.hostAlias} / {formatEndpoint(host)}</span>
-                      </td>
-                      <td><StatusBadge copy={copy} status={host.status} /></td>
-                      <td><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
-                      <td className="tableActions">
-                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => onManageCodex(host.hostAlias, "check-version")}>
-                          {remoteCodexButtonLabel(copy, busy, "check-version")}
-                        </button>
-                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => onManageCodex(host.hostAlias, "install")}>
-                          {remoteCodexButtonLabel(copy, busy, "install")}
-                        </button>
-                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => onManageCodex(host.hostAlias, "update")}>
-                          {remoteCodexButtonLabel(copy, busy, "update")}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <span className="mutedText">{copy.profiles.noHosts}</span>
-        )}
-      </section>
-    </div>
-  );
+function ProfilesView() {
+  return <div className="profilesStack" />;
 }
 
 function SkillsView({ copy, skillPacks }: { copy: UICopy; skillPacks: SkillPack[] }) {
@@ -2203,7 +2034,9 @@ function SettingsView({
             <div className="eyebrow">{copy.settings.runtime}</div>
             <h2>{copy.settings.backend}</h2>
           </div>
-          <Badge tone={health.mode === "tauri" ? "green" : "gray"}>{health.mode}</Badge>
+          <Badge tone={health.mode === "tauri" ? "green" : "gray"}>
+            {health.mode === "tauri" ? copy.settings.available : copy.settings.desktopBackendRequired}
+          </Badge>
         </div>
         <dl className="settingsList">
           <div>
@@ -2314,16 +2147,27 @@ function localizeTaskAction(action: string, copy: UICopy) {
   return labels[action] ?? action;
 }
 
-function profileCodexStatus(copy: UICopy, host: Host | null, busy: HostBusyAction | undefined): { label: string; tone: "green" | "yellow" | "red" | "blue" | "gray" } {
+function hostCodexStatus(copy: UICopy, host: Host | null, busy: HostBusyAction | undefined): { label: string; tone: "green" | "yellow" | "red" | "blue" | "gray" } {
   if (!host) return { label: copy.profiles.notChecked, tone: "gray" };
+  if (busy === "test") return { label: copy.hosts.testing, tone: "yellow" };
   if (busy === "check-version") return { label: copy.hosts.checkingVersion, tone: "yellow" };
   if (busy === "install") return { label: copy.hosts.installingCodex, tone: "yellow" };
   if (busy === "update") return { label: copy.hosts.updatingCodex, tone: "yellow" };
-  if (host.status === "offline" && !host.codexInstalled) return { label: copy.profiles.operationFailed, tone: "red" };
+  if (!isHostCodexTested(host)) return { label: copy.hosts.unknown, tone: "gray" };
   if (!host.codexInstalled) {
-    return { label: host.codexVersion === "pending" ? copy.profiles.notChecked : copy.profiles.notInstalled, tone: "gray" };
+    return { label: copy.profiles.notInstalled, tone: "gray" };
   }
   return { label: host.codexVersion || copy.profiles.notChecked, tone: "green" };
+}
+
+function isHostCodexTested(host: Host | null) {
+  if (!host || host.status !== "online") return false;
+  const version = host.codexVersion.trim().toLowerCase();
+  return Boolean(version && version !== "pending" && version !== "unknown");
+}
+
+function sshHostSourceLabel(copy: UICopy, host: SshConfigHost) {
+  return host.managed || host.source === "managed" ? copy.hosts.codexhubManaged : copy.hosts.localSource;
 }
 
 function remoteCodexButtonLabel(copy: UICopy, busy: HostBusyAction | undefined, action: RemoteCodexAction) {
@@ -2386,6 +2230,10 @@ function formatBoolean(value: boolean, copy: UICopy) {
 function formatNullableBoolean(value: boolean | null, copy: UICopy) {
   if (value === null) return copy.hosts.unknown;
   return formatBoolean(value, copy);
+}
+
+function formatLatency(value: number | null | undefined, copy: UICopy) {
+  return typeof value === "number" ? `${value} ms` : copy.hosts.unknown;
 }
 
 function emptySshHostDraft(identityFile: string): SshHostDraft {

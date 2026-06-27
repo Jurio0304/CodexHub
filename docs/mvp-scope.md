@@ -17,7 +17,7 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Optional append/update of CodexHub-managed SSH config blocks with backup.
 - SSH connectivity check through Windows OpenSSH.
 - Remote system and Codex probe: OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
-- Single-host remote Codex CLI maintenance: Check Version, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is a compact all-host list on the Profiles / 配置 page.
+- Single-host remote Codex CLI maintenance: Test, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is the SSH Hosts table on the Hosts / 主机 page.
 - Idempotent remote PATH repair for `~/.local/bin` in `~/.bashrc` or `~/.zshrc` with backup-before-write and task-log evidence.
 - Remote `~/.codex/config.toml` read, diff, backup, render, and replace.
 - Local profile templates rendered to remote config.

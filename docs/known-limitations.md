@@ -21,7 +21,7 @@ Some SSH non-interactive shells do not read `~/.bashrc` or `~/.zshrc`, so a plai
 
 If a remote host's CA bundle rejects HTTPS downloads with a self-signed certificate error, the safer long-term fix is to repair that host's trust store. For first-run recovery, CodexHub keeps the official installer strict but may retry npmmirror native package downloads with certificate checks disabled, limited to npmmirror URLs and marked as `npm-mirror-native-insecure-tls` in the task log. If the insecure retry returns HTML instead of package metadata, CodexHub reports the likely captive portal or network authentication issue and then attempts the local-download plus `scp` upload fallback.
 
-The Profiles / 配置 page intentionally shows only a compact all-host Codex readiness list. Full OS, shell, PATH, config, and skills diagnostics stay on the Host page to avoid duplicate detail surfaces.
+The Hosts / 主机 page owns the SSH Hosts table, remote test results, and single-host Codex install/update actions. The Profiles / 配置 page is intentionally empty until remote config profile editing is implemented.
 
 Long SSH, probe, install, and update operations are dispatched through backend blocking workers so the WebView remains responsive. They are still bounded by per-step timeouts, and a full install/update can take longer than a single timeout because official download, mirror fallback, local download, upload, install, and verification are separate steps.
 
