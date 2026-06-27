@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodexHub 维护"
+  short_description: "按当前架构安全开发维护 CodexHub 项目"
+  default_prompt: "Use $codexhub-maintainer to safely implement a CodexHub development, bugfix, review, or maintenance task."
