@@ -156,6 +156,38 @@ export type RemoteProbeResult = {
   task: TaskRun;
 };
 
+export type RemoteCodexAction = "check-version" | "install" | "update";
+
+export type RemoteCodexProgressEvent = {
+  requestId: string;
+  hostAlias: string;
+  action: RemoteCodexAction;
+  step: string;
+  status: "running" | "stdout" | "stderr" | "heartbeat" | "success" | "failed" | string;
+  message: string;
+  detail: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  exitCode: number | null;
+  durationMs: number | null;
+  timedOut: boolean | null;
+};
+
+export type RemoteCodexMaintenanceResult = {
+  hostAlias: string;
+  ok: boolean;
+  action: RemoteCodexAction;
+  beforeVersion: string | null;
+  afterVersion: string | null;
+  codexPath: string | null;
+  installMethod: string | null;
+  pathChanged: boolean;
+  shellConfigPath: string | null;
+  backupPath: string | null;
+  message: string;
+  task: TaskRun;
+};
+
 export type SshKeyInfo = {
   keyType: "ed25519" | "rsa" | string;
   privatePath: string;

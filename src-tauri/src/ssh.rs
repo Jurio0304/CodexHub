@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -827,6 +828,149 @@ pub fn run_ssh_script(
     )
 }
 
+pub fn run_ssh_script_streaming<F>(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    run_ssh_command_streaming(
+        host_alias,
+        vec![script.into()],
+        timeout_ms,
+        script,
+        Vec::new(),
+        on_event,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcessStreamKind {
+    Stdout,
+    Stderr,
+    Heartbeat,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessStreamEvent {
+    pub kind: ProcessStreamKind,
+    pub line: String,
+    pub elapsed_ms: u64,
+}
+
+pub fn run_local_process(
+    program: &str,
+    args: &[String],
+    display_command: &str,
+    timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
+    run_process_with_timeout(program, args, display_command, timeout_ms)
+}
+
+pub fn run_local_process_streaming<F>(
+    program: &str,
+    args: &[String],
+    display_command: &str,
+    timeout_ms: u64,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    run_process_with_timeout_streaming(
+        program,
+        args,
+        display_command,
+        timeout_ms,
+        "",
+        &[],
+        on_event,
+    )
+}
+
+pub fn upload_file(
+    host_alias: &str,
+    local_path: &Path,
+    remote_path: &str,
+    timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
+    let host_alias = validate_ssh_alias(host_alias)?;
+    if !remote_path
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        return Err("Remote upload path contains characters CodexHub will not pass to scp.".into());
+    }
+
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let connect_timeout_secs = ((timeout_ms + 999) / 1000).clamp(1, 120).to_string();
+    let remote_target = format!("{host_alias}:{remote_path}");
+    let args = vec![
+        "-q".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "NumberOfPasswordPrompts=0".into(),
+        "-o".into(),
+        format!("ConnectTimeout={connect_timeout_secs}"),
+        local_path.to_string_lossy().to_string(),
+        remote_target.clone(),
+    ];
+    let command = format!(
+        "scp -q -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={} {} {}",
+        connect_timeout_secs,
+        path_string(local_path),
+        remote_target
+    );
+
+    run_process_with_timeout("scp", &args, &command, timeout_ms)
+}
+
+pub fn upload_file_streaming<F>(
+    host_alias: &str,
+    local_path: &Path,
+    remote_path: &str,
+    timeout_ms: u64,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    let host_alias = validate_ssh_alias(host_alias)?;
+    if !remote_path
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        return Err("Remote upload path contains characters CodexHub will not pass to scp.".into());
+    }
+
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let connect_timeout_secs = ((timeout_ms + 999) / 1000).clamp(1, 120).to_string();
+    let remote_target = format!("{host_alias}:{remote_path}");
+    let args = vec![
+        "-q".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "NumberOfPasswordPrompts=0".into(),
+        "-o".into(),
+        format!("ConnectTimeout={connect_timeout_secs}"),
+        local_path.to_string_lossy().to_string(),
+        remote_target.clone(),
+    ];
+    let command = format!(
+        "scp -q -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={} {} {}",
+        connect_timeout_secs,
+        path_string(local_path),
+        remote_target
+    );
+
+    run_process_with_timeout_streaming("scp", &args, &command, timeout_ms, "", &[], on_event)
+}
+
 fn run_ssh_command(
     host_alias: &str,
     remote_args: Vec<String>,
@@ -846,6 +990,31 @@ fn run_ssh_command(
         display_remote_command
     );
     run_process_with_timeout("ssh", &args, &command, timeout_ms)
+}
+
+fn run_ssh_command_streaming<F>(
+    host_alias: &str,
+    remote_args: Vec<String>,
+    timeout_ms: u64,
+    display_remote_command: &str,
+    extra_options: Vec<(String, String)>,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let (host_alias, connect_timeout_secs, args) =
+        build_ssh_args(host_alias, remote_args, timeout_ms, extra_options.clone())?;
+
+    let command = format!(
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} {}",
+        connect_timeout_secs,
+        display_extra_options(&extra_options),
+        host_alias,
+        display_remote_command
+    );
+    run_process_with_timeout_streaming("ssh", &args, &command, timeout_ms, "", &[], on_event)
 }
 
 fn build_ssh_args(
@@ -888,6 +1057,204 @@ fn run_process_with_timeout(
     timeout_ms: u64,
 ) -> Result<SshCommandOutput, String> {
     run_process_with_timeout_input_env(program, args, display_command, timeout_ms, "", &[])
+}
+
+enum ProcessReaderMessage {
+    Line(ProcessStreamKind, String),
+    Done,
+}
+
+fn run_process_with_timeout_streaming<F>(
+    program: &str,
+    args: &[String],
+    display_command: &str,
+    timeout_ms: u64,
+    stdin_input: &str,
+    envs: &[(&str, String)],
+    mut on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    let start = Instant::now();
+    let mut child = Command::new(program)
+        .args(args)
+        .envs(envs.iter().map(|(key, value)| (*key, value)))
+        .stdin(if stdin_input.is_empty() {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to start {program}: {error}"))?;
+
+    if !stdin_input.is_empty() {
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(stdin_input.as_bytes())
+                .map_err(|error| format!("Failed to write stdin for {program}: {error}"))?;
+        }
+    }
+
+    let (sender, receiver) = mpsc::channel::<ProcessReaderMessage>();
+    if let Some(stdout) = child.stdout.take() {
+        spawn_stream_reader(stdout, ProcessStreamKind::Stdout, sender.clone());
+    } else {
+        let _ = sender.send(ProcessReaderMessage::Done);
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_stream_reader(stderr, ProcessStreamKind::Stderr, sender.clone());
+    } else {
+        let _ = sender.send(ProcessReaderMessage::Done);
+    }
+    drop(sender);
+
+    let timeout = Duration::from_millis(timeout_ms);
+    let heartbeat_interval = Duration::from_secs(4);
+    let mut last_heartbeat = Instant::now();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_code = None;
+    let mut timed_out = false;
+    let mut readers_done = 0usize;
+
+    loop {
+        while let Ok(message) = receiver.try_recv() {
+            match message {
+                ProcessReaderMessage::Line(kind, line) => {
+                    let redacted = redact_sensitive(&line);
+                    match kind {
+                        ProcessStreamKind::Stdout => {
+                            stdout.push_str(&redacted);
+                            stdout.push('\n');
+                        }
+                        ProcessStreamKind::Stderr => {
+                            stderr.push_str(&redacted);
+                            stderr.push('\n');
+                        }
+                        ProcessStreamKind::Heartbeat => {}
+                    }
+                    on_event(ProcessStreamEvent {
+                        kind,
+                        line: redacted,
+                        elapsed_ms: duration_ms(start),
+                    });
+                    last_heartbeat = Instant::now();
+                }
+                ProcessReaderMessage::Done => readers_done += 1,
+            }
+        }
+
+        if exit_code.is_none() {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|error| format!("Failed to poll {program}: {error}"))?
+            {
+                exit_code = status.code();
+            }
+        }
+
+        if exit_code.is_some() && readers_done >= 2 {
+            break;
+        }
+
+        if exit_code.is_none() && start.elapsed() >= timeout {
+            timed_out = true;
+            let _ = child.kill();
+            let status = child.wait().map_err(|error| {
+                format!("Failed to collect timed-out {program} output: {error}")
+            })?;
+            exit_code = status.code();
+        }
+
+        if exit_code.is_none() && last_heartbeat.elapsed() >= heartbeat_interval {
+            on_event(ProcessStreamEvent {
+                kind: ProcessStreamKind::Heartbeat,
+                line: format!("Still running after {} ms.", duration_ms(start)),
+                elapsed_ms: duration_ms(start),
+            });
+            last_heartbeat = Instant::now();
+        }
+
+        if readers_done < 2 {
+            match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(message) => match message {
+                    ProcessReaderMessage::Line(kind, line) => {
+                        let redacted = redact_sensitive(&line);
+                        match kind {
+                            ProcessStreamKind::Stdout => {
+                                stdout.push_str(&redacted);
+                                stdout.push('\n');
+                            }
+                            ProcessStreamKind::Stderr => {
+                                stderr.push_str(&redacted);
+                                stderr.push('\n');
+                            }
+                            ProcessStreamKind::Heartbeat => {}
+                        }
+                        on_event(ProcessStreamEvent {
+                            kind,
+                            line: redacted,
+                            elapsed_ms: duration_ms(start),
+                        });
+                        last_heartbeat = Instant::now();
+                    }
+                    ProcessReaderMessage::Done => readers_done += 1,
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => readers_done = 2,
+            }
+        } else {
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    Ok(SshCommandOutput {
+        command: display_command.to_string(),
+        stdout: stdout.trim_end_matches('\n').to_string(),
+        stderr: stderr.trim_end_matches('\n').to_string(),
+        exit_code,
+        duration_ms: duration_ms(start),
+        timed_out,
+    })
+}
+
+fn spawn_stream_reader<R>(
+    reader: R,
+    kind: ProcessStreamKind,
+    sender: mpsc::Sender<ProcessReaderMessage>,
+) where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches(['\r', '\n']).to_string();
+                    if sender
+                        .send(ProcessReaderMessage::Line(kind, trimmed))
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(ProcessReaderMessage::Line(
+                        ProcessStreamKind::Stderr,
+                        format!("Failed to read process output: {error}"),
+                    ));
+                    break;
+                }
+            }
+        }
+        let _ = sender.send(ProcessReaderMessage::Done);
+    });
 }
 
 fn run_process_with_timeout_input_env(
@@ -1873,6 +2240,49 @@ mod tests {
             run_process_with_timeout(program, &args, "sleep", 100).expect("run timeout process");
 
         assert!(output.timed_out);
+    }
+
+    #[test]
+    fn process_streaming_emits_stdout_and_stderr_lines() {
+        #[cfg(windows)]
+        let (program, args) = (
+            "powershell",
+            vec![
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                "Write-Output 'stream-out'; [Console]::Error.WriteLine('stream-err')".to_string(),
+            ],
+        );
+        #[cfg(not(windows))]
+        let (program, args) = (
+            "sh",
+            vec![
+                "-c".to_string(),
+                "printf 'stream-out\\n'; printf 'stream-err\\n' >&2".to_string(),
+            ],
+        );
+
+        let mut events = Vec::new();
+        let output = run_process_with_timeout_streaming(
+            program,
+            &args,
+            "stream-test",
+            5_000,
+            "",
+            &[],
+            |event| events.push((event.kind, event.line)),
+        )
+        .expect("run streaming process");
+
+        assert!(output.success());
+        assert!(output.stdout.contains("stream-out"));
+        assert!(output.stderr.contains("stream-err"));
+        assert!(events
+            .iter()
+            .any(|(kind, line)| *kind == ProcessStreamKind::Stdout && line == "stream-out"));
+        assert!(events
+            .iter()
+            .any(|(kind, line)| *kind == ProcessStreamKind::Stderr && line == "stream-err"));
     }
 
     #[test]

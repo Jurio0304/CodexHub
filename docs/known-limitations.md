@@ -1,6 +1,6 @@
 # CodexHub Known Limitations
 
-Date: 2026-06-25
+Date: 2026-06-26
 
 ## Codex App Integration
 
@@ -14,6 +14,16 @@ MVP mitigation: CodexHub provides a clear UI fallback with verified SSH aliases,
 ## Remote Host Requirements
 
 The documented Codex App remote flow targets Linux remote machines with SSH access, POSIX-compatible shell behavior, writable home directory, and `scp` support. Windows remote hosts are not an MVP target.
+
+Remote Codex install/update also expects a writable `~/.local/bin` and `~/.codex`. The first install path needs `curl` or `wget` for the official standalone installer. If the official endpoint is unreachable, CodexHub falls back to the npmmirror native package path, which currently needs `python3`, `tar`, and a supported Linux CPU architecture (`x86_64` or `aarch64`). If that fallback is unavailable, CodexHub tries `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`. If remote downloads are blocked or redirected but SSH/SCP still works, CodexHub can download the npmmirror native package on the local Windows machine, upload the tarball with `scp`, and install it into the same user-owned remote paths.
+
+Some SSH non-interactive shells do not read `~/.bashrc` or `~/.zshrc`, so a plain `ssh <HostAlias> 'codex --version'` may still miss the repaired PATH until the next interactive shell. CodexHub's resolver checks `~/.local/bin/codex` directly so Check Version and follow-up install/update verification still work.
+
+If a remote host's CA bundle rejects HTTPS downloads with a self-signed certificate error, the safer long-term fix is to repair that host's trust store. For first-run recovery, CodexHub keeps the official installer strict but may retry npmmirror native package downloads with certificate checks disabled, limited to npmmirror URLs and marked as `npm-mirror-native-insecure-tls` in the task log. If the insecure retry returns HTML instead of package metadata, CodexHub reports the likely captive portal or network authentication issue and then attempts the local-download plus `scp` upload fallback.
+
+The Profiles / 配置 page intentionally shows only a compact all-host Codex readiness list. Full OS, shell, PATH, config, and skills diagnostics stay on the Host page to avoid duplicate detail surfaces.
+
+Long SSH, probe, install, and update operations are dispatched through backend blocking workers so the WebView remains responsive. They are still bounded by per-step timeouts, and a full install/update can take longer than a single timeout because official download, mirror fallback, local download, upload, install, and verification are separate steps.
 
 ## Skills Path Drift
 

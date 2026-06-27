@@ -8,6 +8,9 @@ import type {
   HostDraft,
   HostPatch,
   Profile,
+  RemoteCodexAction,
+  RemoteCodexMaintenanceResult,
+  RemoteCodexProgressEvent,
   RemoteProbeResult,
   SkillPack,
   SshBootstrapProgressEvent,
@@ -511,6 +514,92 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
   };
 }
 
+function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
+  const host = fallbackHosts.find((item) => item.hostAlias === hostAlias || item.id === hostAlias) ?? fallbackHosts[0];
+  const actionLabel =
+    action === "check-version" ? "Check Codex version" : action === "install" ? "Install Codex" : "Update Codex";
+  const nextVersion = host.codexInstalled && action === "check-version" ? host.codexVersion : "codex-cli 0.32.0";
+  const message = `Mock ${actionLabel.toLowerCase()} completed for ${host.hostAlias}: ${nextVersion}.`;
+  const task: TaskRun = {
+    id: `mock-codex-${Date.now()}`,
+    hostId: host.id,
+    hostName: host.name,
+    action: actionLabel,
+    status: "success",
+    startedAt: "now",
+    endedAt: "now",
+    summary: message,
+    logs: [
+      {
+        id: `mock-codex-log-${Date.now()}`,
+        taskRunId: "mock-codex",
+        level: "info",
+        timestamp: "now",
+        message: "Mock remote Codex maintenance command completed.",
+        command: `ssh ${host.hostAlias} codex maintenance ${action}`,
+        stdout: nextVersion,
+        stderr: "",
+        exitCode: 0,
+        durationMs: 48,
+        timedOut: false
+      }
+    ]
+  };
+  return {
+    hostAlias: host.hostAlias,
+    ok: true,
+    action,
+    beforeVersion: host.codexInstalled ? host.codexVersion : null,
+    afterVersion: nextVersion,
+    codexPath: "$HOME/.local/bin/codex",
+    installMethod: action === "check-version" ? null : "mock",
+    pathChanged: action !== "check-version" && !host.pathHasLocalBin,
+    shellConfigPath: action === "check-version" ? null : "$HOME/.bashrc",
+    backupPath: action === "check-version" ? null : "$HOME/.bashrc.codexhub.bak.mock",
+    message,
+    task
+  };
+}
+
+async function mockRemoteManageCodexWithProgress(
+  hostAlias: string,
+  action: RemoteCodexAction,
+  requestId?: string,
+  onProgress?: (event: RemoteCodexProgressEvent) => void
+): Promise<RemoteCodexMaintenanceResult> {
+  const host = fallbackHosts.find((item) => item.hostAlias === hostAlias || item.id === hostAlias) ?? fallbackHosts[0];
+  const emit = (step: string, status: RemoteCodexProgressEvent["status"], message: string, line?: string) => {
+    if (!requestId || !onProgress) return;
+    onProgress({
+      requestId,
+      hostAlias: host.hostAlias,
+      action,
+      step,
+      status,
+      message,
+      detail: step,
+      stdout: status === "stdout" ? line ?? message : null,
+      stderr: status === "stderr" ? line ?? message : null,
+      exitCode: status === "success" ? 0 : null,
+      durationMs: 24,
+      timedOut: false
+    });
+  };
+
+  emit("ssh-check", "running", `Checking SSH connection to ${host.hostAlias}.`);
+  await delay(80);
+  emit("ssh-check", "success", `SSH connection to ${host.hostAlias} returned ok.`);
+  emit(action === "install" ? "Install Codex" : "Update Codex", "running", "Starting remote Codex maintenance.");
+  await delay(100);
+  emit(action === "install" ? "Install Codex" : "Update Codex", "stdout", "Downloading Codex package.", "Downloading Codex package.");
+  await delay(100);
+  emit("codex --version after maintenance", "stdout", "codex-cli 0.32.0", "codex-cli 0.32.0");
+  await delay(60);
+  const result = mockRemoteManageCodex(hostAlias, action);
+  emit("summary", result.ok ? "success" : "failed", result.message);
+  return result;
+}
+
 export const api = {
   getHealth: () => safeInvoke<Health>("app_health", undefined, fallbackHealth),
   getSettings: () =>
@@ -614,6 +703,35 @@ export const api = {
     ),
   remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>
     safeInvoke<RemoteProbeResult>("remote_probe_codex", { hostAlias, timeoutMs }, () => mockRemoteProbe(hostAlias)),
+  remoteManageCodex: async (
+    hostAlias: string,
+    action: RemoteCodexAction,
+    timeoutMs = 120000,
+    requestId?: string,
+    onProgress?: (event: RemoteCodexProgressEvent) => void
+  ) => {
+    if (!hasTauriRuntime()) {
+      return mockRemoteManageCodexWithProgress(hostAlias, action, requestId, onProgress);
+    }
+
+    let unlisten: UnlistenFn | null = null;
+    if (requestId && onProgress) {
+      unlisten = await listen<RemoteCodexProgressEvent>("remote-codex-progress", (event) => {
+        if (event.payload.requestId === requestId) onProgress(event.payload);
+      });
+    }
+
+    try {
+      return await requiredInvoke<RemoteCodexMaintenanceResult>("remote_manage_codex", {
+        hostAlias,
+        action,
+        timeoutMs,
+        requestId
+      });
+    } finally {
+      unlisten?.();
+    }
+  },
   listProfiles: () => safeInvoke<Profile[]>("list_profiles", undefined, () => clone(fallbackProfiles)),
   listSkillPacks: () => safeInvoke<SkillPack[]>("list_skill_packs", undefined, () => clone(fallbackSkillPacks)),
   applyProfile: (profileId: string, hostIds: string[]) =>

@@ -1,6 +1,6 @@
 # CodexHub MVP Scope
 
-Date: 2026-06-25
+Date: 2026-06-26
 
 ## MVP Goal
 
@@ -17,6 +17,8 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Optional append/update of CodexHub-managed SSH config blocks with backup.
 - SSH connectivity check through Windows OpenSSH.
 - Remote system and Codex probe: OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
+- Single-host remote Codex CLI maintenance: Check Version, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is a compact all-host list on the Profiles / 配置 page.
+- Idempotent remote PATH repair for `~/.local/bin` in `~/.bashrc` or `~/.zshrc` with backup-before-write and task-log evidence.
 - Remote `~/.codex/config.toml` read, diff, backup, render, and replace.
 - Local profile templates rendered to remote config.
 - Remote `~/.codex/skills/` sync for selected skill folders.
@@ -30,7 +32,7 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Automatic Codex App SSH host registration through undocumented interfaces.
 - Forced Codex App SSH reconnect through undocumented interfaces.
 - Full terminal emulator or browser-based SSH console.
-- Multi-user team server, RBAC, schedules, and fleet automation.
+- Multi-user team server, RBAC, schedules, bulk Codex install/update execution, and fleet automation.
 - Storing private keys, passphrases, or tokens in plaintext.
 - Default overwrite of user SSH config, Codex config, shell config, or remote dotfiles.
 
@@ -50,9 +52,11 @@ Each mutating operation must have:
 1. Window 0: research, architecture docs, Tauri skeleton, smoke/mock mode.
 2. Window 1: local store and SSH config parser/generator with tests.
 3. Window 2: SSH connectivity probe using Windows OpenSSH and mock SSH backend.
-4. Window 3: remote Codex config read/diff/render/apply with backup.
-5. Window 4: skill folder validation and sync.
-6. Window 5: Codex App fallback wizard and end-to-end mock workflow.
+4. Window 3: remote SSH probe and Codex status detection.
+5. Window 4: single-host remote Codex CLI check/install/update with PATH repair and logs.
+6. Window 5: remote Codex config read/diff/render/apply with backup.
+7. Window 6: skill folder validation and sync.
+8. Window 7: Codex App fallback wizard and end-to-end mock workflow.
 
 ## Definition Of Done For Window 0
 

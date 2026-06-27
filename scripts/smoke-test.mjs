@@ -63,6 +63,9 @@ for (const [content, phrase] of requiredText) {
 }
 
 const rustLib = read("src-tauri/src/lib.rs");
+for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
+  if (!rustLib.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
+}
 for (const command of [
   "app_health",
   "get_settings",
@@ -82,17 +85,30 @@ for (const command of [
   "bootstrap_ssh_host",
   "bootstrap_existing_ssh_host",
   "remote_probe_codex",
+  "remote_manage_codex",
   "list_profiles",
   "apply_profile",
   "list_tasks"
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
 }
+for (const asyncCommand of ["async fn ssh_check", "async fn remote_probe_codex", "async fn remote_manage_codex"]) {
+  if (!rustLib.includes(asyncCommand)) fail(`long remote command must stay async: ${asyncCommand}`);
+}
+if (!rustLib.includes("spawn_blocking(command)")) fail("long remote commands should run through the blocking worker pool");
 
 const app = read("src/App.tsx");
-for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font", "Detected SSH hosts", "stdout", "stderr", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
+for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font", "Detected SSH hosts", "stdout", "stderr", "Remote Codex", "Install Codex", "Update Codex", "Check Version", "Batch install", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
+if (!app.includes("profileCodexBar")) fail("Profiles page should expose the compact all-host remote Codex list");
+if (!app.includes("CodexOperationModal")) fail("Install/update should show a compact Codex operation progress modal");
+if (!app.includes("codexOperationModal")) fail("Codex operation modal state should be wired in App");
+if (!app.includes("RemoteCodexProgressEvent")) fail("Codex operation modal should consume real progress events");
+if (app.includes("profileCard")) fail("Profiles page should use a compact table list instead of profile cards");
+if (app.includes("onApplyProfile")) fail("Profiles page should not show the old profile apply card/list actions");
+if (app.includes("onManageCodex(host.alias")) fail("Detected SSH hosts table should not expose remote Codex maintenance actions");
+if (app.includes("HostDetailsPanel copy={copy} host={selectedHost} hostBusy")) fail("Host details should not own remote Codex maintenance actions");
 if (app.includes("onAddHost={")) fail("Dashboard or non-Hosts Add Server handler should not remain");
 if (!app.includes("if (!result.ok)")) fail("SSH bootstrap modal must not treat failed results as success");
 if (!app.includes('result.writeResult.action === "rolled_back"')) fail("failed new SSH bootstrap should refresh only after managed-block rollback");
@@ -103,12 +119,12 @@ if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile
 if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
 
 const api = read("src/api.ts");
-for (const token of ["connectSshHost", "ssh-bootstrap-progress", "mockSshBootstrapHostWithProgress"]) {
+for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
 
 const models = read("src/models.ts");
-for (const token of ["SshBootstrapProgressEvent", "password_login", "verify_alias_login"]) {
+for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "RemoteCodexMaintenanceResult", "check-version", "password_login", "verify_alias_login"]) {
   if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
 

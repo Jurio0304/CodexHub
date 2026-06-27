@@ -13,17 +13,20 @@ MVP direction:
 
 ## Current Status
 
-Window 3 adds read-only SSH host discovery, real OpenSSH connection checks, and remote system probes on top of the desktop UI shell:
+Window 4 adds single-host remote Codex CLI maintenance on top of SSH host discovery, OpenSSH checks, and remote system probes:
 
 - macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
-- Dashboard server matrix with mock host data, empty-state handling, and recent task cards; the Add Server entry is scoped to the Hosts page.
+- Dashboard server matrix with host-level Check Version, Install Codex, and Update Codex quick actions; batch install/update is a UI placeholder only.
 - Light/dark mode support with native-feeling cards, tables, and status badges.
 - Settings / Appearance includes a three-button theme control plus English / 简体中文 global font and language presets.
 - Settings / Local SSH detects Ed25519 and RSA keys, can generate a non-overwriting Ed25519 key, and shows/copies public keys only.
 - Hosts auto-detect safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode and import them into the in-memory inventory.
 - Hosts can still add, update, and delete only CodexHub-managed blocks in `%USERPROFILE%\.ssh\config` with timestamped backups; unmanaged user blocks are never modified or overwritten.
 - Real desktop commands can run `ssh <HostAlias> echo ok` with timeout control and probe remote Linux hosts for OS, arch, shell, PATH, Codex CLI, config presence, and skills count.
-- Task logs now capture each SSH/probe command with redacted stdout/stderr, exit code, duration, and timeout state.
+- Profiles / 配置 presents a compact all-host Codex readiness list for single-host `codex --version` checks plus user-directory install/update flows. Host pages remain focused on connection details and diagnostics. The remote command remains the real `codex`; CodexHub does not install a wrapper.
+- Remote Codex install/update creates `~/.local/bin`, repairs shell PATH through an idempotent CodexHub-managed block in `~/.bashrc` or `~/.zshrc` with backup-before-write, runs the official standalone installer first, falls back to a npmmirror native package install, can locally download and `scp` that native package when the remote network is blocked, then falls back to npm with `--prefix "$HOME/.local"`.
+- Probe and Codex maintenance commands run through the backend blocking worker pool so the desktop window stays responsive; install/update opens a compact progress modal backed by `remote-codex-progress` events with streaming stdout/stderr lines and heartbeat messages.
+- Task logs now capture each SSH/probe/install command with redacted stdout/stderr, exit code, duration, and timeout state.
 - Profile apply and skill sync remain mock/reserved workflows until the remote write path lands.
 
 ## Prerequisites For Full Desktop Dev
@@ -34,11 +37,10 @@ Install these on Windows before running the full Tauri app:
 2. Rust stable MSVC toolchain.
 3. Microsoft WebView2 runtime.
 4. Windows OpenSSH client (`ssh.exe`, `scp.exe`, `sftp.exe`).
-5. Codex CLI on each remote host where Codex App will run:
+5. SSH access to each Linux remote host where Codex App will run. CodexHub can install or update the remote Codex CLI without root:
 
 ```bash
-npm install -g @openai/codex
-codex --version
+ssh <HostAlias> echo ok
 ```
 
 ## Install
@@ -78,6 +80,7 @@ The desktop app currently exposes these Rust commands:
 - `bootstrap_ssh_host`
 - `bootstrap_existing_ssh_host`
 - `remote_probe_codex`
+- `remote_manage_codex`
 - `list_profiles`
 - `apply_profile`
 - `list_tasks`

@@ -1,6 +1,6 @@
 # CodexHub Architecture
 
-Date: 2026-06-25  
+Date: 2026-06-26
 Target: Windows desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust.
 
 ## Architecture Principle
@@ -24,6 +24,7 @@ flowchart LR
   OpenSSH --> Remote["Remote Linux host"]
   Remote --> Config["~/.codex/config.toml"]
   Remote --> Skills["~/.codex/skills/"]
+  Remote --> CodexCli["codex CLI in ~/.local/bin"]
   UI --> Fallback["Codex App fallback wizard"]
 ```
 
@@ -45,10 +46,11 @@ Planned Tauri commands:
 - `generate_ssh_host_block(input)`: produce an idempotent suggested host block.
 - `append_ssh_host_block_with_backup(input)`: optional explicit write path with timestamped backup.
 - `refresh_discovered_hosts()`: merge read-only local SSH aliases into the in-memory host inventory.
-- `ssh_check(host_alias)`: run `ssh <HostAlias> echo ok` through system OpenSSH with timeout and redacted logs.
+- `ssh_check(host_alias)`: run `ssh <HostAlias> echo ok` through system OpenSSH with timeout and redacted logs on the backend blocking worker pool.
 - `bootstrap_ssh_host(draft, password, request_id)`: use a one-time password through the Rust SSH client to log in, install the local public key, set `~/.ssh` permissions, emit four-step progress events, write only a CodexHub-managed SSH config block, then verify `ssh <HostAlias> echo ok` with system OpenSSH.
 - `bootstrap_existing_ssh_host(host_alias, password)`: run the same key setup for a host already discovered in SSH config without changing unmanaged blocks.
-- `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and `~/.codex/skills`.
+- `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and `~/.codex/skills` on the backend blocking worker pool.
+- `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command on the backend blocking worker pool, returning before/after version, Codex path, install method, PATH repair metadata, backup path, and full task log.
 - `remote_read_config(server_id)`: download `~/.codex/config.toml` if present.
 - `render_profile_config(profile_id)`: render TOML from structured profile state.
 - `remote_apply_config(server_id, rendered_toml)`: backup, upload temp file, atomic replace.
@@ -93,7 +95,7 @@ type SkillPackage = {
 type OperationLog = {
   id: string;
   serverId: string;
-  kind: "ssh-check" | "apply-config" | "sync-skill" | "restore";
+  kind: "ssh-check" | "probe-codex" | "manage-codex" | "apply-config" | "sync-skill" | "restore";
   status: "planned" | "running" | "succeeded" | "failed";
   startedAt: string;
   finishedAt?: string;
@@ -101,6 +103,26 @@ type OperationLog = {
   message?: string;
 };
 ```
+
+## Remote Codex CLI Maintenance
+
+Single-host install/update is implemented through plain SSH and does not install a wrapper. CodexHub keeps the remote executable as `codex` and prepares the user environment only:
+
+1. Verify SSH with `ssh <HostAlias> echo ok`.
+2. Record the current Codex path and `codex --version` using the resolver that also checks `~/.local/bin/codex`.
+3. Ensure `~/.local/bin` exists.
+4. If `~/.local/bin` is not already in PATH, choose `~/.bashrc` or `~/.zshrc`, create a timestamped backup before writing, and add or replace a CodexHub-managed PATH block idempotently.
+5. Run the official standalone installer from `https://chatgpt.com/codex/install.sh` with user-directory environment variables.
+6. If the official installer fails or cannot be reached, download the platform-native `@openai/codex` package from `https://registry.npmmirror.com` into `~/.codex/packages/standalone/releases/<version>` and symlink `~/.local/bin/codex`.
+7. If remote downloads are blocked or redirected but SSH/SCP still works, download the same npmmirror native package on the local Windows machine, upload it with `scp`, and install it into the same user-owned remote paths.
+8. If the native package fallback is not available, run `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`.
+9. Re-run the resolver and `codex --version`, then store the complete task log.
+
+For long install/update runs, the Rust backend executes the blocking SSH/curl/scp work off the window-responsive command path and emits `remote-codex-progress` events keyed by a frontend `requestId`. The compact progress modal consumes these events to show step changes, streamed stdout/stderr lines, and heartbeat messages before the final `TaskRun` is returned.
+
+The remote script must not use `sudo`, `/usr/local/bin`, `chown`, or a root-owned install path. Repeat runs should not duplicate the PATH block and should not create a backup when no shell config write is needed.
+
+The primary UI entry is a compact all-host readiness list on the Profiles / 配置 page. Dashboard may expose the same single-host actions as shortcuts, while Host pages stay focused on SSH details, probes, and diagnostics.
 
 ## Remote Write Algorithm
 

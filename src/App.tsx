@@ -6,6 +6,8 @@ import type {
   Host,
   HostStatus,
   Profile,
+  RemoteCodexAction,
+  RemoteCodexProgressEvent,
   SkillPack,
   SshBootstrapProgressEvent,
   SshBootstrapResult,
@@ -23,7 +25,18 @@ import type { AppSettings, FontPreset, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
 type Locale = "en" | "zh";
-type HostBusyAction = "test" | "probe" | "bootstrap";
+type HostBusyAction = "test" | "probe" | "bootstrap" | RemoteCodexAction;
+type CodexOperationModalStatus = "running" | "success" | "failed";
+type CodexOperationModalState = {
+  hostAlias: string;
+  hostName: string;
+  action: RemoteCodexAction;
+  status: CodexOperationModalStatus;
+  logs: RemoteCodexProgressEvent[];
+  task?: TaskRun;
+  message?: string;
+  error?: string;
+};
 
 const uiCopy = {
   en: {
@@ -105,7 +118,12 @@ const uiCopy = {
       noSkillPacks: "No skill packs",
       recentTasks: "Recent tasks",
       activity: "Activity",
-      viewAll: "View all"
+      viewAll: "View all",
+      batchOperations: "Batch operations",
+      batchBody: "Fleet install/update is reserved for a later version.",
+      batchInstall: "Batch install",
+      batchUpdate: "Batch update",
+      comingSoon: "Coming soon"
     },
     hosts: {
       sshManager: "SSH config manager",
@@ -147,6 +165,12 @@ const uiCopy = {
       probing: "Probing...",
       bootstrapping: "Bootstrapping...",
       testing: "Testing...",
+      checkVersion: "Check Version",
+      checkingVersion: "Checking...",
+      installCodex: "Install Codex",
+      installingCodex: "Installing...",
+      updateCodex: "Update Codex",
+      updatingCodex: "Updating...",
       details: "Host details",
       detailsBody: "Connection status and remote Codex readiness from the latest test or probe.",
       sshStatus: "SSH status",
@@ -180,11 +204,33 @@ const uiCopy = {
       latency: "Latency"
     },
     profiles: {
+      codexPrep: "Remote Codex",
+      noHosts: "Add a host before checking remote Codex.",
+      notChecked: "Not checked",
+      notInstalled: "Not installed",
+      operationFailed: "Operation failed",
       hosts: "hosts",
       approval: "Approval",
       sandbox: "Sandbox",
       updated: "Updated",
       applyOnline: "Apply to online hosts"
+    },
+    codexOperation: {
+      title: "Codex maintenance",
+      running: "Running",
+      success: "Completed",
+      failed: "Failed",
+      progress: "Progress",
+      summary: "Summary",
+      latestLog: "Latest log",
+      started: "Started remote maintenance.",
+      waiting: "Waiting for remote output...",
+      installHint: "Install can try official download, mirror fallback, local upload, then version check.",
+      updateHint: "Update can try official download, mirror fallback, local upload, then version check.",
+      noLogs: "No task log returned yet.",
+      hide: "Hide",
+      close: "Close",
+      viewTasks: "View Tasks"
     },
     skills: {
       source: "Source",
@@ -218,7 +264,10 @@ const uiCopy = {
         "Bootstrap SSH key": "Bootstrap SSH key",
         "Sync skill pack": "Sync skill pack",
         "Preview profile": "Preview profile",
-        "Probe remote system": "Probe remote system"
+        "Probe remote system": "Probe remote system",
+        "Check Codex version": "Check Codex version",
+        "Install Codex": "Install Codex",
+        "Update Codex": "Update Codex"
       }
     },
     settings: {
@@ -355,7 +404,12 @@ const uiCopy = {
       noSkillPacks: "无技能包",
       recentTasks: "最近任务",
       activity: "活动",
-      viewAll: "查看全部"
+      viewAll: "查看全部",
+      batchOperations: "批量操作",
+      batchBody: "批量安装/更新预留到后续版本。",
+      batchInstall: "批量安装",
+      batchUpdate: "批量更新",
+      comingSoon: "暂未开放"
     },
     hosts: {
       sshManager: "SSH 连接管理",
@@ -397,6 +451,12 @@ const uiCopy = {
       probing: "探测中...",
       bootstrapping: "连接中...",
       testing: "测试中...",
+      checkVersion: "检查版本",
+      checkingVersion: "检查中...",
+      installCodex: "安装 Codex",
+      installingCodex: "安装中...",
+      updateCodex: "更新 Codex",
+      updatingCodex: "更新中...",
       details: "主机详情",
       detailsBody: "展示最近一次测试或探测得到的连接状态与远端 Codex 就绪度。",
       sshStatus: "SSH 状态",
@@ -430,11 +490,33 @@ const uiCopy = {
       latency: "延迟"
     },
     profiles: {
+      codexPrep: "远端 Codex",
+      noHosts: "请先添加主机，再检查远端 Codex。",
+      notChecked: "未检查",
+      notInstalled: "未安装",
+      operationFailed: "操作失败",
       hosts: "台主机",
       approval: "审批",
       sandbox: "沙箱",
       updated: "更新于",
       applyOnline: "应用到在线主机"
+    },
+    codexOperation: {
+      title: "Codex 维护",
+      running: "运行中",
+      success: "已完成",
+      failed: "失败",
+      progress: "进程",
+      summary: "摘要",
+      latestLog: "简要日志",
+      started: "已开始远端维护。",
+      waiting: "正在等待远端输出...",
+      installHint: "安装会尝试官方下载、镜像兜底、本地上传，然后检查版本。",
+      updateHint: "更新会尝试官方下载、镜像兜底、本地上传，然后检查版本。",
+      noLogs: "尚未返回任务日志。",
+      hide: "隐藏",
+      close: "关闭",
+      viewTasks: "查看任务"
     },
     skills: {
       source: "来源",
@@ -468,7 +550,10 @@ const uiCopy = {
         "Bootstrap SSH key": "配置 SSH 密钥",
         "Sync skill pack": "同步技能包",
         "Preview profile": "预览配置",
-        "Probe remote system": "探测远端系统"
+        "Probe remote system": "探测远端系统",
+        "Check Codex version": "检查 Codex 版本",
+        "Install Codex": "安装 Codex",
+        "Update Codex": "更新 Codex"
       }
     },
     settings: {
@@ -544,6 +629,7 @@ function App() {
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
   const [hostModalOpen, setHostModalOpen] = useState(false);
+  const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
@@ -809,19 +895,92 @@ function App() {
     });
   };
 
-  const handleApplyProfile = async (profileId: string) => {
-    const targetHostIds = hosts.filter((host) => host.status === "online").map((host) => host.id);
-    const hostIds = targetHostIds.length > 0 ? targetHostIds : hosts.slice(0, 1).map((host) => host.id);
-    if (hostIds.length === 0) {
-      setNotice(copy.notices.addHostBeforeProfile);
-      return;
+  const handleRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
+    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+    const hostAlias = target?.hostAlias ?? idOrAlias;
+    const hostName = target?.name ?? hostAlias;
+    const showProgressModal = action === "install" || action === "update";
+    const requestId = showProgressModal ? `codex-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
+    setHostBusy((current) => ({ ...current, [hostAlias]: action }));
+    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+    if (showProgressModal) {
+      setCodexOperationModal({
+        hostAlias,
+        hostName,
+        action,
+        status: "running",
+        logs: []
+      });
+      await waitForNextFrame();
     }
 
-    const task = await api.applyProfile(profileId, hostIds);
-    setTasks((current) => [task, ...current]);
-    setHosts((current) => current.map((host) => (hostIds.includes(host.id) ? { ...host, profileId } : host)));
-    setActiveSection("tasks");
-    setNotice(task.summary);
+    try {
+      const result = await api.remoteManageCodex(hostAlias, action, 120000, requestId, (event) => {
+        setCodexOperationModal((current) => {
+          if (!current || current.hostAlias !== event.hostAlias || current.action !== event.action) return current;
+          const nextStatus =
+            event.status === "success" ? "success" : event.status === "failed" ? "failed" : current.status;
+          return {
+            ...current,
+            status: nextStatus,
+            message: event.step === "summary" ? event.message : current.message,
+            logs: [...current.logs, event].slice(-80)
+          };
+        });
+      });
+      const resolvedVersion = result.afterVersion ?? result.beforeVersion;
+      const nextVersion = resolvedVersion ?? "not installed";
+      const sshCheckFailed = result.message.toLowerCase().includes("ssh check failed");
+      setHosts((current) =>
+        current.map((host) =>
+          host.hostAlias === result.hostAlias
+            ? {
+                ...host,
+                status: sshCheckFailed ? "offline" : "online",
+                codexInstalled: Boolean(resolvedVersion),
+                codexVersion: nextVersion,
+                pathHasLocalBin: action === "check-version" ? host.pathHasLocalBin : result.ok || result.pathChanged ? true : host.pathHasLocalBin,
+                lastSeen: sshCheckFailed ? host.lastSeen : copy.common.justNow
+              }
+            : host
+        )
+      );
+      setTasks((current) => [result.task, ...current]);
+      setNotice(`${hostName}: ${result.message}`);
+      if (showProgressModal) {
+        setCodexOperationModal((current) =>
+          current && current.hostAlias === hostAlias && current.action === action
+            ? {
+                ...current,
+                status: result.ok ? "success" : "failed",
+                task: result.task,
+                message: result.message
+              }
+            : current
+        );
+      }
+    } catch (error) {
+      const errorMessage = formatError(error);
+      setNotice(`${hostName}: ${errorMessage}`);
+      if (showProgressModal) {
+        setCodexOperationModal((current) =>
+          current && current.hostAlias === hostAlias && current.action === action
+            ? {
+                ...current,
+                status: "failed",
+                error: errorMessage
+              }
+            : current
+        );
+      }
+      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "offline" } : host)));
+    } finally {
+      setHostBusy((current) => {
+        const next = { ...current };
+        delete next[hostAlias];
+        return next;
+      });
+    }
   };
 
   const persistSettings = (nextSettings: AppSettings) => {
@@ -848,6 +1007,7 @@ function App() {
             tasks={tasks}
             profileById={profileById}
             skillPackById={skillPackById}
+            onManageCodex={handleRemoteCodexAction}
             onProbeHost={handleProbeHost}
             onSelectSection={setActiveSection}
             onTestHost={handleTestHost}
@@ -877,7 +1037,7 @@ function App() {
           />
         );
       case "profiles":
-        return <ProfilesView copy={copy} hosts={hosts} profiles={profiles} onApplyProfile={handleApplyProfile} />;
+        return <ProfilesView copy={copy} hostBusy={hostBusy} hosts={hosts} onManageCodex={handleRemoteCodexAction} />;
       case "skills":
         return <SkillsView copy={copy} skillPacks={skillPacks} />;
       case "tasks":
@@ -948,6 +1108,116 @@ function App() {
 
         {renderContent()}
       </main>
+      {codexOperationModal ? (
+        <CodexOperationModal
+          copy={copy}
+          operation={codexOperationModal}
+          onClose={() => setCodexOperationModal(null)}
+          onViewTasks={() => {
+            setActiveSection("tasks");
+            setCodexOperationModal(null);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CodexOperationModal({
+  copy,
+  operation,
+  onClose,
+  onViewTasks
+}: {
+  copy: UICopy;
+  operation: CodexOperationModalState;
+  onClose: () => void;
+  onViewTasks: () => void;
+}) {
+  const actionLabel = remoteCodexButtonLabel(copy, undefined, operation.action);
+  const statusTone = operation.status === "success" ? "green" : operation.status === "failed" ? "red" : "yellow";
+  const progressLogs = operation.logs.slice(-20);
+  const taskLogs = operation.task?.logs.slice(-6) ?? [];
+  const runningLogs = [
+    { level: "info" as const, message: copy.codexOperation.started, detail: operation.hostAlias },
+    { level: "info" as const, message: copy.codexOperation.waiting, detail: actionLabel },
+    {
+      level: "warn" as const,
+      message: operation.action === "install" ? copy.codexOperation.installHint : copy.codexOperation.updateHint,
+      detail: ""
+    }
+  ];
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="codexOperationModal" role="dialog" aria-modal="true" aria-labelledby="codex-operation-modal-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}>
+          ×
+        </button>
+        <div className="codexOperationHeader">
+          <div>
+            <div className="eyebrow">{copy.codexOperation.title}</div>
+            <h2 id="codex-operation-modal-title">{actionLabel}</h2>
+            <p>{operation.hostName} · {operation.hostAlias}</p>
+          </div>
+          <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
+        </div>
+
+        <div className="codexOperationSummary">
+          <span>{copy.codexOperation.summary}</span>
+          <strong>{operation.message ?? operation.error ?? (operation.status === "running" ? copy.codexOperation.waiting : copy.codexOperation.noLogs)}</strong>
+        </div>
+
+        <div className="codexOperationLog">
+          <div className="codexOperationLogTitle">
+            <span>{copy.codexOperation.latestLog}</span>
+            {operation.status === "running" ? <i aria-hidden="true" /> : null}
+          </div>
+          <div className="codexOperationLogRows">
+            {progressLogs.length > 0
+              ? progressLogs.map((log, index) => (
+                  <div className="codexOperationLogRow" data-level={progressLogLevel(log)} key={`${log.step}-${log.status}-${index}`}>
+                    <strong>{progressLogLabel(copy, log)}</strong>
+                    <span>{log.message}</span>
+                    {compactProgressLogDetail(log) ? <code>{compactProgressLogDetail(log)}</code> : null}
+                  </div>
+                ))
+              : operation.status === "running"
+                ? runningLogs.map((log, index) => (
+                  <div className="codexOperationLogRow" data-level={log.level} key={`${log.message}-${index}`}>
+                    <strong>{copy.status.log[log.level]}</strong>
+                    <span>{log.message}</span>
+                    {log.detail ? <code>{log.detail}</code> : null}
+                  </div>
+                ))
+                : taskLogs.length > 0
+                  ? taskLogs.map((log) => (
+                    <div className="codexOperationLogRow" data-level={log.level} key={log.id}>
+                      <strong>{copy.status.log[log.level]}</strong>
+                      <span>{log.message}</span>
+                      {compactTaskLogDetail(log) ? <code>{compactTaskLogDetail(log)}</code> : null}
+                    </div>
+                  ))
+                  : (
+                    <div className="codexOperationLogRow" data-level={operation.status === "failed" ? "error" : "info"}>
+                      <strong>{operation.status === "failed" ? copy.status.log.error : copy.status.log.info}</strong>
+                      <span>{operation.error ?? copy.codexOperation.noLogs}</span>
+                    </div>
+                  )}
+          </div>
+        </div>
+
+        <div className="modalActions codexOperationActions">
+          {operation.task ? (
+            <button className="secondaryButton" type="button" onClick={onViewTasks}>
+              {copy.codexOperation.viewTasks}
+            </button>
+          ) : null}
+          <button className="primaryButton" type="button" onClick={onClose}>
+            {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -966,6 +1236,7 @@ function DashboardView({
   skillPackById,
   skillPacks,
   tasks,
+  onManageCodex,
   onProbeHost,
   onSelectSection,
   onTestHost
@@ -983,6 +1254,7 @@ function DashboardView({
   skillPackById: Map<string, SkillPack>;
   skillPacks: SkillPack[];
   tasks: TaskRun[];
+  onManageCodex: (id: string, action: RemoteCodexAction) => void;
   onProbeHost: (id: string) => void;
   onSelectSection: (section: SectionId) => void;
   onTestHost: (id: string) => void;
@@ -1008,7 +1280,8 @@ function DashboardView({
         </div>
       </section>
 
-      <ServerMatrix copy={copy} hostBusy={hostBusy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} onProbeHost={onProbeHost} onTestHost={onTestHost} />
+      <ServerMatrix copy={copy} hostBusy={hostBusy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} onManageCodex={onManageCodex} onProbeHost={onProbeHost} onTestHost={onTestHost} />
+      <BatchOperationsPlaceholder copy={copy} />
       <RecentTasks copy={copy} tasks={tasks} onViewAll={() => onSelectSection("tasks")} />
     </div>
   );
@@ -1024,12 +1297,31 @@ function MetricCard({ label, value, detail }: { label: string; value: string; de
   );
 }
 
+function BatchOperationsPlaceholder({ copy }: { copy: UICopy }) {
+  return (
+    <section className="panel">
+      <div className="panelHeader compact">
+        <div>
+          <div className="eyebrow">{copy.dashboard.batchOperations}</div>
+          <h2>{copy.dashboard.comingSoon}</h2>
+          <p>{copy.dashboard.batchBody}</p>
+        </div>
+      </div>
+      <div className="hostCardActions">
+        <button className="tertiaryButton" disabled type="button">{copy.dashboard.batchInstall}</button>
+        <button className="tertiaryButton" disabled type="button">{copy.dashboard.batchUpdate}</button>
+      </div>
+    </section>
+  );
+}
+
 function ServerMatrix({
   copy,
   hostBusy,
   hosts,
   profileById,
   skillPackById,
+  onManageCodex,
   onProbeHost,
   onTestHost
 }: {
@@ -1038,6 +1330,7 @@ function ServerMatrix({
   hosts: Host[];
   profileById: Map<string, Profile>;
   skillPackById: Map<string, SkillPack>;
+  onManageCodex: (id: string, action: RemoteCodexAction) => void;
   onProbeHost: (id: string) => void;
   onTestHost: (id: string) => void;
 }) {
@@ -1102,6 +1395,15 @@ function ServerMatrix({
                 </button>
                 <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onProbeHost(host.hostAlias)}>
                   {hostBusy[host.hostAlias] === "probe" ? copy.hosts.probing : copy.hosts.probe}
+                </button>
+                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onManageCodex(host.hostAlias, "check-version")}>
+                  {remoteCodexButtonLabel(copy, hostBusy[host.hostAlias], "check-version")}
+                </button>
+                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onManageCodex(host.hostAlias, "install")}>
+                  {remoteCodexButtonLabel(copy, hostBusy[host.hostAlias], "install")}
+                </button>
+                <button className="tertiaryButton" disabled={Boolean(hostBusy[host.hostAlias])} type="button" onClick={() => onManageCodex(host.hostAlias, "update")}>
+                  {remoteCodexButtonLabel(copy, hostBusy[host.hostAlias], "update")}
                 </button>
               </div>
             </article>
@@ -1562,7 +1864,13 @@ function StepStatusIcon({ status }: { status: SshBootstrapStepStatus }) {
   if (status === "running") return <span className="stepIcon running" aria-label="running" />;
   return <span className="stepIcon pending" />;
 }
-function HostDetailsPanel({ copy, host }: { copy: UICopy; host: Host | null }) {
+function HostDetailsPanel({
+  copy,
+  host
+}: {
+  copy: UICopy;
+  host: Host | null;
+}) {
   return (
     <section className="panel spanWide">
       <div className="panelHeader">
@@ -1571,7 +1879,9 @@ function HostDetailsPanel({ copy, host }: { copy: UICopy; host: Host | null }) {
           <h2>{host?.name ?? copy.hosts.unknown}</h2>
           <p>{copy.hosts.detailsBody}</p>
         </div>
-        {host ? <StatusBadge copy={copy} status={host.status} /> : <Badge tone="gray">{copy.hosts.unknown}</Badge>}
+        <div className="calloutMeta">
+          {host ? <StatusBadge copy={copy} status={host.status} /> : <Badge tone="gray">{copy.hosts.unknown}</Badge>}
+        </div>
       </div>
 
       <dl className="detailGrid">
@@ -1616,40 +1926,65 @@ function HostDetailsPanel({ copy, host }: { copy: UICopy; host: Host | null }) {
   );
 }
 
-function ProfilesView({ copy, hosts, profiles, onApplyProfile }: { copy: UICopy; hosts: Host[]; profiles: Profile[]; onApplyProfile: (profileId: string) => void }) {
+function ProfilesView({
+  copy,
+  hostBusy,
+  hosts,
+  onManageCodex
+}: {
+  copy: UICopy;
+  hostBusy: Record<string, HostBusyAction>;
+  hosts: Host[];
+  onManageCodex: (id: string, action: RemoteCodexAction) => void;
+}) {
   return (
-    <div className="cardGrid">
-      {profiles.map((profile) => {
-        const assignedHosts = hosts.filter((host) => host.profileId === profile.id);
+    <div className="profilesStack">
+      <section className="panel profileCodexBar" aria-label={copy.profiles.codexPrep}>
+        {hosts.length > 0 ? (
+          <div className="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{copy.hosts.name}</th>
+                  <th>{copy.hosts.status}</th>
+                  <th>{copy.hosts.codex}</th>
+                  <th>{copy.hosts.actions}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hosts.map((host) => {
+                  const busy = hostBusy[host.hostAlias];
+                  const codexStatus = profileCodexStatus(copy, host, busy);
 
-        return (
-          <article className="panel profileCard" key={profile.id}>
-            <div className="panelHeader compact">
-              <div>
-                <div className="eyebrow">{profile.model}</div>
-                <h2>{profile.name}</h2>
-              </div>
-              <Badge tone="blue">{assignedHosts.length} {copy.profiles.hosts}</Badge>
-            </div>
-            <p>{profile.description}</p>
-            <dl className="settingsList">
-              <div>
-                <dt>{copy.profiles.approval}</dt>
-                <dd>{profile.approvalPolicy}</dd>
-              </div>
-              <div>
-                <dt>{copy.profiles.sandbox}</dt>
-                <dd>{profile.sandboxMode}</dd>
-              </div>
-              <div>
-                <dt>{copy.profiles.updated}</dt>
-                <dd>{profile.updatedAt}</dd>
-              </div>
-            </dl>
-            <button className="secondaryButton fullWidth" type="button" onClick={() => onApplyProfile(profile.id)}>{copy.profiles.applyOnline}</button>
-          </article>
-        );
-      })}
+                  return (
+                    <tr key={host.id}>
+                      <td>
+                        <strong>{host.name}</strong>
+                        <span>{host.hostAlias} / {formatEndpoint(host)}</span>
+                      </td>
+                      <td><StatusBadge copy={copy} status={host.status} /></td>
+                      <td><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
+                      <td className="tableActions">
+                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => onManageCodex(host.hostAlias, "check-version")}>
+                          {remoteCodexButtonLabel(copy, busy, "check-version")}
+                        </button>
+                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => onManageCodex(host.hostAlias, "install")}>
+                          {remoteCodexButtonLabel(copy, busy, "install")}
+                        </button>
+                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => onManageCodex(host.hostAlias, "update")}>
+                          {remoteCodexButtonLabel(copy, busy, "update")}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <span className="mutedText">{copy.profiles.noHosts}</span>
+        )}
+      </section>
     </div>
   );
 }
@@ -1977,6 +2312,66 @@ function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus })
 function localizeTaskAction(action: string, copy: UICopy) {
   const labels = copy.tasks.actionLabels as Record<string, string>;
   return labels[action] ?? action;
+}
+
+function profileCodexStatus(copy: UICopy, host: Host | null, busy: HostBusyAction | undefined): { label: string; tone: "green" | "yellow" | "red" | "blue" | "gray" } {
+  if (!host) return { label: copy.profiles.notChecked, tone: "gray" };
+  if (busy === "check-version") return { label: copy.hosts.checkingVersion, tone: "yellow" };
+  if (busy === "install") return { label: copy.hosts.installingCodex, tone: "yellow" };
+  if (busy === "update") return { label: copy.hosts.updatingCodex, tone: "yellow" };
+  if (host.status === "offline" && !host.codexInstalled) return { label: copy.profiles.operationFailed, tone: "red" };
+  if (!host.codexInstalled) {
+    return { label: host.codexVersion === "pending" ? copy.profiles.notChecked : copy.profiles.notInstalled, tone: "gray" };
+  }
+  return { label: host.codexVersion || copy.profiles.notChecked, tone: "green" };
+}
+
+function remoteCodexButtonLabel(copy: UICopy, busy: HostBusyAction | undefined, action: RemoteCodexAction) {
+  if (busy === action) {
+    if (action === "check-version") return copy.hosts.checkingVersion;
+    if (action === "install") return copy.hosts.installingCodex;
+    return copy.hosts.updatingCodex;
+  }
+  if (action === "check-version") return copy.hosts.checkVersion;
+  if (action === "install") return copy.hosts.installCodex;
+  return copy.hosts.updateCodex;
+}
+
+function compactTaskLogDetail(log: TaskRun["logs"][number]) {
+  const detail = firstOutputLine(log.stderr) || firstOutputLine(log.stdout);
+  if (detail) return detail;
+  if (typeof log.exitCode === "number") return `exit ${log.exitCode}`;
+  if (typeof log.durationMs === "number") return `${log.durationMs} ms`;
+  return "";
+}
+
+function progressLogLevel(log: RemoteCodexProgressEvent): "info" | "warn" | "error" {
+  if (log.status === "failed" || log.status === "stderr") return "error";
+  if (log.status === "heartbeat") return "warn";
+  return "info";
+}
+
+function progressLogLabel(copy: UICopy, log: RemoteCodexProgressEvent) {
+  return copy.status.log[progressLogLevel(log)];
+}
+
+function compactProgressLogDetail(log: RemoteCodexProgressEvent) {
+  if (log.stderr) return log.stderr;
+  if (log.stdout) return log.stdout;
+  if (log.detail) return log.detail;
+  if (typeof log.exitCode === "number") return `exit ${log.exitCode}`;
+  if (typeof log.durationMs === "number") return `${log.durationMs} ms`;
+  return log.step;
+}
+
+function firstOutputLine(value: string | null | undefined) {
+  return value?.trim().split(/\r?\n/).find(Boolean) ?? "";
+}
+
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 function formatEndpoint(host: Host) {
