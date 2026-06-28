@@ -144,8 +144,40 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Dashboard", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "Font", "SSH Hosts", "Host IP", "Codex版本", "Test all", "一键测试", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
+for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "服务器矩阵", "Font", "SSH Hosts", "Host IP", "Codex版本", "Test all", "一键测试", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
+}
+for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
+  if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
+}
+for (const token of ["copy.hosts.source", "copy.dashboard.system", "copy.hosts.codex", "copy.hosts.configExists", "copy.hosts.latency", "copy.hosts.skills"]) {
+  if (!app.includes(token)) fail(`missing Server Matrix field token: ${token}`);
+}
+for (const token of [
+  'label: "Dashboard"',
+  'label: "仪表盘"',
+  'description: "Overview"',
+  'description: "SSH targets"',
+  'description: "总览"',
+  'description: "SSH 目标"',
+  "item.description",
+  "backendContract",
+  "Backend contract",
+  "后端约定",
+  "batchOperations",
+  "Batch operations",
+  "批量操作",
+  "recentTasks",
+  "Recent tasks",
+  "最近任务",
+  "BatchOperationsPlaceholder",
+  "RecentTasks",
+  "desktopMvp",
+  "Desktop MVP",
+  "桌面 MVP",
+  "brandSubtle"
+]) {
+  if (app.includes(token)) fail(`dashboard home polish should remove old token: ${token}`);
 }
 if (!app.includes("CodexOperationModal")) fail("Install/update should show a compact Codex operation progress modal");
 if (!app.includes("codexOperationModal")) fail("Codex operation modal state should be wired in App");
@@ -461,6 +493,12 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 const styles = read("src/styles.css");
 for (const token of ["--font-ui", "--font-mono", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
+}
+for (const token of ["navIcon", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
+  if (!styles.includes(token)) fail(`missing dashboard home polish style token: ${token}`);
+}
+for (const token of ["calloutPanel", "hostCardActions", "tagRow", "skillLine", "taskList", "taskItem", "brandSubtle"]) {
+  if (styles.includes(token)) fail(`dashboard home polish should remove old style token: ${token}`);
 }
 for (const token of ["modalBackdrop", "bootstrapLogCard", "stepIcon.success", "stepIcon.failed"]) {
   if (!styles.includes(token)) fail(`missing SSH modal style token: ${token}`);

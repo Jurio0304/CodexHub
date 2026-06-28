@@ -52,17 +52,17 @@ const REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"];
 const uiCopy = {
   en: {
     navItems: [
-      { id: "dashboard", label: "Dashboard", description: "Overview" },
-      { id: "hosts", label: "Hosts", description: "SSH targets" },
-      { id: "profiles", label: "Profiles", description: "Codex TOML" },
-      { id: "skills", label: "Skills", description: "Skill packs" },
-      { id: "tasks", label: "Tasks", description: "Runs and logs" },
-      { id: "settings", label: "Settings", description: "App options" }
-    ] satisfies Array<{ id: SectionId; label: string; description: string }>,
+      { id: "dashboard", label: "Home", icon: "🏠" },
+      { id: "hosts", label: "Hosts", icon: "🖥️" },
+      { id: "profiles", label: "Profiles", icon: "🧾" },
+      { id: "skills", label: "Skills", icon: "🧩" },
+      { id: "tasks", label: "Tasks", icon: "✅" },
+      { id: "settings", label: "Settings", icon: "⚙️" }
+    ] satisfies Array<{ id: SectionId; label: string; icon: string }>,
     sections: {
       dashboard: {
-        title: "Control plane",
-        eyebrow: "Dashboard",
+        title: "Home",
+        eyebrow: "Home",
         body: "Mock SSH inventory, profile status, and recent operations for the first CodexHub desktop shell."
       },
       hosts: {
@@ -91,10 +91,9 @@ const uiCopy = {
         body: "Adjust the shell theme, inspect local SSH key status, and copy public keys."
       }
     } satisfies Record<SectionId, { title: string; eyebrow: string; body: string }>,
-    common: {
+      common: {
       addServer: "Add Server",
       backendMode: "Backend mode",
-      desktopMvp: "Desktop MVP",
       host: "Host",
       justNow: "just now",
       primaryNavigation: "Primary navigation",
@@ -113,28 +112,16 @@ const uiCopy = {
       mockHostRemoved: (name: string) => `${name} was removed from the mock inventory only.`
     },
     dashboard: {
-      summaryLabel: "Dashboard summary",
-      online: "online",
-      managedProfiles: "managed profiles",
-      enabled: "enabled",
-      active: "active",
-      backendContract: "Backend contract",
-      sshManagementWired: "SSH management wired",
-      wrapper: "wrapper",
+      summaryLabel: "Home summary",
+      online: "Online",
+      applied: "Applied",
+      enabled: "Enabled",
+      success: "Success",
       serverMatrix: "Server Matrix",
-      mockHosts: "Mock hosts",
-      matrixBody: "Inventory cards show the shape of the future SSH connection matrix.",
+      system: "System",
       noHosts: "No hosts yet",
       noHostsBody: "Add the first SSH target to populate the server matrix.",
-      noSkillPacks: "No skill packs",
-      recentTasks: "Recent tasks",
-      activity: "Activity",
-      viewAll: "View all",
-      batchOperations: "Batch operations",
-      batchBody: "Fleet install/update is reserved for a later version.",
-      batchInstall: "Batch install",
-      batchUpdate: "Batch update",
-      comingSoon: "Coming soon"
+      noSkillPacks: "No skill packs"
     },
     hosts: {
       sshManager: "SSH config manager",
@@ -400,17 +387,17 @@ const uiCopy = {
   },
   zh: {
     navItems: [
-      { id: "dashboard", label: "仪表盘", description: "总览" },
-      { id: "hosts", label: "主机", description: "SSH 目标" },
-      { id: "profiles", label: "配置", description: "Codex TOML" },
-      { id: "skills", label: "技能", description: "技能包" },
-      { id: "tasks", label: "任务", description: "运行与日志" },
-      { id: "settings", label: "设置", description: "应用选项" }
-    ] satisfies Array<{ id: SectionId; label: string; description: string }>,
+      { id: "dashboard", label: "主页", icon: "🏠" },
+      { id: "hosts", label: "主机", icon: "🖥️" },
+      { id: "profiles", label: "配置", icon: "🧾" },
+      { id: "skills", label: "技能", icon: "🧩" },
+      { id: "tasks", label: "任务", icon: "✅" },
+      { id: "settings", label: "设置", icon: "⚙️" }
+    ] satisfies Array<{ id: SectionId; label: string; icon: string }>,
     sections: {
       dashboard: {
-        title: "控制面板",
-        eyebrow: "仪表盘",
+        title: "主页",
+        eyebrow: "主页",
         body: "用于 CodexHub 桌面壳的 SSH 清单、配置状态和最近操作。"
       },
       hosts: {
@@ -439,10 +426,9 @@ const uiCopy = {
         body: "调整界面主题，查看本地 SSH 密钥状态，并复制公钥。"
       }
     } satisfies Record<SectionId, { title: string; eyebrow: string; body: string }>,
-    common: {
+      common: {
       addServer: "添加服务器",
       backendMode: "后端模式",
-      desktopMvp: "桌面 MVP",
       host: "主机",
       justNow: "刚刚",
       primaryNavigation: "主导航",
@@ -461,28 +447,16 @@ const uiCopy = {
       mockHostRemoved: (name: string) => `${name} 已从 mock 清单中移除。`
     },
     dashboard: {
-      summaryLabel: "仪表盘概览",
+      summaryLabel: "主页概览",
       online: "在线",
-      managedProfiles: "受管配置",
-      enabled: "已启用",
-      active: "活跃",
-      backendContract: "后端约定",
-      sshManagementWired: "SSH 管理已接入",
-      wrapper: "包装器",
+      applied: "应用",
+      enabled: "启用",
+      success: "成功",
       serverMatrix: "服务器矩阵",
-      mockHosts: "Mock 主机",
-      matrixBody: "清单卡片用于展示 SSH 连接矩阵的结构。",
+      system: "系统",
       noHosts: "还没有主机",
       noHostsBody: "添加第一个 SSH 目标后会填充服务器矩阵。",
-      noSkillPacks: "无技能包",
-      recentTasks: "最近任务",
-      activity: "活动",
-      viewAll: "查看全部",
-      batchOperations: "批量操作",
-      batchBody: "批量安装/更新预留到后续版本。",
-      batchInstall: "批量安装",
-      batchUpdate: "批量更新",
-      comingSoon: "暂未开放"
+      noSkillPacks: "无技能包"
     },
     hosts: {
       sshManager: "SSH 连接管理",
@@ -864,7 +838,11 @@ function App() {
 
   const selectedCopy = copy.sections[activeSection];
   const onlineCount = hosts.filter((host) => host.status === "online").length;
-  const activeTasks = tasks.filter((task) => task.status === "queued" || task.status === "running").length;
+  const appliedProfileCount = useMemo(
+    () => new Set(hosts.map((host) => host.profileId).filter((profileId): profileId is string => Boolean(profileId))).size,
+    [hosts]
+  );
+  const successfulTaskCount = tasks.filter((task) => task.status === "success").length;
 
   const profileById = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const skillPackById = useMemo(() => new Map(skillPacks.map((pack) => [pack.id, pack])), [skillPacks]);
@@ -1288,20 +1266,21 @@ function App() {
       case "dashboard":
         return (
           <DashboardView
-            activeTasks={activeTasks}
             copy={copy}
-            health={health}
+            hostBusy={hostBusy}
             hosts={hosts}
             latestCodexVersion={latestCodexVersion}
-            loading={loading}
-            notice={notice}
             onlineCount={onlineCount}
+            appliedProfileCount={appliedProfileCount}
             profiles={profiles}
+            sshConfigHosts={sshConfigHosts}
             skillPacks={skillPacks}
             tasks={tasks}
+            successfulTaskCount={successfulTaskCount}
             profileById={profileById}
             skillPackById={skillPackById}
-            onSelectSection={setActiveSection}
+            onAddServer={handleAddHost}
+            onTestAllSshHosts={handleTestAllSshHosts}
           />
         );
       case "hosts":
@@ -1377,15 +1356,14 @@ function App() {
           <div className="appIcon" aria-hidden="true">CH</div>
           <div>
             <div className="brandName">CodexHub</div>
-            <div className="brandSubtle">{copy.common.desktopMvp}</div>
           </div>
         </div>
 
         <nav className="navList">
           {copy.navItems.map((item) => (
             <button className="navItem" data-active={activeSection === item.id} key={item.id} onClick={() => setActiveSection(item.id)} type="button">
+              <span className="navIcon" aria-hidden="true">{item.icon}</span>
               <span>{item.label}</span>
-              <small>{item.description}</small>
             </button>
           ))}
         </nav>
@@ -1533,125 +1511,137 @@ function CodexOperationModal({
 }
 
 function DashboardView({
-  activeTasks,
+  appliedProfileCount,
   copy,
-  health,
+  hostBusy,
   hosts,
   latestCodexVersion,
-  loading,
-  notice,
   onlineCount,
   profiles,
   profileById,
+  sshConfigHosts,
   skillPackById,
   skillPacks,
   tasks,
-  onSelectSection
+  successfulTaskCount,
+  onAddServer,
+  onTestAllSshHosts
 }: {
-  activeTasks: number;
+  appliedProfileCount: number;
   copy: UICopy;
-  health: Health;
+  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   latestCodexVersion: LatestCodexVersion | null;
-  loading: boolean;
-  notice: string;
   onlineCount: number;
   profiles: Profile[];
   profileById: Map<string, Profile>;
+  sshConfigHosts: SshConfigHost[];
   skillPackById: Map<string, SkillPack>;
   skillPacks: SkillPack[];
   tasks: TaskRun[];
-  onSelectSection: (section: SectionId) => void;
+  successfulTaskCount: number;
+  onAddServer: () => void;
+  onTestAllSshHosts: () => Promise<void>;
 }) {
   return (
     <div className="pageGrid">
       <section className="summaryStrip" aria-label={copy.dashboard.summaryLabel}>
-        <MetricCard label={copy.navItems[1].label} value={String(hosts.length)} detail={`${onlineCount} ${copy.dashboard.online}`} />
-        <MetricCard label={copy.navItems[2].label} value={String(profiles.length)} detail={copy.dashboard.managedProfiles} />
-        <MetricCard label={copy.navItems[3].label} value={String(skillPacks.length)} detail={`${skillPacks.filter((pack) => pack.enabled).length} ${copy.dashboard.enabled}`} />
-        <MetricCard label={copy.navItems[4].label} value={String(tasks.length)} detail={`${activeTasks} ${copy.dashboard.active}`} />
+        <MetricCard label={copy.navItems[1].label} value={String(hosts.length)} detailLabel={copy.dashboard.online} detailValue={String(onlineCount)} />
+        <MetricCard label={copy.navItems[2].label} value={String(profiles.length)} detailLabel={copy.dashboard.applied} detailValue={String(appliedProfileCount)} />
+        <MetricCard label={copy.navItems[3].label} value={String(skillPacks.length)} detailLabel={copy.dashboard.enabled} detailValue={String(skillPacks.filter((pack) => pack.enabled).length)} />
+        <MetricCard label={copy.navItems[4].label} value={String(tasks.length)} detailLabel={copy.dashboard.success} detailValue={String(successfulTaskCount)} />
       </section>
 
-      <section className="panel calloutPanel">
-        <div>
-          <div className="eyebrow">{copy.dashboard.backendContract}</div>
-          <h2>{copy.dashboard.sshManagementWired}</h2>
-          <p>{notice}</p>
-        </div>
-        <div className="calloutMeta">
-          <Badge tone={health.remoteWrapperRequired ? "yellow" : "green"}>{copy.dashboard.wrapper} {health.remoteWrapperRequired ? copy.common.required : copy.common.notRequired}</Badge>
-          <Badge tone={loading ? "yellow" : "green"}>{loading ? copy.common.loading : copy.common.ready}</Badge>
-        </div>
-      </section>
-
-      <ServerMatrix copy={copy} hosts={hosts} latestCodexVersion={latestCodexVersion} profileById={profileById} skillPackById={skillPackById} />
-      <BatchOperationsPlaceholder copy={copy} />
-      <RecentTasks copy={copy} tasks={tasks} onViewAll={() => onSelectSection("tasks")} />
+      <ServerMatrix
+        copy={copy}
+        hostBusy={hostBusy}
+        hosts={hosts}
+        latestCodexVersion={latestCodexVersion}
+        profileById={profileById}
+        sshConfigHosts={sshConfigHosts}
+        skillPackById={skillPackById}
+        onAddServer={onAddServer}
+        onTestAllSshHosts={onTestAllSshHosts}
+      />
     </div>
   );
 }
 
-function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+function MetricCard({
+  label,
+  value,
+  detailLabel,
+  detailValue
+}: {
+  label: string;
+  value: string;
+  detailLabel: string;
+  detailValue: string;
+}) {
   return (
     <article className="metricCard">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
+      <div className="metricPrimary">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <div className="metricSecondary">
+        <span>{detailLabel}</span>
+        <b>{detailValue}</b>
+      </div>
     </article>
-  );
-}
-
-function BatchOperationsPlaceholder({ copy }: { copy: UICopy }) {
-  return (
-    <section className="panel">
-      <div className="panelHeader compact">
-        <div>
-          <div className="eyebrow">{copy.dashboard.batchOperations}</div>
-          <h2>{copy.dashboard.comingSoon}</h2>
-          <p>{copy.dashboard.batchBody}</p>
-        </div>
-      </div>
-      <div className="hostCardActions">
-        <button className="tertiaryButton" disabled type="button">{copy.dashboard.batchInstall}</button>
-        <button className="tertiaryButton" disabled type="button">{copy.dashboard.batchUpdate}</button>
-      </div>
-    </section>
   );
 }
 
 function ServerMatrix({
   copy,
+  hostBusy,
   hosts,
   latestCodexVersion,
   profileById,
-  skillPackById
+  sshConfigHosts,
+  skillPackById,
+  onAddServer,
+  onTestAllSshHosts
 }: {
   copy: UICopy;
+  hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
   latestCodexVersion: LatestCodexVersion | null;
   profileById: Map<string, Profile>;
+  sshConfigHosts: SshConfigHost[];
   skillPackById: Map<string, SkillPack>;
+  onAddServer: () => void;
+  onTestAllSshHosts: () => Promise<void>;
 }) {
+  const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
+  const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
+
   return (
     <section className="panel spanWide">
-      <div className="panelHeader">
-        <div>
-          <div className="eyebrow">{copy.dashboard.serverMatrix}</div>
-          <h2>{copy.dashboard.mockHosts}</h2>
-          <p>{copy.dashboard.matrixBody}</p>
-        </div>
+      <div className="panelHeader matrixHeader">
+        <h2>{copy.dashboard.serverMatrix}</h2>
+        <button className="primaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
+          {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
+        </button>
       </div>
 
       {hosts.length === 0 ? (
-        <div className="emptyState">
-          <div className="emptyIcon" aria-hidden="true" />
+        <div className="emptyState matrixEmptyState">
+          <div className="matrixEmptyIcon" aria-hidden="true">
+            <span />
+          </div>
           <h3>{copy.dashboard.noHosts}</h3>
           <p>{copy.dashboard.noHostsBody}</p>
+          <button className="primaryButton" type="button" onClick={onAddServer}>{copy.common.addServer}</button>
         </div>
       ) : (
         <div className="matrixGrid">
           {hosts.map((host) => {
             const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
+            const systemLabel = hostSystemLabel(host, copy);
+            const skillPackLabel = host.skillPackIds.length > 0
+              ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ")
+              : copy.dashboard.noSkillPacks;
             return (
             <article className="hostCard" key={host.id}>
               <div className="hostHeader">
@@ -1664,64 +1654,35 @@ function ServerMatrix({
 
               <dl className="hostMeta">
                 <div>
-                  <dt>{copy.hosts.os}</dt>
-                  <dd>{host.os}{host.arch && host.arch !== "Unknown" ? ` / ${host.arch}` : ""}</dd>
+                  <dt>{copy.hosts.source}</dt>
+                  <dd><Badge tone={host.source === "managed" ? "blue" : "gray"}>{hostSourceLabel(copy, host)}</Badge></dd>
+                </div>
+                <div>
+                  <dt>{copy.dashboard.system}</dt>
+                  <dd><Badge tone={knownValueTone(host.os, copy)}>{systemLabel}</Badge></dd>
                 </div>
                 <div>
                   <dt>{copy.hosts.codex}</dt>
                   <dd><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></dd>
                 </div>
                 <div>
-                  <dt>{copy.hosts.profile}</dt>
-                  <dd>
-                    {host.profileId ? profileById.get(host.profileId)?.name ?? host.profileId : copy.common.unassigned}
-                    {host.profileAppliedAt ? <span>{host.profileAppliedSource ? ` / ${host.profileAppliedSource}` : ""} {host.profileAppliedAt}</span> : null}
-                  </dd>
+                  <dt>{copy.hosts.configExists}</dt>
+                  <dd><HostApiConfigBadge copy={copy} host={host} profileById={profileById} /></dd>
                 </div>
                 <div>
                   <dt>{copy.hosts.latency}</dt>
-                  <dd>{host.latencyMs ? `${host.latencyMs} ms` : "-"}</dd>
+                  <dd><Badge tone={latencyTone(host.latencyMs, hosts)}>{formatLatency(host.latencyMs, copy)}</Badge></dd>
+                </div>
+                <div>
+                  <dt>{copy.hosts.skills}</dt>
+                  <dd><Badge tone={host.skillPackIds.length > 0 ? "blue" : "gray"}>{skillPackLabel}</Badge></dd>
                 </div>
               </dl>
-
-              <div className="tagRow" aria-label={`${host.name} tags`}>
-                {host.tags.map((tag) => <span key={tag}>{tag}</span>)}
-              </div>
-
-              <div className="skillLine">
-                {host.skillPackIds.length > 0 ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ") : copy.dashboard.noSkillPacks}
-              </div>
             </article>
             );
           })}
         </div>
       )}
-    </section>
-  );
-}
-
-function RecentTasks({ copy, tasks, onViewAll }: { copy: UICopy; tasks: TaskRun[]; onViewAll: () => void }) {
-  return (
-    <section className="panel">
-      <div className="panelHeader compact">
-        <div>
-          <div className="eyebrow">{copy.dashboard.recentTasks}</div>
-          <h2>{copy.dashboard.activity}</h2>
-        </div>
-        <button className="linkButton" type="button" onClick={onViewAll}>{copy.dashboard.viewAll}</button>
-      </div>
-
-      <div className="taskList">
-        {tasks.slice(0, 4).map((task) => (
-          <article className="taskItem" key={task.id}>
-            <div>
-              <strong>{localizeTaskAction(task.action, copy)}</strong>
-              <span>{task.hostName}</span>
-            </div>
-            <TaskStatusBadge copy={copy} status={task.status} />
-          </article>
-        ))}
-      </div>
     </section>
   );
 }
@@ -3547,6 +3508,14 @@ function sshHostSourceLabel(copy: UICopy, host: SshConfigHost) {
 function knownHostValue(value: string | null | undefined, copy: UICopy) {
   const normalized = value?.trim();
   return normalized && normalized.toLowerCase() !== "unknown" ? normalized : copy.hosts.unknown;
+}
+
+function hostSystemLabel(host: Host, copy: UICopy) {
+  const os = knownHostValue(host.os, copy);
+  const arch = knownHostValue(host.arch, copy);
+  if (arch === copy.hosts.unknown) return os;
+  if (os === copy.hosts.unknown) return arch;
+  return `${os} / ${arch}`;
 }
 
 function knownValueTone(value: string | null | undefined, copy: UICopy): BadgeTone {

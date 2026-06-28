@@ -168,13 +168,12 @@ dd {
 }
 
 .brandName {
+  font-size: 1.14rem;
   font-weight: 750;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
-.brandSubtle,
 .sidebarFooter span,
-.taskItem span,
 .mutedText {
   color: var(--text-muted);
   font-size: 0.84rem;
@@ -186,24 +185,32 @@ dd {
 }
 
 .navItem {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
   width: 100%;
   border: 1px solid transparent;
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 12px 13px;
   color: var(--text-muted);
   text-align: left;
   background: transparent;
 }
 
-.navItem span {
+.navItem span:not(.navIcon) {
   color: var(--text);
+  font-size: 0.98rem;
   font-weight: 650;
 }
 
-.navItem small {
-  color: var(--text-faint);
+.navIcon {
+  display: grid;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .navItem:hover,
@@ -275,7 +282,6 @@ dd {
 
 .topBar p,
 .panelHeader p,
-.calloutPanel p,
 .skillCard p,
 .emptyState p {
   max-width: 760px;
@@ -393,43 +399,56 @@ dd {
 
 .metricCard {
   display: grid;
-  gap: 8px;
-  min-height: 126px;
+  align-content: space-between;
+  gap: 14px;
+  min-height: 112px;
   padding: 18px;
 }
 
-.metricCard span,
-.metricCard small {
+.metricPrimary,
+.metricSecondary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.metricPrimary span,
+.metricSecondary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metricPrimary span {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 750;
+}
+
+.metricSecondary span,
+.metricSecondary b {
   color: var(--text-muted);
   font-size: 0.86rem;
 }
 
-.metricCard strong {
+.metricPrimary strong {
   color: var(--text);
   font-size: 2.35rem;
   line-height: 1;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
 }
 
-.calloutPanel {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  grid-column: 1 / -1;
+.metricSecondary b {
+  font-weight: 750;
 }
 
-.calloutPanel h2,
 .panelHeader h2,
 .emptyState h3 {
   margin-top: 6px;
   color: var(--text);
   font-size: 1.18rem;
   letter-spacing: -0.03em;
-}
-
-.calloutPanel p {
-  margin-top: 8px;
 }
 
 .panelHeader {
@@ -453,6 +472,14 @@ dd {
   grid-column: 1 / -1;
 }
 
+.matrixHeader {
+  align-items: center;
+}
+
+.matrixHeader h2 {
+  margin-top: 0;
+}
+
 .matrixGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -462,7 +489,7 @@ dd {
 .hostCard {
   display: grid;
   gap: 14px;
-  min-height: 280px;
+  min-height: 228px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 16px;
@@ -482,8 +509,7 @@ dd {
   letter-spacing: -0.02em;
 }
 
-.hostHeader p,
-.skillLine {
+.hostHeader p {
   color: var(--text-muted);
   font-size: 0.88rem;
   line-height: 1.4;
@@ -521,19 +547,11 @@ dd {
   overflow-wrap: anywhere;
 }
 
-.tagRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.tagRow span {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 8px;
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  background: var(--surface-muted);
+.hostMeta .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .badge {
@@ -600,17 +618,6 @@ dd {
   margin-top: auto;
 }
 
-.hostCardActions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: auto;
-}
-
-.hostCardActions .tertiaryButton {
-  margin-top: 0;
-}
-
 .linkButton {
   border: 0;
   padding: 6px 0;
@@ -644,25 +651,59 @@ dd {
     linear-gradient(0deg, transparent 47%, var(--border-strong) 48%, var(--border-strong) 52%, transparent 53%);
 }
 
-.taskList {
-  display: grid;
-  gap: 10px;
+.matrixEmptyState {
+  min-height: 320px;
+  align-content: center;
+  gap: 13px;
 }
 
-.taskItem {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px;
+.matrixEmptyState .primaryButton {
+  margin-top: 6px;
+}
+
+.matrixEmptyIcon {
+  position: relative;
+  display: grid;
+  width: 70px;
+  height: 70px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  color: var(--blue);
   background: var(--surface-solid);
+  box-shadow: var(--shadow-soft);
 }
 
-.taskItem div {
-  display: grid;
-  gap: 3px;
+.matrixEmptyIcon::before {
+  content: "";
+  width: 34px;
+  height: 24px;
+  border: 2px solid currentColor;
+  border-radius: 7px;
+}
+
+.matrixEmptyIcon::after {
+  content: "";
+  position: absolute;
+  bottom: 17px;
+  left: 50%;
+  width: 24px;
+  height: 9px;
+  border-bottom: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  transform: translateX(-50%) skewX(-18deg);
+  opacity: 0.8;
+}
+
+.matrixEmptyIcon span {
+  position: absolute;
+  top: 25px;
+  left: 26px;
+  width: 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.65;
 }
 
 .tableWrap {
@@ -1157,7 +1198,6 @@ tr:last-child td {
   }
 
   .topBar,
-  .calloutPanel,
   .panelHeader {
     flex-direction: column;
   }
@@ -1294,8 +1334,7 @@ tr:last-child td {
   .logLine summary,
   .logMetaGrid,
   .streamGrid,
-  .detailGrid,
-  .hostCardActions {
+  .detailGrid {
     grid-template-columns: 1fr;
   }
 
