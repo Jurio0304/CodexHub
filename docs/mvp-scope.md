@@ -23,7 +23,9 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Local profile templates rendered to remote config, with create, update, delete, import, export, and single or selected-host batch apply.
 - Env-var-first API key config: remote TOML uses `env_key` / `apiKeyEnvVar`; optional local credential-store keys remain local and are never written to remote hosts.
 - `applied-profile.json` metadata and redacted Tasks logs for each profile apply.
-- Remote `~/.codex/skills/` sync for selected skill folders.
+- Local skill import and managed-copy persistence for directories containing `SKILL.md`.
+- GitHub repository search plus clone/import for online skill discovery.
+- Remote `~/.codex/skills/` install, list, update-with-backup, batch install, and backup-delete for selected skill folders.
 - Operation log with backups and restore points.
 - Codex App fallback wizard for host enablement and reconnect guidance.
 
@@ -58,7 +60,7 @@ Each mutating operation must have:
 4. Window 3: remote SSH probe and Codex status detection.
 5. Window 4: single-host remote Codex CLI check/install/update with PATH repair and logs.
 6. Window 5: profile/API config CRUD/import/export, remote Codex config read/diff/render/apply with backup, `applied-profile.json`, and Tasks logs.
-7. Window 6: skill folder validation and sync.
+7. Window 6: local skill import, GitHub search/clone import, remote skill install/list/update/delete, conflict policy, backups, and task logs.
 8. Window 7: Codex App fallback wizard and end-to-end mock workflow.
 
 ## Definition Of Done For Window 0

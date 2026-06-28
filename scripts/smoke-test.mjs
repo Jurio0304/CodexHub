@@ -17,8 +17,14 @@ const requiredFiles = [
   "src/models.ts",
   "src/settings.ts",
   "src/styles.css",
+  "figs/app-logo.png",
   "src-tauri/Cargo.toml",
   "src-tauri/tauri.conf.json",
+  "src-tauri/icons/32x32.png",
+  "src-tauri/icons/64x64.png",
+  "src-tauri/icons/128x128.png",
+  "src-tauri/icons/128x128@2x.png",
+  "src-tauri/icons/icon.png",
   "src-tauri/icons/icon.ico",
   "src-tauri/src/main.rs",
   "src-tauri/src/lib.rs",
@@ -39,9 +45,74 @@ const packageJson = JSON.parse(read("package.json"));
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "smoke"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
+if (!packageJson.dependencies?.["@tauri-apps/plugin-dialog"]) fail("missing Tauri dialog plugin dependency");
 
-JSON.parse(read("src-tauri/tauri.conf.json"));
-JSON.parse(read("src-tauri/capabilities/default.json"));
+const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
+const defaultCapability = JSON.parse(read("src-tauri/capabilities/default.json"));
+if (!JSON.stringify(defaultCapability).includes("dialog:default")) fail("missing dialog capability permission");
+const requiredBundleIcons = [
+  "icons/32x32.png",
+  "icons/64x64.png",
+  "icons/128x128.png",
+  "icons/128x128@2x.png",
+  "icons/icon.png",
+  "icons/icon.ico"
+];
+for (const icon of requiredBundleIcons) {
+  if (!tauriConfig.bundle?.icon?.includes(icon)) fail(`Tauri bundle should use ${icon}`);
+}
+
+const readBinary = (file) => fs.readFileSync(path.join(root, file));
+const pngSize = (file) => {
+  const bytes = readBinary(file);
+  if (
+    bytes.length < 24 ||
+    bytes[0] !== 0x89 ||
+    bytes.toString("ascii", 1, 4) !== "PNG" ||
+    bytes.toString("ascii", 12, 16) !== "IHDR"
+  ) {
+    fail(`${file} should be a PNG image`);
+  }
+  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)];
+};
+for (const [file, expected] of [
+  ["src-tauri/icons/32x32.png", 32],
+  ["src-tauri/icons/64x64.png", 64],
+  ["src-tauri/icons/128x128.png", 128],
+  ["src-tauri/icons/128x128@2x.png", 256],
+  ["src-tauri/icons/icon.png", 512]
+]) {
+  const [width, height] = pngSize(file);
+  if (width !== expected || height !== expected) fail(`${file} should be ${expected}x${expected}, got ${width}x${height}`);
+}
+
+const icoFrames = (file) => {
+  const bytes = readBinary(file);
+  if (bytes.length < 6) fail(`${file} is too small to be a valid ICO`);
+  const reserved = bytes.readUInt16LE(0);
+  const type = bytes.readUInt16LE(2);
+  const count = bytes.readUInt16LE(4);
+  if (reserved !== 0 || type !== 1 || count < 1) fail(`${file} should be a valid icon ICO`);
+  const frames = [];
+  for (let index = 0; index < count; index += 1) {
+    const offset = 6 + index * 16;
+    if (offset + 16 > bytes.length) fail(`${file} has a truncated ICO directory`);
+    const width = bytes[offset] || 256;
+    const height = bytes[offset + 1] || 256;
+    const bitDepth = bytes.readUInt16LE(offset + 6);
+    const byteLength = bytes.readUInt32LE(offset + 8);
+    const imageOffset = bytes.readUInt32LE(offset + 12);
+    if (imageOffset + byteLength > bytes.length) fail(`${file} has a truncated ${width}x${height} frame`);
+    frames.push({ width, height, bitDepth });
+  }
+  return frames;
+};
+const iconFrames = icoFrames("src-tauri/icons/icon.ico");
+for (const size of [16, 24, 32, 48, 64, 128, 256]) {
+  if (!iconFrames.some((frame) => frame.width === size && frame.height === size && frame.bitDepth === 32)) {
+    fail(`Tauri icon.ico should include a ${size}x${size} 32-bit frame`);
+  }
+}
 
 const research = read("docs/research.md");
 const architecture = read("docs/architecture.md");
@@ -57,10 +128,15 @@ const requiredText = [
   [architecture, "env_key"],
   [architecture, "apiKeyEnvVar"],
   [architecture, "credentialStored"],
+  [architecture, "search_online_skills"],
+  [architecture, "install_remote_skill_batch"],
+  [architecture, "Skill Management"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
+  [mvp, "Window 6: local skill import"],
   [mvp, "Writing local credential-store key names or API key values into remote Codex config"],
   [limitations, "Profiles /"],
+  [limitations, "GitHub repository search only"],
   [limitations, "The optional stored local credential key is never written to remote"],
   [limitations, "CodexHub must not write Codex App private state"]
 ];
@@ -107,14 +183,55 @@ for (const command of [
   "apply_profile",
   "detect_cc_switch_profiles",
   "import_cc_switch_profiles",
+  "list_local_skills",
+  "import_local_skill",
+  "search_online_skills",
+  "clone_skill_repo",
+  "list_remote_skills",
+  "preview_remote_skill_install",
+  "install_remote_skill",
+  "install_remote_skill_batch",
+  "delete_remote_skill",
   "list_tasks"
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
 }
-for (const asyncCommand of ["async fn ssh_check", "async fn remote_probe_codex", "async fn remote_manage_codex", "async fn refresh_latest_codex_version"]) {
+for (const asyncCommand of [
+  "async fn ssh_check",
+  "async fn remote_probe_codex",
+  "async fn remote_manage_codex",
+  "async fn refresh_latest_codex_version",
+  "async fn search_online_skills",
+  "async fn clone_skill_repo",
+  "async fn list_remote_skills",
+  "async fn preview_remote_skill_install",
+  "async fn install_remote_skill",
+  "async fn install_remote_skill_batch",
+  "async fn delete_remote_skill"
+]) {
   if (!rustLib.includes(asyncCommand)) fail(`long remote command must stay async: ${asyncCommand}`);
 }
 if (!rustLib.includes("spawn_blocking(command)")) fail("long remote commands should run through the blocking worker pool");
+for (const token of [
+  "tauri_plugin_dialog::init()",
+  "SkillImportResult",
+  "OnlineSkillSearchResult",
+  "RemoteSkillListResult",
+  "SkillConflictPolicy",
+  "managed_skills_dir",
+  "skill_candidate_dirs",
+  "parse_skill_metadata",
+  "parse_github_skill_search",
+  "write_skill_archive",
+  "remote_skill_install_script",
+  "remote_skill_delete_script",
+  "validate_remote_skill_dir_name",
+  "CODEXHUB_SKILL_BACKUP",
+  "CODEXHUB_SKILL_SKIPPED",
+  "tar is required on the remote host"
+]) {
+  if (!rustLib.includes(token)) fail(`missing Window 6 Skills backend token: ${token}`);
+}
 for (const token of ["LatestCodexVersion", "parse_npm_latest_metadata", "latest_codex_cache_is_fresh", "CODEX_LATEST_REFRESH_HOUR", "https://registry.npmjs.org/@openai/codex", "codex-latest.json"]) {
   if (!rustLib.includes(token)) fail(`missing latest Codex version backend token: ${token}`);
 }
@@ -150,8 +267,39 @@ for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
   if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
 }
+for (const token of ['new URL("../figs/app-logo.png", import.meta.url).href', '<img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />']) {
+  if (!app.includes(token)) fail(`missing app logo UI token: ${token}`);
+}
 for (const token of ["copy.hosts.source", "copy.dashboard.system", "copy.hosts.codex", "copy.hosts.configExists", "copy.hosts.latency", "copy.hosts.skills"]) {
   if (!app.includes(token)) fail(`missing Server Matrix field token: ${token}`);
+}
+for (const token of [
+  '@tauri-apps/plugin-dialog',
+  "open({ directory: true",
+  "function SkillsView(",
+  "api.importLocalSkill",
+  "api.searchOnlineSkills",
+  "api.cloneSkillRepo",
+  "api.listRemoteSkills",
+  "api.previewRemoteSkillInstall",
+  "api.installRemoteSkillBatch",
+  "api.deleteRemoteSkill",
+  "className=\"skillsStack\"",
+  "skillSearchBar",
+  "skillHostList",
+  "skillRemoteList",
+  "deleteConfirm",
+  "copy.skills.remoteInstall",
+  "copy.skills[policy]",
+  'backup: "Backup"',
+  'overwrite: "Overwrite"',
+  "copy.skills.confirmName",
+  "List remote skills",
+  "Preview skill install",
+  "Install skill",
+  "Delete skill"
+]) {
+  if (!app.includes(token)) fail(`missing Window 6 Skills UI token: ${token}`);
 }
 for (const token of [
   'label: "Dashboard"',
@@ -449,6 +597,29 @@ for (const token of [
 ]) {
   if (!api.includes(token)) fail(`missing Profile/API config token: ${token}`);
 }
+for (const token of [
+  "listSkillPacks",
+  "list_local_skills",
+  "importLocalSkill",
+  "import_local_skill",
+  "searchOnlineSkills",
+  "search_online_skills",
+  "cloneSkillRepo",
+  "clone_skill_repo",
+  "listRemoteSkills",
+  "list_remote_skills",
+  "previewRemoteSkillInstall",
+  "preview_remote_skill_install",
+  "installRemoteSkillBatch",
+  "install_remote_skill_batch",
+  "deleteRemoteSkill",
+  "delete_remote_skill",
+  "mockRemoteSkillList",
+  "mockRemoteSkillInstallBatch",
+  "mockRemoteSkillDelete"
+]) {
+  if (!api.includes(token)) fail(`missing Window 6 Skills API token: ${token}`);
+}
 
 const models = read("src/models.ts");
 for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "RemoteCodexMaintenanceResult", "check-version", "password_login", "verify_alias_login"]) {
@@ -465,6 +636,22 @@ for (const token of ["profiles: Profile[]", "hosts: Host[]"]) {
 }
 for (const token of ["apiConfigName", "apiConfigSource"]) {
   if (!models.includes(token) || !api.includes(token)) fail(`missing host API config model/API token: ${token}`);
+}
+for (const token of [
+  "SkillImportResult",
+  "OnlineSkillCandidate",
+  "OnlineSkillSearchResult",
+  "RemoteSkillScope",
+  "SkillConflictPolicy",
+  "RemoteSkillListResult",
+  "RemoteSkillInstallPreview",
+  "RemoteSkillBatchInstallResult",
+  "RemoteSkillDeleteResult",
+  "sourceType",
+  "managedPath",
+  "hasSkillMd"
+]) {
+  if (!models.includes(token)) fail(`missing Window 6 Skills model token: ${token}`);
 }
 
 const forbiddenApiKeyTokens = [
@@ -508,6 +695,23 @@ for (const token of ["sshHostsTable", "table-layout: auto", "flex-wrap: nowrap",
 }
 for (const token of ["profilesStack", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileTable", "profileRowActions", "profileApplyPanel", "profileApplyTable", "profileHostSelectCell", "profileHostSelectModal", "profileHostSelectList", "profileModelCombobox", "profileModelOptions", "profileModelOption", "profileFastModeSegment", "profileFastModeOption"]) {
   if (!styles.includes(token)) fail(`missing compact Profiles style token: ${token}`);
+}
+for (const token of [
+  "skillsStack",
+  "skillsTable",
+  "skillSearchBar",
+  "skillControls",
+  "skillSegment",
+  "skillHostList",
+  "skillPreview",
+  "skillRemotePanel",
+  "skillRemoteHost",
+  "skillRemoteList",
+  "skillRemoteRow",
+  "skillDeleteRow",
+  "skillMessage"
+]) {
+  if (!styles.includes(token)) fail(`missing Window 6 Skills style token: ${token}`);
 }
 const ccSwitchActionButtonStyle = styles.match(/\.ccSwitchActionButton\s*\{[^}]*\}/)?.[0] ?? "";
 for (const token of ["flex: 0 0 168px", "width: 168px", "height: 38px", "white-space: nowrap"]) {

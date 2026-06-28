@@ -149,10 +149,100 @@ export type SkillPack = {
   name: string;
   version: string;
   description: string;
+  sourceType: "local" | "git" | "mock" | string;
   source: string;
+  originalPath: string | null;
+  managedPath: string;
+  hasSkillMd: boolean;
   skillCount: number;
   enabled: boolean;
   updatedAt: string;
+};
+
+export type SkillImportResult = {
+  imported: SkillPack[];
+  skipped: string[];
+  message: string;
+};
+
+export type OnlineSkillCandidate = {
+  id: string;
+  fullName: string;
+  name: string;
+  description: string;
+  repoUrl: string;
+  htmlUrl: string;
+  stars: number;
+  updatedAt: string;
+  source: string;
+};
+
+export type OnlineSkillSearchResult = {
+  query: string;
+  candidates: OnlineSkillCandidate[];
+  message: string;
+};
+
+export type RemoteSkillScope = "user" | "project";
+export type SkillConflictPolicy = "backup" | "skip" | "overwrite";
+
+export type RemoteSkill = {
+  name: string;
+  path: string;
+  hasSkillMd: boolean;
+  status: string;
+};
+
+export type RemoteSkillListResult = {
+  hostAlias: string;
+  rootPath: string;
+  count: number;
+  validCount: number;
+  invalidCount: number;
+  skills: RemoteSkill[];
+  task: TaskRun;
+};
+
+export type RemoteSkillInstallPreview = {
+  hostAlias: string;
+  skillId: string;
+  skillName: string;
+  scope: RemoteSkillScope;
+  targetPath: string;
+  exists: boolean;
+  hasSkillMd: boolean;
+  backupExpected: boolean;
+  message: string;
+  task: TaskRun;
+};
+
+export type RemoteSkillInstallResult = {
+  hostAlias: string;
+  ok: boolean;
+  skillId: string;
+  skillName: string;
+  scope: RemoteSkillScope;
+  targetPath: string;
+  backupPath: string | null;
+  skipped: boolean;
+  message: string;
+  task: TaskRun;
+};
+
+export type RemoteSkillBatchInstallResult = {
+  ok: boolean;
+  results: RemoteSkillInstallResult[];
+  tasks: TaskRun[];
+};
+
+export type RemoteSkillDeleteResult = {
+  hostAlias: string;
+  ok: boolean;
+  skillName: string;
+  targetPath: string;
+  backupPath: string | null;
+  message: string;
+  task: TaskRun;
 };
 
 export type TaskStatus = "queued" | "running" | "success" | "failed";

@@ -15,10 +15,18 @@ import type {
   ProfileDraft,
   ProfileImportExport,
   ProfilePatch,
+  OnlineSkillSearchResult,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
   RemoteProbeResult,
+  RemoteSkillBatchInstallResult,
+  RemoteSkillDeleteResult,
+  RemoteSkillInstallPreview,
+  RemoteSkillListResult,
+  RemoteSkillScope,
+  SkillConflictPolicy,
+  SkillImportResult,
   SkillPack,
   SshBootstrapProgressEvent,
   SshBootstrapResult,
@@ -50,38 +58,7 @@ export const fallbackLatestCodexVersion: LatestCodexVersion = {
 
 export const fallbackProfiles: Profile[] = [];
 
-export const fallbackSkillPacks: SkillPack[] = [
-  {
-    id: "paper-review",
-    name: "Paper Review",
-    version: "0.4.1",
-    description: "Summarize papers, extract claims, and prepare structured reading notes.",
-    source: "~/.codex/skills/paper-review",
-    skillCount: 5,
-    enabled: true,
-    updatedAt: "2026-06-24"
-  },
-  {
-    id: "tauri-builder",
-    name: "Tauri Builder",
-    version: "0.2.0",
-    description: "Scaffold, test, and package Tauri desktop features with React and Rust boundaries.",
-    source: "./skills/tauri-builder",
-    skillCount: 3,
-    enabled: true,
-    updatedAt: "2026-06-20"
-  },
-  {
-    id: "windows-diagnostics",
-    name: "Windows Diagnostics",
-    version: "0.1.5",
-    description: "Collect reproducible PowerShell checks for network, shell, and toolchain issues.",
-    source: "./skills/windows-diagnostics",
-    skillCount: 4,
-    enabled: false,
-    updatedAt: "2026-06-18"
-  }
-];
+export const fallbackSkillPacks: SkillPack[] = [];
 
 export const fallbackTasks: TaskRun[] = [];
 
@@ -701,6 +678,176 @@ async function mockRemoteManageCodexWithProgress(
   return result;
 }
 
+function mockImportSkill(path: string): SkillImportResult {
+  const name = path.split(/[\\/]/).filter(Boolean).pop() || `skill-${Date.now()}`;
+  const id = slugifyProfileName(name);
+  const skill: SkillPack = {
+    id,
+    name,
+    version: "mock",
+    description: `Imported from ${path}.`,
+    sourceType: "local",
+    source: path,
+    originalPath: path,
+    managedPath: `%APPDATA%\\CodexHub\\skills\\${id}`,
+    hasSkillMd: true,
+    skillCount: 1,
+    enabled: true,
+    updatedAt: nowStamp()
+  };
+  return { imported: [skill], skipped: [], message: `Mock imported ${name}.` };
+}
+
+function mockSearchOnlineSkills(query: string): OnlineSkillSearchResult {
+  const normalized = query.trim() || "codex skills";
+  return {
+    query: normalized,
+    message: `Mock GitHub search returned candidates for ${normalized}.`,
+    candidates: [
+      {
+        id: "github-example-skill",
+        fullName: "openai-community/example-skill",
+        name: "example-skill",
+        description: "Mock searchable Codex skill repository.",
+        repoUrl: "https://github.com/openai-community/example-skill.git",
+        htmlUrl: "https://github.com/openai-community/example-skill",
+        stars: 128,
+        updatedAt: nowStamp(),
+        source: "github"
+      }
+    ]
+  };
+}
+
+function mockCloneSkillRepo(repoUrl: string): SkillImportResult {
+  const name = repoUrl.split("/").pop()?.replace(/\.git$/, "") || "github-skill";
+  const id = slugifyProfileName(name);
+  const skill: SkillPack = {
+    id,
+    name,
+    version: "git",
+    description: `Mock cloned from ${repoUrl}.`,
+    sourceType: "git",
+    source: repoUrl,
+    originalPath: repoUrl,
+    managedPath: `%APPDATA%\\CodexHub\\skills\\${id}`,
+    hasSkillMd: true,
+    skillCount: 1,
+    enabled: true,
+    updatedAt: nowStamp()
+  };
+  return { imported: [skill], skipped: [], message: `Mock cloned ${name}.` };
+}
+
+function mockSkillTask(hostAlias: string, action: string, summary: string, ok = true): TaskRun {
+  const host = fallbackHostForAlias(hostAlias);
+  return {
+    id: `mock-skill-${Date.now()}`,
+    hostId: host.id,
+    hostName: host.name,
+    action,
+    status: ok ? "success" : "failed",
+    startedAt: "now",
+    endedAt: "now",
+    summary,
+    logs: [
+      {
+        id: `mock-skill-log-${Date.now()}`,
+        taskRunId: "mock-skill",
+        level: ok ? "info" : "error",
+        timestamp: "now",
+        message: summary,
+        command: `ssh ${hostAlias} codexhub-skill ${action}`,
+        stdout: ok ? "ok" : "",
+        stderr: ok ? "" : "mock error",
+        exitCode: ok ? 0 : 1,
+        durationMs: 40,
+        timedOut: false
+      }
+    ]
+  };
+}
+
+function mockRemoteSkillList(hostAlias: string): RemoteSkillListResult {
+  const task = mockSkillTask(hostAlias, "List remote skills", `Mock listed remote skills on ${hostAlias}.`);
+  const skills = [
+    { name: "example-skill", path: "~/.codex/skills/example-skill", hasSkillMd: true, status: "valid" },
+    { name: "invalid-skill", path: "~/.codex/skills/invalid-skill", hasSkillMd: false, status: "missing-skill-md" }
+  ];
+  return {
+    hostAlias,
+    rootPath: "~/.codex/skills",
+    count: skills.length,
+    validCount: 1,
+    invalidCount: 1,
+    skills,
+    task
+  };
+}
+
+function mockRemoteSkillPreview(
+  hostAlias: string,
+  skillId: string,
+  scope: RemoteSkillScope,
+  projectPath?: string
+): RemoteSkillInstallPreview {
+  const targetRoot = scope === "project" ? `${projectPath || "~/project"}/.codex/skills` : "~/.codex/skills";
+  const task = mockSkillTask(hostAlias, "Preview skill install", `Mock previewed ${skillId} on ${hostAlias}.`);
+  return {
+    hostAlias,
+    skillId,
+    skillName: skillId,
+    scope,
+    targetPath: `${targetRoot}/${skillId}`,
+    exists: false,
+    hasSkillMd: false,
+    backupExpected: false,
+    message: `Mock ${skillId} can be installed to ${targetRoot}/${skillId}.`,
+    task
+  };
+}
+
+function mockRemoteSkillInstallBatch(
+  hostAliases: string[],
+  skillId: string,
+  scope: RemoteSkillScope,
+  projectPath: string | undefined,
+  conflictPolicy: SkillConflictPolicy
+): RemoteSkillBatchInstallResult {
+  const results = hostAliases.map((hostAlias): RemoteSkillBatchInstallResult["results"][number] => {
+    const preview = mockRemoteSkillPreview(hostAlias, skillId, scope, projectPath);
+    const task = mockSkillTask(hostAlias, "Install skill", `Mock installed ${skillId} on ${hostAlias} with ${conflictPolicy}.`);
+    return {
+      hostAlias,
+      ok: true,
+      skillId,
+      skillName: skillId,
+      scope,
+      targetPath: preview.targetPath,
+      backupPath: conflictPolicy === "backup" ? `${preview.targetPath}.codexhub.bak.mock` : null,
+      skipped: conflictPolicy === "skip",
+      message: task.summary,
+      task
+    };
+  });
+  return { ok: true, tasks: results.map((result) => result.task), results };
+}
+
+function mockRemoteSkillDelete(hostAlias: string, skillName: string, scope: RemoteSkillScope, projectPath?: string): RemoteSkillDeleteResult {
+  const targetRoot = scope === "project" ? `${projectPath || "~/project"}/.codex/skills` : "~/.codex/skills";
+  const targetPath = `${targetRoot}/${skillName}`;
+  const task = mockSkillTask(hostAlias, "Delete skill", `Mock moved ${skillName} to a backup on ${hostAlias}.`);
+  return {
+    hostAlias,
+    ok: true,
+    skillName,
+    targetPath,
+    backupPath: `${targetPath}.codexhub.deleted.mock`,
+    message: task.summary,
+    task
+  };
+}
+
 export const api = {
   getHealth: () => safeInvoke<Health>("app_health", undefined, fallbackHealth),
   getSettings: () =>
@@ -950,6 +1097,75 @@ export const api = {
       mockProfiles = [...mockProfiles, ...imported];
       return { schemaVersion: 1, exportedAt: nowStamp(), profiles: clone(imported) };
     }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
-  listSkillPacks: () => safeInvoke<SkillPack[]>("list_skill_packs", undefined, () => clone(fallbackSkillPacks)),
+  listSkillPacks: () => safeInvoke<SkillPack[]>("list_local_skills", undefined, () => clone(fallbackSkillPacks)),
+  importLocalSkill: async (path: string) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillImportResult>("import_local_skill", { path });
+    }
+    return mockImportSkill(path);
+  },
+  searchOnlineSkills: (query: string, limit = 10, timeoutMs = 30000) =>
+    safeInvoke<OnlineSkillSearchResult>("search_online_skills", { query, limit, timeoutMs }, () => mockSearchOnlineSkills(query)),
+  cloneSkillRepo: async (repoUrl: string, timeoutMs = 120000) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillImportResult>("clone_skill_repo", { repoUrl, timeoutMs });
+    }
+    return mockCloneSkillRepo(repoUrl);
+  },
+  listRemoteSkills: (hostAlias: string, timeoutMs = 30000) =>
+    safeInvoke<RemoteSkillListResult>("list_remote_skills", { hostAlias, timeoutMs }, () => mockRemoteSkillList(hostAlias)),
+  previewRemoteSkillInstall: (
+    hostAlias: string,
+    skillId: string,
+    scope: RemoteSkillScope,
+    projectPath?: string,
+    timeoutMs = 30000
+  ) =>
+    safeInvoke<RemoteSkillInstallPreview>(
+      "preview_remote_skill_install",
+      { hostAlias, skillId, scope, projectPath, timeoutMs },
+      () => mockRemoteSkillPreview(hostAlias, skillId, scope, projectPath)
+    ),
+  installRemoteSkillBatch: async (
+    hostAliases: string[],
+    skillId: string,
+    scope: RemoteSkillScope,
+    projectPath: string | undefined,
+    conflictPolicy: SkillConflictPolicy,
+    timeoutMs = 120000
+  ) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<RemoteSkillBatchInstallResult>("install_remote_skill_batch", {
+        hostAliases,
+        skillId,
+        scope,
+        projectPath,
+        conflictPolicy,
+        timeoutMs
+      });
+    }
+    return mockRemoteSkillInstallBatch(hostAliases, skillId, scope, projectPath, conflictPolicy);
+  },
+  deleteRemoteSkill: async (
+    hostAlias: string,
+    skillName: string,
+    scope: RemoteSkillScope,
+    projectPath: string | undefined,
+    confirmName: string,
+    timeoutMs = 30000
+  ) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<RemoteSkillDeleteResult>("delete_remote_skill", {
+        hostAlias,
+        skillName,
+        scope,
+        projectPath,
+        confirmName,
+        timeoutMs
+      });
+    }
+    if (confirmName !== skillName) throw new Error(`Confirmation must exactly match ${skillName}.`);
+    return mockRemoteSkillDelete(hostAlias, skillName, scope, projectPath);
+  },
   listTasks: () => safeInvoke<TaskRun[]>("list_tasks", undefined, () => clone(fallbackTasks))
 };

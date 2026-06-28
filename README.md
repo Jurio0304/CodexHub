@@ -13,7 +13,7 @@ MVP direction:
 
 ## Current Status
 
-Window 5 adds Profile/API config management on top of SSH host discovery, OpenSSH checks, remote system probes, and single-host remote Codex CLI maintenance:
+Window 6 adds Skills management on top of SSH host discovery, OpenSSH checks, remote system probes, single-host remote Codex CLI maintenance, and Profile/API config management:
 
 - macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
 - Dashboard server matrix with host-level Check Version, Install Codex, and Update Codex quick actions; batch install/update is a UI placeholder only.
@@ -30,8 +30,11 @@ Window 5 adds Profile/API config management on top of SSH host discovery, OpenSS
 - Profiles / 配置 still keeps the all-host Codex readiness list for single-host `codex --version` checks plus user-directory install/update flows. Host pages remain focused on connection details and diagnostics. The remote command remains the real `codex`; CodexHub does not install a wrapper.
 - Remote Codex install/update creates `~/.local/bin`, repairs shell PATH through an idempotent CodexHub-managed block in `~/.bashrc` or `~/.zshrc` with backup-before-write, runs the official standalone installer first, falls back to a npmmirror native package install, can locally download and `scp` that native package when the remote network is blocked, then falls back to npm with `--prefix "$HOME/.local"`.
 - Probe and Codex maintenance commands run through the backend blocking worker pool so the desktop window stays responsive; install/update opens a compact progress modal backed by `remote-codex-progress` events with streaming stdout/stderr lines and heartbeat messages.
-- Task logs now capture each SSH/probe/install command with redacted stdout/stderr, exit code, duration, and timeout state.
-- Skill sync remains reserved for a later window; profile apply is now the implemented remote config write path.
+- Skills / Skills now imports local skill directories, scans immediate child folders for `SKILL.md`, persists managed copies under the app config directory, searches GitHub repositories, and clones selected repositories with `git clone --depth 1` before validation.
+- Remote skill install packages the managed local skill as `.tgz`, uploads it to `/tmp`, validates `SKILL.md` on the remote host, installs to user `~/.codex/skills/<skill-name>` or project `<project>/.codex/skills/<skill-name>`, and supports explicit `backup`, `skip`, and `overwrite` conflict policies.
+- Remote skill view lists `~/.codex/skills`, checks each child for `SKILL.md`, updates host skill counts, and records task-log evidence.
+- Remote skill delete requires typed confirmation and moves the target to a timestamped backup directory instead of hard-deleting it.
+- Task logs now capture each SSH/probe/install/profile/skill command with redacted stdout/stderr, exit code, duration, and timeout state.
 
 ## Prerequisites For Full Desktop Dev
 
@@ -98,9 +101,18 @@ The desktop app currently exposes these Rust commands:
 - `apply_profile`
 - `detect_cc_switch_profiles`
 - `import_cc_switch_profiles`
+- `list_local_skills`
+- `import_local_skill`
+- `search_online_skills`
+- `clone_skill_repo`
+- `list_remote_skills`
+- `preview_remote_skill_install`
+- `install_remote_skill`
+- `install_remote_skill_batch`
+- `delete_remote_skill`
 - `list_tasks`
 
-The Skills page is also backed by a mock `list_skill_packs` helper command so the first UI shell can render all sidebar sections.
+The Skills page uses Tauri dialog directory selection in desktop mode and keeps web/mock fallbacks for UI development. `list_skill_packs` remains as a compatibility alias for `list_local_skills`.
 
 The SSH key and SSH config commands are real Windows local filesystem operations. They never read private key contents; public key text is the only key material returned to the UI. New CodexHub-managed hosts use a one-time password connection flow: log in to the remote host, install the local public key into `~/.ssh/authorized_keys`, set SSH permissions, write only a managed SSH config block, and verify with `ssh <HostAlias> echo ok`. The password is not stored or written to task logs.
 

@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default desktop permissions for CodexHub.","local":true,"windows":["main"],"permissions":["core:default","opener:default"]}}
+{"default":{"identifier":"default","description":"Default desktop permissions for CodexHub.","local":true,"windows":["main"],"permissions":["core:default","opener:default","dialog:default"]}}

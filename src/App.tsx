@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api, fallbackHealth } from "./api";
 import type {
   Health,
   Host,
   HostStatus,
   LatestCodexVersion,
+  OnlineSkillSearchResult,
   Profile,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
@@ -15,6 +17,13 @@ import type {
   CcSwitchDetection,
   RemoteCodexAction,
   RemoteCodexProgressEvent,
+  RemoteSkillBatchInstallResult,
+  RemoteSkillDeleteResult,
+  RemoteSkillInstallPreview,
+  RemoteSkillListResult,
+  RemoteSkillScope,
+  SkillConflictPolicy,
+  SkillImportResult,
   SkillPack,
   SshBootstrapProgressEvent,
   SshBootstrapResult,
@@ -48,6 +57,7 @@ type CodexOperationModalState = {
 
 const CODEX_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2", "gpt-5-codex"];
 const REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"];
+const appLogoUrl = new URL("../figs/app-logo.png", import.meta.url).href;
 
 const uiCopy = {
   en: {
@@ -293,7 +303,48 @@ const uiCopy = {
       viewTasks: "View Tasks"
     },
     skills: {
+      library: "Local library",
+      libraryBody: "Import local skills, clone GitHub skill repositories, and install validated skills to remote Codex paths.",
+      importDirectory: "Import directory",
+      searchPlaceholder: "Search GitHub skills",
+      search: "Search",
+      clone: "Clone",
+      cloneRepo: "Clone repo",
+      repoUrl: "Repository URL",
+      noSkills: "No local skills",
+      noSkillsBody: "Import a directory with SKILL.md or clone a GitHub repo to populate the library.",
+      noResults: "No search results",
+      candidates: "GitHub candidates",
+      localSkills: "Local skills",
+      install: "Install",
+      installSelected: "Install selected",
+      preview: "Preview",
+      remoteInstall: "Remote install",
+      remoteView: "Remote view",
+      listRemote: "List remote",
+      deleteRemote: "Delete",
+      selectSkill: "Select a skill",
+      selectHosts: "Select hosts",
+      selectAllHosts: "Select all",
+      userScope: "User",
+      projectScope: "Project",
+      projectPath: "Project path",
+      conflictPolicy: "Conflict",
+      backup: "Backup",
+      skip: "Skip",
+      overwrite: "Overwrite",
+      target: "Target",
+      exists: "Exists",
+      valid: "Valid",
+      invalid: "Missing SKILL.md",
+      confirmName: "Confirm name",
+      viewTasks: "View Tasks",
+      imported: (count: number) => `Imported ${count} skill(s).`,
+      installed: (count: number) => `Install finished on ${count} host(s).`,
+      remoteListed: (count: number) => `Remote list returned ${count} skill(s).`,
       source: "Source",
+      sourceType: "Source type",
+      path: "Path",
       skills: "Skills",
       updated: "Updated",
       enabled: "enabled",
@@ -327,7 +378,11 @@ const uiCopy = {
         "Probe remote system": "Test remote system",
         "Check Codex version": "Check Codex version",
         "Install Codex": "Install Codex",
-        "Update Codex": "Update Codex"
+        "Update Codex": "Update Codex",
+        "List remote skills": "List remote skills",
+        "Preview skill install": "Preview skill install",
+        "Install skill": "Install skill",
+        "Delete skill": "Delete skill"
       }
     },
     settings: {
@@ -628,7 +683,48 @@ const uiCopy = {
       viewTasks: "查看任务"
     },
     skills: {
+      library: "本地库",
+      libraryBody: "导入本地 skills、克隆 GitHub skill 仓库，并把校验通过的技能安装到远端 Codex 路径。",
+      importDirectory: "导入目录",
+      searchPlaceholder: "搜索 GitHub skills",
+      search: "搜索",
+      clone: "克隆",
+      cloneRepo: "克隆仓库",
+      repoUrl: "仓库 URL",
+      noSkills: "还没有本地技能",
+      noSkillsBody: "导入包含 SKILL.md 的目录，或克隆 GitHub 仓库来填充本地库。",
+      noResults: "没有搜索结果",
+      candidates: "GitHub 候选",
+      localSkills: "本地技能",
+      install: "安装",
+      installSelected: "安装所选",
+      preview: "预览",
+      remoteInstall: "远端安装",
+      remoteView: "远端查看",
+      listRemote: "列出远端",
+      deleteRemote: "删除",
+      selectSkill: "选择技能",
+      selectHosts: "选择主机",
+      selectAllHosts: "全选",
+      userScope: "用户级",
+      projectScope: "项目级",
+      projectPath: "项目路径",
+      conflictPolicy: "冲突策略",
+      backup: "备份",
+      skip: "跳过",
+      overwrite: "覆盖",
+      target: "目标",
+      exists: "已存在",
+      valid: "有效",
+      invalid: "缺少 SKILL.md",
+      confirmName: "确认名称",
+      viewTasks: "查看任务",
+      imported: (count: number) => `已导入 ${count} 个技能。`,
+      installed: (count: number) => `已在 ${count} 台主机完成安装。`,
+      remoteListed: (count: number) => `远端返回 ${count} 个技能。`,
       source: "来源",
+      sourceType: "来源类型",
+      path: "路径",
       skills: "技能",
       updated: "更新于",
       enabled: "已启用",
@@ -662,7 +758,11 @@ const uiCopy = {
         "Probe remote system": "测试远端系统",
         "Check Codex version": "检查 Codex 版本",
         "Install Codex": "安装 Codex",
-        "Update Codex": "更新 Codex"
+        "Update Codex": "更新 Codex",
+        "List remote skills": "列出远端 Skills",
+        "Preview skill install": "预览 Skill 安装",
+        "Install skill": "安装 Skill",
+        "Delete skill": "删除 Skill"
       }
     },
     settings: {
@@ -1150,6 +1250,106 @@ function App() {
     return result;
   };
 
+  const refreshSkills = async () => {
+    const nextSkills = await api.listSkillPacks();
+    setSkillPacks(nextSkills);
+    return nextSkills;
+  };
+
+  const handleImportSkillDirectory = async () => {
+    const selected = await open({ directory: true, multiple: false, title: copy.skills.importDirectory });
+    const path = Array.isArray(selected) ? selected[0] : selected;
+    if (!path) return null;
+    const result = await api.importLocalSkill(path);
+    await refreshSkills();
+    setNotice(result.message || copy.skills.imported(result.imported.length));
+    return result;
+  };
+
+  const handleSearchOnlineSkills = async (query: string) => {
+    const result = await api.searchOnlineSkills(query);
+    setNotice(result.message);
+    return result;
+  };
+
+  const handleCloneSkillRepo = async (repoUrl: string) => {
+    const result = await api.cloneSkillRepo(repoUrl);
+    await refreshSkills();
+    setNotice(result.message || copy.skills.imported(result.imported.length));
+    return result;
+  };
+
+  const handleListRemoteSkills = async (hostAlias: string) => {
+    const result = await api.listRemoteSkills(hostAlias);
+    setTasks((current) => [result.task, ...current]);
+    setHosts((current) =>
+      current.map((host) =>
+        host.hostAlias === result.hostAlias
+          ? {
+              ...host,
+              skillsExists: result.task.status === "success",
+              skillsCount: result.count,
+              status: result.task.status === "success" ? "online" : host.status,
+              lastSeen: copy.common.justNow
+            }
+          : host
+      )
+    );
+    setNotice(copy.skills.remoteListed(result.count));
+    return result;
+  };
+
+  const handlePreviewRemoteSkillInstall = async (
+    hostAlias: string,
+    skillId: string,
+    scope: RemoteSkillScope,
+    projectPath?: string
+  ) => {
+    const result = await api.previewRemoteSkillInstall(hostAlias, skillId, scope, projectPath);
+    setTasks((current) => [result.task, ...current]);
+    setNotice(result.message);
+    return result;
+  };
+
+  const handleInstallRemoteSkills = async (
+    hostAliases: string[],
+    skillId: string,
+    scope: RemoteSkillScope,
+    projectPath: string | undefined,
+    conflictPolicy: SkillConflictPolicy
+  ) => {
+    const result = await api.installRemoteSkillBatch(hostAliases, skillId, scope, projectPath, conflictPolicy);
+    setTasks((current) => [...result.tasks, ...current]);
+    setHosts((current) =>
+      current.map((host) =>
+        hostAliases.includes(host.hostAlias)
+          ? {
+              ...host,
+              skillsExists: true,
+              skillsCount: Math.max(host.skillsCount ?? 0, 1),
+              status: result.ok ? "online" : host.status,
+              lastSeen: copy.common.justNow
+            }
+          : host
+      )
+    );
+    setNotice(copy.skills.installed(result.results.length));
+    return result;
+  };
+
+  const handleDeleteRemoteSkill = async (
+    hostAlias: string,
+    skillName: string,
+    scope: RemoteSkillScope,
+    projectPath: string | undefined,
+    confirmName: string
+  ) => {
+    const result = await api.deleteRemoteSkill(hostAlias, skillName, scope, projectPath, confirmName);
+    setTasks((current) => [result.task, ...current]);
+    setNotice(result.message);
+    return result;
+  };
+
   const handleSetProfileApiKey = async (profileId: string, apiKey: string) => {
     const profile = await api.setProfileApiKey(profileId, apiKey);
     replaceProfile(profile);
@@ -1326,7 +1526,21 @@ function App() {
           />
         );
       case "skills":
-        return <SkillsView copy={copy} skillPacks={skillPacks} />;
+        return (
+          <SkillsView
+            copy={copy}
+            hosts={hosts}
+            skillPacks={skillPacks}
+            onCloneSkillRepo={handleCloneSkillRepo}
+            onDeleteRemoteSkill={handleDeleteRemoteSkill}
+            onImportSkillDirectory={handleImportSkillDirectory}
+            onInstallRemoteSkills={handleInstallRemoteSkills}
+            onListRemoteSkills={handleListRemoteSkills}
+            onPreviewRemoteSkillInstall={handlePreviewRemoteSkillInstall}
+            onSearchOnlineSkills={handleSearchOnlineSkills}
+            onViewTasks={() => setActiveSection("tasks")}
+          />
+        );
       case "tasks":
         return <TasksView copy={copy} tasks={tasks} />;
       case "settings":
@@ -1353,7 +1567,7 @@ function App() {
     <div className="appShell">
       <aside className="sidebar" aria-label={copy.common.primaryNavigation}>
         <div className="brandBlock">
-          <div className="appIcon" aria-hidden="true">CH</div>
+          <img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />
           <div>
             <div className="brandName">CodexHub</div>
           </div>
@@ -2991,35 +3205,375 @@ function profileApplyTone(status: ProfileApplyBatchResult["results"][number]["st
   return "gray";
 }
 
-function SkillsView({ copy, skillPacks }: { copy: UICopy; skillPacks: SkillPack[] }) {
+function SkillsView({
+  copy,
+  hosts,
+  skillPacks,
+  onCloneSkillRepo,
+  onDeleteRemoteSkill,
+  onImportSkillDirectory,
+  onInstallRemoteSkills,
+  onListRemoteSkills,
+  onPreviewRemoteSkillInstall,
+  onSearchOnlineSkills,
+  onViewTasks
+}: {
+  copy: UICopy;
+  hosts: Host[];
+  skillPacks: SkillPack[];
+  onCloneSkillRepo: (repoUrl: string) => Promise<SkillImportResult>;
+  onDeleteRemoteSkill: (
+    hostAlias: string,
+    skillName: string,
+    scope: RemoteSkillScope,
+    projectPath: string | undefined,
+    confirmName: string
+  ) => Promise<RemoteSkillDeleteResult>;
+  onImportSkillDirectory: () => Promise<SkillImportResult | null>;
+  onInstallRemoteSkills: (
+    hostAliases: string[],
+    skillId: string,
+    scope: RemoteSkillScope,
+    projectPath: string | undefined,
+    conflictPolicy: SkillConflictPolicy
+  ) => Promise<RemoteSkillBatchInstallResult>;
+  onListRemoteSkills: (hostAlias: string) => Promise<RemoteSkillListResult>;
+  onPreviewRemoteSkillInstall: (
+    hostAlias: string,
+    skillId: string,
+    scope: RemoteSkillScope,
+    projectPath?: string
+  ) => Promise<RemoteSkillInstallPreview>;
+  onSearchOnlineSkills: (query: string) => Promise<OnlineSkillSearchResult>;
+  onViewTasks: () => void;
+}) {
+  const [selectedSkillId, setSelectedSkillId] = useState(skillPacks[0]?.id ?? "");
+  const [selectedHostAliases, setSelectedHostAliases] = useState<string[]>([]);
+  const [remoteHostAlias, setRemoteHostAlias] = useState(hosts[0]?.hostAlias ?? "");
+  const [scope, setScope] = useState<RemoteSkillScope>("user");
+  const [projectPath, setProjectPath] = useState("");
+  const [conflictPolicy, setConflictPolicy] = useState<SkillConflictPolicy>("backup");
+  const [query, setQuery] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [searchResult, setSearchResult] = useState<OnlineSkillSearchResult | null>(null);
+  const [remoteList, setRemoteList] = useState<RemoteSkillListResult | null>(null);
+  const [preview, setPreview] = useState<RemoteSkillInstallPreview | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const selectedSkill = skillPacks.find((skill) => skill.id === selectedSkillId) ?? skillPacks[0];
+  const installProjectPath = scope === "project" ? projectPath.trim() : undefined;
+  const canUseProjectScope = scope === "user" || Boolean(installProjectPath);
+  const canInstall = Boolean(selectedSkill && selectedHostAliases.length > 0 && canUseProjectScope && !busy);
+  const canPreview = Boolean(selectedSkill && selectedHostAliases[0] && canUseProjectScope && !busy);
+
+  useEffect(() => {
+    if (!selectedSkillId && skillPacks[0]) setSelectedSkillId(skillPacks[0].id);
+    if (selectedSkillId && !skillPacks.some((skill) => skill.id === selectedSkillId)) setSelectedSkillId(skillPacks[0]?.id ?? "");
+  }, [selectedSkillId, skillPacks]);
+
+  useEffect(() => {
+    if (!remoteHostAlias && hosts[0]) setRemoteHostAlias(hosts[0].hostAlias);
+    setSelectedHostAliases((current) => current.filter((alias) => hosts.some((host) => host.hostAlias === alias)));
+  }, [hosts, remoteHostAlias]);
+
+  const runBusy = async <T,>(key: string, action: () => Promise<T>) => {
+    setBusy(key);
+    setMessage(null);
+    try {
+      const result = await action();
+      return result;
+    } catch (error) {
+      const detail = formatError(error);
+      setMessage(detail);
+      throw error;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleHost = (alias: string) => {
+    setSelectedHostAliases((current) =>
+      current.includes(alias) ? current.filter((item) => item !== alias) : [...current, alias]
+    );
+  };
+
+  const handleSearch = async () => {
+    const result = await runBusy("search", () => onSearchOnlineSkills(query));
+    setSearchResult(result);
+    setMessage(result.message);
+  };
+
+  const handleClone = async (url: string) => {
+    const result = await runBusy(`clone-${url}`, () => onCloneSkillRepo(url));
+    setSelectedSkillId(result.imported[0]?.id ?? selectedSkillId);
+    setMessage(result.message);
+  };
+
+  const handleImport = async () => {
+    const result = await runBusy("import", onImportSkillDirectory);
+    if (result?.imported[0]) setSelectedSkillId(result.imported[0].id);
+    if (result) setMessage(result.message);
+  };
+
+  const handlePreview = async () => {
+    if (!selectedSkill || !selectedHostAliases[0]) return;
+    const result = await runBusy("preview", () =>
+      onPreviewRemoteSkillInstall(selectedHostAliases[0], selectedSkill.id, scope, installProjectPath)
+    );
+    setPreview(result);
+    setMessage(result.message);
+  };
+
+  const handleInstall = async () => {
+    if (!selectedSkill || !canInstall) return;
+    const result = await runBusy("install", () =>
+      onInstallRemoteSkills(selectedHostAliases, selectedSkill.id, scope, installProjectPath, conflictPolicy)
+    );
+    setMessage(copy.skills.installed(result.results.length));
+  };
+
+  const handleListRemote = async () => {
+    if (!remoteHostAlias) return;
+    const result = await runBusy("remote-list", () => onListRemoteSkills(remoteHostAlias));
+    setRemoteList(result);
+    setMessage(copy.skills.remoteListed(result.count));
+  };
+
+  const handleDeleteRemote = async (skillName: string) => {
+    if (!remoteHostAlias) return;
+    const result = await runBusy(`delete-${skillName}`, () =>
+      onDeleteRemoteSkill(remoteHostAlias, skillName, scope, installProjectPath, deleteConfirm[skillName] ?? "")
+    );
+    setMessage(result.message);
+    setDeleteConfirm((current) => ({ ...current, [skillName]: "" }));
+    await handleListRemote();
+  };
+
   return (
-    <div className="cardGrid">
-      {skillPacks.map((pack) => (
-        <article className="panel skillCard" key={pack.id}>
-          <div className="panelHeader compact">
-            <div>
-              <div className="eyebrow">v{pack.version}</div>
-              <h2>{pack.name}</h2>
-            </div>
-            <Badge tone={pack.enabled ? "green" : "gray"}>{pack.enabled ? copy.skills.enabled : copy.skills.disabled}</Badge>
+    <div className="skillsStack">
+      <section className="panel spanWide">
+        <div className="panelHeader">
+          <div>
+            <div className="eyebrow">{copy.skills.library}</div>
+            <h2>{copy.skills.localSkills}</h2>
+            <p>{copy.skills.libraryBody}</p>
           </div>
-          <p>{pack.description}</p>
-          <dl className="settingsList">
-            <div>
-              <dt>{copy.skills.source}</dt>
-              <dd>{pack.source}</dd>
+          <button className="primaryButton" disabled={busy === "import"} type="button" onClick={() => void handleImport()}>
+            {busy === "import" ? copy.hosts.saving : copy.skills.importDirectory}
+          </button>
+        </div>
+
+        {skillPacks.length === 0 ? (
+          <div className="emptyState">
+            <div className="emptyIcon" aria-hidden="true" />
+            <h3>{copy.skills.noSkills}</h3>
+            <p>{copy.skills.noSkillsBody}</p>
+          </div>
+        ) : (
+          <div className="tableWrap">
+            <table className="skillsTable">
+              <thead>
+                <tr>
+                  <th>{copy.skills.selectSkill}</th>
+                  <th>{copy.skills.sourceType}</th>
+                  <th>{copy.skills.source}</th>
+                  <th>{copy.skills.updated}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {skillPacks.map((skill) => (
+                  <tr className="selectableRow" data-selected={selectedSkill?.id === skill.id} key={skill.id} onClick={() => setSelectedSkillId(skill.id)}>
+                    <td>
+                      <strong>{skill.name}</strong>
+                      <span>{skill.description || skill.id}</span>
+                    </td>
+                    <td><Badge tone={skill.hasSkillMd ? "green" : "red"}>{skill.sourceType}</Badge></td>
+                    <td>{skill.source}</td>
+                    <td>{skill.updatedAt}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel spanWide">
+        <div className="panelHeader compact">
+          <div>
+            <div className="eyebrow">{copy.skills.candidates}</div>
+            <h2>{copy.skills.cloneRepo}</h2>
+          </div>
+        </div>
+        <div className="skillSearchBar">
+          <input value={query} placeholder={copy.skills.searchPlaceholder} onChange={(event) => setQuery(event.target.value)} />
+          <button className="secondaryButton" disabled={!query.trim() || busy === "search"} type="button" onClick={() => void handleSearch()}>
+            {copy.skills.search}
+          </button>
+          <input value={repoUrl} placeholder={copy.skills.repoUrl} onChange={(event) => setRepoUrl(event.target.value)} />
+          <button className="secondaryButton" disabled={!repoUrl.trim() || busy === `clone-${repoUrl}`} type="button" onClick={() => void handleClone(repoUrl)}>
+            {copy.skills.clone}
+          </button>
+        </div>
+        {searchResult ? (
+          searchResult.candidates.length > 0 ? (
+            <div className="tableWrap">
+              <table className="skillsTable">
+                <thead>
+                  <tr>
+                    <th>{copy.skills.repoUrl}</th>
+                    <th>Stars</th>
+                    <th>{copy.skills.updated}</th>
+                    <th>{copy.hosts.actions}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {searchResult.candidates.map((candidate) => (
+                    <tr key={candidate.repoUrl}>
+                      <td>
+                        <strong>{candidate.fullName}</strong>
+                        <span>{candidate.description || candidate.repoUrl}</span>
+                      </td>
+                      <td>{candidate.stars}</td>
+                      <td>{candidate.updatedAt}</td>
+                      <td>
+                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => void handleClone(candidate.repoUrl)}>
+                          {copy.skills.clone}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div>
-              <dt>{copy.skills.skills}</dt>
-              <dd>{pack.skillCount}</dd>
-            </div>
-            <div>
-              <dt>{copy.skills.updated}</dt>
-              <dd>{pack.updatedAt}</dd>
-            </div>
+          ) : (
+            <p className="skillMessage">{copy.skills.noResults}</p>
+          )
+        ) : null}
+      </section>
+
+      <section className="panel skillInstallPanel">
+        <div className="panelHeader compact">
+          <div>
+            <div className="eyebrow">{copy.skills.remoteInstall}</div>
+            <h2>{selectedSkill?.name ?? copy.skills.selectSkill}</h2>
+          </div>
+          <Badge tone={canInstall ? "green" : "gray"}>{selectedHostAliases.length}</Badge>
+        </div>
+
+        <div className="skillControls">
+          <label>
+            <span>{copy.skills.selectSkill}</span>
+            <select value={selectedSkill?.id ?? ""} onChange={(event) => setSelectedSkillId(event.target.value)}>
+              {skillPacks.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>{copy.skills.projectPath}</span>
+            <input disabled={scope === "user"} value={projectPath} placeholder="~/project" onChange={(event) => setProjectPath(event.target.value)} />
+          </label>
+        </div>
+
+        <div className="segmentedControl skillSegment">
+          <button data-active={scope === "user"} type="button" onClick={() => setScope("user")}>{copy.skills.userScope}</button>
+          <button data-active={scope === "project"} type="button" onClick={() => setScope("project")}>{copy.skills.projectScope}</button>
+        </div>
+        <div className="segmentedControl skillSegment">
+          {(["backup", "skip", "overwrite"] as SkillConflictPolicy[]).map((policy) => (
+            <button data-active={conflictPolicy === policy} key={policy} type="button" onClick={() => setConflictPolicy(policy)}>
+              {copy.skills[policy]}
+            </button>
+          ))}
+        </div>
+
+        <div className="profileSubhead">
+          <strong>{copy.skills.selectHosts}</strong>
+          <button
+            className="linkButton"
+            type="button"
+            onClick={() => setSelectedHostAliases(selectedHostAliases.length === hosts.length ? [] : hosts.map((host) => host.hostAlias))}
+          >
+            {copy.skills.selectAllHosts}
+          </button>
+        </div>
+        <div className="skillHostList">
+          {hosts.map((host) => (
+            <button className="profileHostSelectRow" data-selected={selectedHostAliases.includes(host.hostAlias)} key={host.id} type="button" onClick={() => toggleHost(host.hostAlias)}>
+              <input checked={selectedHostAliases.includes(host.hostAlias)} readOnly type="checkbox" />
+              <strong>{host.name}<small>{host.hostAlias}</small></strong>
+              <Badge tone={host.status === "online" ? "green" : "gray"}>{host.status}</Badge>
+            </button>
+          ))}
+        </div>
+
+        {preview ? (
+          <dl className="settingsList skillPreview">
+            <div><dt>{copy.skills.target}</dt><dd>{preview.targetPath}</dd></div>
+            <div><dt>{copy.skills.exists}</dt><dd>{formatBoolean(preview.exists, copy)}</dd></div>
+            <div><dt>SKILL.md</dt><dd>{preview.hasSkillMd ? copy.skills.valid : copy.skills.invalid}</dd></div>
           </dl>
-        </article>
-      ))}
+        ) : null}
+
+        <div className="modalActions skillActions">
+          <button className="secondaryButton" disabled={!canPreview} type="button" onClick={() => void handlePreview()}>{copy.skills.preview}</button>
+          <button className="primaryButton" disabled={!canInstall} type="button" onClick={() => void handleInstall()}>{copy.skills.installSelected}</button>
+        </div>
+      </section>
+
+      <section className="panel skillRemotePanel">
+        <div className="panelHeader compact">
+          <div>
+            <div className="eyebrow">{copy.skills.remoteView}</div>
+            <h2>{copy.skills.listRemote}</h2>
+          </div>
+          <button className="secondaryButton" disabled={!remoteHostAlias || busy === "remote-list"} type="button" onClick={() => void handleListRemote()}>
+            {copy.skills.listRemote}
+          </button>
+        </div>
+        <label className="skillRemoteHost">
+          <span>{copy.tasks.host}</span>
+          <select value={remoteHostAlias} onChange={(event) => setRemoteHostAlias(event.target.value)}>
+            {hosts.map((host) => <option key={host.id} value={host.hostAlias}>{host.name} ({host.hostAlias})</option>)}
+          </select>
+        </label>
+
+        {remoteList ? (
+          <div className="skillRemoteList">
+            <div className="profileSubhead">
+              <strong>{remoteList.rootPath}</strong>
+              <Badge tone={remoteList.invalidCount > 0 ? "yellow" : "green"}>{remoteList.count}</Badge>
+            </div>
+            {remoteList.skills.map((skill) => (
+              <div className="profileStatusList skillRemoteRow" key={skill.path}>
+                <div>
+                  <Badge tone={skill.hasSkillMd ? "green" : "red"}>{skill.hasSkillMd ? copy.skills.valid : copy.skills.invalid}</Badge>
+                  <strong>{skill.name}</strong>
+                  <span>{skill.path}</span>
+                </div>
+                <div className="skillDeleteRow">
+                  <input value={deleteConfirm[skill.name] ?? ""} placeholder={copy.skills.confirmName} onChange={(event) => setDeleteConfirm((current) => ({ ...current, [skill.name]: event.target.value }))} />
+                  <button className="miniButton danger" disabled={(deleteConfirm[skill.name] ?? "") !== skill.name || Boolean(busy)} type="button" onClick={() => void handleDeleteRemote(skill.name)}>
+                    {copy.skills.deleteRemote}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="panel spanWide">
+        <div className="panelHeader compact">
+          <div>
+            <div className="eyebrow">{copy.tasks.taskLog}</div>
+            <h2>{copy.skills.viewTasks}</h2>
+            <p>{message ?? copy.tasks.noLogs}</p>
+          </div>
+          <button className="secondaryButton" type="button" onClick={onViewTasks}>{copy.skills.viewTasks}</button>
+        </div>
+      </section>
     </div>
   );
 }

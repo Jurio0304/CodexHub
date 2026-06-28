@@ -32,7 +32,7 @@ flowchart LR
 
 - Servers: host inventory, aliases, labels, SSH config status, connection health.
 - Profiles: local profile templates, CRUD/import/export, env-var-first API key policy, rendered remote TOML preview, and single or selected-host batch apply.
-- Skills: local skill packages and remote upload/sync status.
+- Skills: local skill packages, GitHub search/clone import, remote upload/install status, remote list, and backup delete.
 - Operations: backup, apply, restore, dry-run, and audit log.
 - Codex App Fallback: manual steps for enabling SSH hosts and reconnecting in Codex App.
 - Settings: local data location, remote paths, OpenSSH binary overrides, theme, and privacy controls.
@@ -58,7 +58,14 @@ Tauri command surface:
 - `render_profile_config(profile_id)`: render TOML from structured profile state.
 - `preview_profile_apply(profile_id, host_ids)`: render TOML and summarize per-host remote config actions before mutation.
 - `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, and record redacted task logs for a single host or selected-host batch.
-- `remote_sync_skill(server_id, skill_id)`: validate and upload a skill folder.
+- `list_local_skills()` / `list_skill_packs()`: read persisted local managed skills.
+- `import_local_skill(path)`: validate `SKILL.md` at the selected directory or immediate child directories, then copy valid skills into CodexHub-managed storage.
+- `search_online_skills(query, limit, timeout_ms)`: query GitHub repository search for v1 skill discovery candidates.
+- `clone_skill_repo(repo_url)`: run `git clone --depth 1`, then import valid root or immediate child skills.
+- `list_remote_skills(host_alias)`: list remote `~/.codex/skills`, validate each child for `SKILL.md`, update host skill count, and record a task log.
+- `preview_remote_skill_install(host_alias, skill_id, scope, project_path)`: check the selected remote user or project target before mutation.
+- `install_remote_skill(...)` and `install_remote_skill_batch(...)`: archive the managed local skill, upload it to `/tmp`, validate/extract via `tar`, then install with explicit `backup`, `skip`, or `overwrite` policy.
+- `delete_remote_skill(host_alias, skill_name, scope, project_path, confirm_name)`: require exact confirmation and move the remote skill directory to a timestamped backup.
 - `remote_restore_backup(server_id, backup_id)`: restore a known CodexHub backup.
 
 ## Local Data Model
@@ -93,15 +100,20 @@ type ProfileTemplate = {
 type SkillPackage = {
   id: string;
   name: string;
-  localPath: string;
-  remotePath?: string;
+  description: string;
+  version: string;
+  sourceType: "local" | "git" | "mock" | string;
+  source: string;
+  originalPath?: string;
+  managedPath: string;
   hasSkillMd: boolean;
+  updatedAt: string;
 };
 
 type OperationLog = {
   id: string;
   serverId: string;
-  kind: "ssh-check" | "probe-codex" | "manage-codex" | "apply-config" | "sync-skill" | "restore";
+  kind: "ssh-check" | "probe-codex" | "manage-codex" | "apply-config" | "sync-skill" | "restore" | "skill-list" | "skill-install" | "skill-delete";
   status: "planned" | "running" | "succeeded" | "failed";
   startedAt: string;
   finishedAt?: string;
@@ -157,15 +169,20 @@ Window 5 profile switching is file-based and implemented through the direct SSH/
 
 This avoids a remote wrapper and avoids assumptions about Codex App internals. A future wrapper can be added as an opt-in enhancement for hosts where runtime `codex --profile <name>` orchestration is desired.
 
-## Skill Sync
+## Skill Management
 
-MVP skill sync is folder-based:
+Window 6 skill management is folder-based and uses the same direct SSH/SCP route as profile apply:
 
-- Validate that each local skill has `SKILL.md`.
-- Copy to a temp remote directory.
-- Replace only the selected skill directory under `~/.codex/skills/`.
-- Back up existing remote skill directory before replacement.
-- Keep the skill root configurable to handle documentation drift between `~/.codex/skills` and `.agents/skills`.
+- Local import accepts a selected directory with `SKILL.md`, or scans immediate child directories and imports each valid child.
+- Imported skills are copied into CodexHub-managed app config storage so later remote installs do not depend on the original source path.
+- Online discovery uses GitHub repository search for v1. Clone import is restricted to `https://github.com/...` URLs, uses `git clone --depth 1`, and then reuses the same `SKILL.md` scan.
+- Remote user scope installs to `$HOME/.codex/skills/<skill-name>`.
+- Remote project scope installs to `<projectPath>/.codex/skills/<skill-name>`, with the project root entered explicitly.
+- Install packages the managed skill as `.tgz`, uploads to `/tmp`, extracts to staging, validates `SKILL.md`, and then replaces the target.
+- If the target exists, `backup` moves it to `<skill-name>.codexhub.bak.<timestamp>`, `skip` leaves it untouched, and `overwrite` replaces it without backup.
+- Remote view lists `~/.codex/skills`, checks each child for `SKILL.md`, reports valid/invalid counts, and updates the host skill count.
+- Delete requires typed confirmation and moves the skill directory to a timestamped backup instead of hard-deleting.
+- Keep the skill root configurable in settings later to handle documentation drift between `~/.codex/skills` and `.agents/skills`.
 
 ## SSH Config Policy
 
