@@ -13,7 +13,7 @@ MVP direction:
 
 ## Current Status
 
-Window 4 adds single-host remote Codex CLI maintenance on top of SSH host discovery, OpenSSH checks, and remote system probes:
+Window 5 adds Profile/API config management on top of SSH host discovery, OpenSSH checks, remote system probes, and single-host remote Codex CLI maintenance:
 
 - macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
 - Dashboard server matrix with host-level Check Version, Install Codex, and Update Codex quick actions; batch install/update is a UI placeholder only.
@@ -23,11 +23,15 @@ Window 4 adds single-host remote Codex CLI maintenance on top of SSH host discov
 - Hosts auto-detect safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode and import them into the in-memory inventory.
 - Hosts can still add, update, and delete only CodexHub-managed blocks in `%USERPROFILE%\.ssh\config` with timestamped backups; unmanaged user blocks are never modified or overwritten.
 - Real desktop commands can run `ssh <HostAlias> echo ok` with timeout control and probe remote Linux hosts for OS, arch, shell, PATH, Codex CLI, config presence, and skills count.
-- Profiles / 配置 presents a compact all-host Codex readiness list for single-host `codex --version` checks plus user-directory install/update flows. Host pages remain focused on connection details and diagnostics. The remote command remains the real `codex`; CodexHub does not install a wrapper.
+- Profiles / 配置 now manages local Codex profiles with create, update, delete, import, and export flows, plus a compact host-apply surface for single-host or selected-host batch apply.
+- API keys are env-var-first: profiles render remote config with `env_key` / `apiKeyEnvVar` references, and a remembered local credential-store key is optional local metadata only.
+- Stored local credential keys are never written to remote hosts. Remote `~/.codex/config.toml` writes contain the environment variable reference, not the local credential key or API key value.
+- Profile apply reads and diffs the remote config, creates a timestamped backup when needed, writes the rendered config, records `applied-profile.json` metadata, and emits redacted Tasks logs.
+- Profiles / 配置 still keeps the all-host Codex readiness list for single-host `codex --version` checks plus user-directory install/update flows. Host pages remain focused on connection details and diagnostics. The remote command remains the real `codex`; CodexHub does not install a wrapper.
 - Remote Codex install/update creates `~/.local/bin`, repairs shell PATH through an idempotent CodexHub-managed block in `~/.bashrc` or `~/.zshrc` with backup-before-write, runs the official standalone installer first, falls back to a npmmirror native package install, can locally download and `scp` that native package when the remote network is blocked, then falls back to npm with `--prefix "$HOME/.local"`.
 - Probe and Codex maintenance commands run through the backend blocking worker pool so the desktop window stays responsive; install/update opens a compact progress modal backed by `remote-codex-progress` events with streaming stdout/stderr lines and heartbeat messages.
 - Task logs now capture each SSH/probe/install command with redacted stdout/stderr, exit code, duration, and timeout state.
-- Profile apply and skill sync remain mock/reserved workflows until the remote write path lands.
+- Skill sync remains reserved for a later window; profile apply is now the implemented remote config write path.
 
 ## Prerequisites For Full Desktop Dev
 
@@ -82,7 +86,18 @@ The desktop app currently exposes these Rust commands:
 - `remote_probe_codex`
 - `remote_manage_codex`
 - `list_profiles`
+- `create_profile`
+- `update_profile`
+- `delete_profile`
+- `duplicate_profile`
+- `import_profiles`
+- `export_profiles`
+- `set_profile_api_key`
+- `delete_profile_api_key`
+- `preview_profile_apply`
 - `apply_profile`
+- `detect_cc_switch_profiles`
+- `import_cc_switch_profiles`
 - `list_tasks`
 
 The Skills page is also backed by a mock `list_skill_packs` helper command so the first UI shell can render all sidebar sections.

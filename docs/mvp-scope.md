@@ -17,10 +17,12 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Optional append/update of CodexHub-managed SSH config blocks with backup.
 - SSH connectivity check through Windows OpenSSH.
 - Remote system and Codex probe: OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
-- Single-host remote Codex CLI maintenance: Test, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is the SSH Hosts table on the Hosts / 主机 page.
+- Single-host remote Codex CLI maintenance: Test, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is the compact readiness surface on the Profiles / 配置 page, with Dashboard shortcuts allowed.
 - Idempotent remote PATH repair for `~/.local/bin` in `~/.bashrc` or `~/.zshrc` with backup-before-write and task-log evidence.
 - Remote `~/.codex/config.toml` read, diff, backup, render, and replace.
-- Local profile templates rendered to remote config.
+- Local profile templates rendered to remote config, with create, update, delete, import, export, and single or selected-host batch apply.
+- Env-var-first API key config: remote TOML uses `env_key` / `apiKeyEnvVar`; optional local credential-store keys remain local and are never written to remote hosts.
+- `applied-profile.json` metadata and redacted Tasks logs for each profile apply.
 - Remote `~/.codex/skills/` sync for selected skill folders.
 - Operation log with backups and restore points.
 - Codex App fallback wizard for host enablement and reconnect guidance.
@@ -34,6 +36,7 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Full terminal emulator or browser-based SSH console.
 - Multi-user team server, RBAC, schedules, bulk Codex install/update execution, and fleet automation.
 - Storing private keys, passphrases, or tokens in plaintext.
+- Writing local credential-store key names or API key values into remote Codex config.
 - Default overwrite of user SSH config, Codex config, shell config, or remote dotfiles.
 
 ## MVP Safety Gates
@@ -54,7 +57,7 @@ Each mutating operation must have:
 3. Window 2: SSH connectivity probe using Windows OpenSSH and mock SSH backend.
 4. Window 3: remote SSH probe and Codex status detection.
 5. Window 4: single-host remote Codex CLI check/install/update with PATH repair and logs.
-6. Window 5: remote Codex config read/diff/render/apply with backup.
+6. Window 5: profile/API config CRUD/import/export, remote Codex config read/diff/render/apply with backup, `applied-profile.json`, and Tasks logs.
 7. Window 6: skill folder validation and sync.
 8. Window 7: Codex App fallback wizard and end-to-end mock workflow.
 

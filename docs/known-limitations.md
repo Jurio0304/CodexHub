@@ -21,7 +21,7 @@ Some SSH non-interactive shells do not read `~/.bashrc` or `~/.zshrc`, so a plai
 
 If a remote host's CA bundle rejects HTTPS downloads with a self-signed certificate error, the safer long-term fix is to repair that host's trust store. For first-run recovery, CodexHub keeps the official installer strict but may retry npmmirror native package downloads with certificate checks disabled, limited to npmmirror URLs and marked as `npm-mirror-native-insecure-tls` in the task log. If the insecure retry returns HTML instead of package metadata, CodexHub reports the likely captive portal or network authentication issue and then attempts the local-download plus `scp` upload fallback.
 
-The Hosts / 主机 page owns the SSH Hosts table, remote test results, and single-host Codex install/update actions. The Profiles / 配置 page is intentionally empty until remote config profile editing is implemented.
+The Profiles / 配置 page owns local profile editing, import/export, API env-var selection, single-host apply, selected-host batch apply, and the compact Codex readiness/actions list. Host pages stay focused on SSH identity, remote probes, and diagnostics.
 
 Long SSH, probe, install, and update operations are dispatched through backend blocking workers so the WebView remains responsive. They are still bounded by per-step timeouts, and a full install/update can take longer than a single timeout because official download, mirror fallback, local download, upload, install, and verification are separate steps.
 
@@ -47,4 +47,6 @@ The MVP intentionally does not require a remote Codex wrapper. This limits runti
 
 ## Security
 
-CodexHub must not store SSH private keys, passphrases, OpenAI tokens, or remote secrets in plaintext. Initial local data should only contain host aliases, paths, non-secret preferences, and operation metadata.
+CodexHub must not store SSH private keys, passphrases, OpenAI tokens, or remote secrets in plaintext. Local profile data may contain a credential-store key reference, but not the credential value.
+
+Profile API key handling is env-var-first. Remote config writes must use `env_key` / `apiKeyEnvVar` so the remote host reads its own environment variable. The optional stored local credential key is never written to remote `~/.codex/config.toml`, `applied-profile.json`, or task logs.

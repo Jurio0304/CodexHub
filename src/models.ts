@@ -4,6 +4,13 @@
   remoteWrapperRequired: boolean;
 };
 
+export type LatestCodexVersion = {
+  version: string | null;
+  checkedAt: string | null;
+  source: "npm" | string;
+  error: string | null;
+};
+
 export type HostStatus = "online" | "offline" | "unknown" | "testing";
 export type AuthMethod = "ssh-key" | "password" | "agent";
 
@@ -25,9 +32,13 @@ export type Host = {
   codexInstalled: boolean;
   codexVersion: string;
   configExists: boolean | null;
+  apiConfigName?: string | null;
+  apiConfigSource?: string | null;
   skillsExists: boolean | null;
   skillsCount: number | null;
   profileId: string | null;
+  profileAppliedAt?: string | null;
+  profileAppliedSource?: string | null;
   skillPackIds: string[];
   tags: string[];
   lastSeen: string;
@@ -50,10 +61,87 @@ export type Profile = {
   name: string;
   description: string;
   model: string;
+  provider: string;
+  baseUrl: string;
+  apiKeyEnvVar: string;
+  modelReasoningEffort: string;
+  planModeReasoningEffort: string;
+  fastMode: boolean;
+  serviceTier: string;
   approvalPolicy: string;
   sandboxMode: string;
+  extraToml: string;
+  createdAt: string;
   updatedAt: string;
+  source: "managed" | "imported" | "cc-switch" | "mock" | string;
+  credentialStored: boolean;
   hostIds: string[];
+};
+
+export type ProfileDraft = {
+  name: string;
+  description: string;
+  model: string;
+  provider: string;
+  baseUrl: string;
+  apiKeyEnvVar: string;
+  modelReasoningEffort: string;
+  planModeReasoningEffort: string;
+  fastMode: boolean;
+  serviceTier: string;
+  approvalPolicy: string;
+  sandboxMode: string;
+  extraToml: string;
+  hostIds: string[];
+};
+
+export type ProfilePatch = Partial<ProfileDraft>;
+
+export type ProfileImportExport = {
+  schemaVersion: number;
+  exportedAt: string;
+  profiles: Profile[];
+};
+
+export type ProfileApplyHostResult = {
+  hostId: string;
+  hostName: string;
+  hostAlias: string;
+  status: "pending" | "success" | "failed" | "no-change";
+  targetPath: string;
+  backupPath: string | null;
+  message: string;
+  task?: TaskRun;
+};
+
+export type ProfileApplyPreview = {
+  profileId: string;
+  renderedToml: string;
+  targetFiles: Array<{
+    hostId: string;
+    hostName: string;
+    hostAlias: string;
+    path: string;
+    backupExpected: boolean;
+    noChangeExpected: boolean;
+  }>;
+  hostResults: ProfileApplyHostResult[];
+};
+
+export type ProfileApplyBatchResult = {
+  profileId: string;
+  ok: boolean;
+  results: ProfileApplyHostResult[];
+  tasks: TaskRun[];
+  profiles: Profile[];
+  hosts: Host[];
+};
+
+export type CcSwitchDetection = {
+  detected: boolean;
+  sourcePath: string | null;
+  message: string;
+  importExport: ProfileImportExport;
 };
 
 export type SkillPack = {
@@ -152,6 +240,8 @@ export type RemoteProbeResult = {
   codexPath: string | null;
   codexVersion: string;
   configExists: boolean;
+  apiConfigName: string;
+  apiConfigSource: string;
   skillsExists: boolean;
   skillsCount: number;
   task: TaskRun;

@@ -1,12 +1,22 @@
 mod ssh;
 
+use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
+use toml::map::Map as TomlMap;
+use toml::Value as TomlValue;
+
+const CODEX_NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/@openai/codex";
+const CODEX_LATEST_SOURCE: &str = "npm";
+const CODEX_LATEST_REFRESH_HOUR: u32 = 4;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +63,8 @@ struct Host {
     codex_installed: bool,
     codex_version: String,
     config_exists: Option<bool>,
+    api_config_name: Option<String>,
+    api_config_source: Option<String>,
     skills_exists: Option<bool>,
     skills_count: Option<u16>,
     profile_id: Option<String>,
@@ -86,17 +98,169 @@ struct HostPatch {
     tags: Option<Vec<String>>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Profile {
     id: String,
     name: String,
     description: String,
     model: String,
+    provider: String,
+    base_url: Option<String>,
+    api_key_env_var: Option<String>,
+    model_reasoning_effort: Option<String>,
+    plan_mode_reasoning_effort: Option<String>,
+    fast_mode: bool,
+    service_tier: Option<String>,
     approval_policy: String,
     sandbox_mode: String,
+    extra_toml: String,
+    created_at: String,
     updated_at: String,
+    source: String,
+    credential_stored: bool,
     host_ids: Vec<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileDraft {
+    name: String,
+    description: Option<String>,
+    model: String,
+    provider: Option<String>,
+    base_url: Option<String>,
+    api_key_env_var: Option<String>,
+    model_reasoning_effort: Option<String>,
+    plan_mode_reasoning_effort: Option<String>,
+    fast_mode: Option<bool>,
+    service_tier: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+    extra_toml: Option<String>,
+    source: Option<String>,
+    host_ids: Option<Vec<String>>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfilePatch {
+    name: Option<String>,
+    description: Option<String>,
+    model: Option<String>,
+    provider: Option<String>,
+    base_url: Option<String>,
+    api_key_env_var: Option<String>,
+    model_reasoning_effort: Option<String>,
+    plan_mode_reasoning_effort: Option<String>,
+    fast_mode: Option<bool>,
+    service_tier: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_mode: Option<String>,
+    extra_toml: Option<String>,
+    source: Option<String>,
+    credential_stored: Option<bool>,
+    host_ids: Option<Vec<String>>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileApplyPreview {
+    profile_id: String,
+    profile_name: String,
+    rendered_toml: String,
+    target_files: Vec<ProfileApplyTargetFile>,
+    host_results: Vec<ProfileApplyHostResult>,
+    warnings: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileApplyTargetFile {
+    host_id: String,
+    host_name: String,
+    host_alias: String,
+    path: String,
+    backup_expected: bool,
+    no_change_expected: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileApplyHostResult {
+    host_id: String,
+    host_name: String,
+    host_alias: String,
+    status: String,
+    target_path: String,
+    backup_path: Option<String>,
+    message: String,
+    task: Option<TaskRun>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileApplyBatchResult {
+    profile_id: String,
+    ok: bool,
+    results: Vec<ProfileApplyHostResult>,
+    tasks: Vec<TaskRun>,
+    profiles: Vec<Profile>,
+    hosts: Vec<Host>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileImportExport {
+    schema_version: u16,
+    exported_at: String,
+    profiles: Vec<Profile>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileImportResult {
+    imported: Vec<Profile>,
+    skipped: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DetectedCcSwitchProfile {
+    source_path: String,
+    profile: Profile,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CcSwitchDetection {
+    detected: bool,
+    source_path: Option<String>,
+    message: String,
+    import_export: ProfileImportExport,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppliedProfileMetadata {
+    profile_id: String,
+    profile_name: String,
+    applied_at: String,
+    codexhub_version: String,
+}
+
+#[derive(Clone)]
+struct RemoteApiConfigMatch {
+    name: String,
+    source: String,
+    profile_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum SafeReconnectDecision {
+    Terminate(u32),
+    Manual(String),
 }
 
 #[derive(Clone, Serialize)]
@@ -113,6 +277,7 @@ struct SkillPack {
 }
 
 #[derive(Clone, Serialize)]
+#[allow(dead_code)]
 #[serde(rename_all = "lowercase")]
 enum TaskStatus {
     Queued,
@@ -228,9 +393,20 @@ struct RemoteProbeResult {
     codex_path: Option<String>,
     codex_version: String,
     config_exists: bool,
+    api_config_name: String,
+    api_config_source: String,
     skills_exists: bool,
     skills_count: u16,
     task: TaskRun,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct LatestCodexVersion {
+    version: Option<String>,
+    checked_at: Option<String>,
+    source: String,
+    error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -321,7 +497,7 @@ impl Default for AppSettings {
 
 struct AppState {
     hosts: Mutex<Vec<Host>>,
-    profiles: Vec<Profile>,
+    profiles: Mutex<Vec<Profile>>,
     skill_packs: Vec<SkillPack>,
     tasks: Mutex<Vec<TaskRun>>,
 }
@@ -854,7 +1030,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             hosts: Mutex::new(mock_hosts()),
-            profiles: mock_profiles(),
+            profiles: Mutex::new(mock_profiles()),
             skill_packs: mock_skill_packs(),
             tasks: Mutex::new(mock_tasks()),
         }
@@ -917,14 +1093,18 @@ fn delete_ssh_config_host(alias: String) -> Result<ssh::SshConfigWriteResult, St
 }
 
 #[tauri::command]
-fn list_hosts(state: State<'_, AppState>) -> Vec<Host> {
+fn list_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<Host> {
     let _ = merge_discovered_hosts(&state);
+    let profiles = profile_apply_profiles_snapshot(&app, &state);
+    reconcile_hosts_with_profile_links(&state, &profiles);
     state.hosts.lock().expect("hosts mutex poisoned").clone()
 }
 
 #[tauri::command]
-fn refresh_discovered_hosts(state: State<'_, AppState>) -> Result<Vec<Host>, String> {
+fn refresh_discovered_hosts(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Host>, String> {
     merge_discovered_hosts(&state)?;
+    let profiles = load_profiles(&app, &state)?;
+    reconcile_hosts_with_profile_links(&state, &profiles);
     Ok(state.hosts.lock().expect("hosts mutex poisoned").clone())
 }
 
@@ -948,6 +1128,8 @@ fn add_host(state: State<'_, AppState>, draft: HostDraft) -> Host {
         codex_installed: false,
         codex_version: "pending".into(),
         config_exists: None,
+        api_config_name: None,
+        api_config_source: None,
         skills_exists: None,
         skills_count: None,
         profile_id: None,
@@ -1015,6 +1197,8 @@ fn update_host(state: State<'_, AppState>, id: String, patch: HostPatch) -> Host
         codex_installed: false,
         codex_version: "pending".into(),
         config_exists: None,
+        api_config_name: None,
+        api_config_source: None,
         skills_exists: None,
         skills_count: None,
         profile_id: patch.profile_id,
@@ -1040,7 +1224,7 @@ fn test_ssh_connection(state: State<'_, AppState>, id: String) -> ConnectionTest
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
 
     if let Some(host) = hosts.iter_mut().find(|host| host.id == id) {
-        let ok = host.id != "linux-runner";
+        let ok = true;
         host.status = if ok {
             HostStatus::Online
         } else {
@@ -1112,7 +1296,7 @@ async fn remote_probe_codex(
 ) -> Result<RemoteProbeResult, String> {
     run_blocking_command("remote_probe_codex", move || {
         let state = app.state::<AppState>();
-        run_remote_probe(&state, host_alias, timeout_ms)
+        run_remote_probe(&app, &state, host_alias, timeout_ms)
     })
     .await
 }
@@ -1133,71 +1317,251 @@ async fn remote_manage_codex(
 }
 
 #[tauri::command]
-fn list_profiles(state: State<'_, AppState>) -> Vec<Profile> {
-    state.profiles.clone()
+async fn refresh_latest_codex_version(
+    app: AppHandle,
+    force: Option<bool>,
+    timeout_ms: Option<u64>,
+) -> Result<LatestCodexVersion, String> {
+    run_blocking_command("refresh_latest_codex_version", move || {
+        run_refresh_latest_codex_version(&app, force.unwrap_or(false), timeout_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+fn list_profiles(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Profile>, String> {
+    load_profiles(&app, &state)
+}
+
+#[tauri::command]
+fn create_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    draft: ProfileDraft,
+) -> Result<Profile, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    let mut profile = profile_from_draft(draft)?;
+    ensure_unique_profile_id(&mut profile, &profiles);
+    validate_profile(&profile)?;
+    profile.credential_stored = false;
+    profiles.push(profile.clone());
+    save_profiles(&app, &state, &profiles)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+fn update_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    patch: ProfilePatch,
+) -> Result<Profile, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    let profile = profiles
+        .iter_mut()
+        .find(|profile| profile.id == id)
+        .ok_or_else(|| format!("Profile {id} was not found."))?;
+    apply_profile_patch(profile, patch)?;
+    profile.updated_at = timestamp_label();
+    validate_profile(profile)?;
+    let updated = profile.clone();
+    save_profiles(&app, &state, &profiles)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+fn delete_profile(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    let before = profiles.len();
+    profiles.retain(|profile| profile.id != id);
+    let deleted = profiles.len() != before;
+    if deleted {
+        save_profiles(&app, &state, &profiles)?;
+        clear_profile_from_hosts(&state, &id);
+        let _ = delete_profile_api_key_local(&id);
+    }
+    Ok(deleted)
+}
+
+#[tauri::command]
+fn duplicate_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    name: Option<String>,
+) -> Result<Profile, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    let mut profile = profiles
+        .iter()
+        .find(|profile| profile.id == id)
+        .cloned()
+        .ok_or_else(|| format!("Profile {id} was not found."))?;
+    profile.id = format!("{}-copy-{}", slugify(&profile.name), timestamp_millis());
+    profile.name = name.unwrap_or_else(|| format!("{} Copy", profile.name));
+    profile.created_at = timestamp_label();
+    profile.updated_at = profile.created_at.clone();
+    profile.source = "duplicate".into();
+    profile.credential_stored = false;
+    profile.host_ids.clear();
+    validate_profile(&profile)?;
+    profiles.push(profile.clone());
+    save_profiles(&app, &state, &profiles)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+fn import_profiles(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    bundle: ProfileImportExport,
+    replace: Option<bool>,
+) -> Result<ProfileImportExport, String> {
+    let result = import_profiles_inner(&app, &state, bundle.profiles, replace.unwrap_or(false))?;
+    Ok(profile_import_export(result.imported))
+}
+
+#[tauri::command]
+fn export_profiles(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_ids: Option<Vec<String>>,
+) -> Result<ProfileImportExport, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    if let Some(ids) = profile_ids {
+        let wanted: BTreeSet<String> = ids.into_iter().collect();
+        profiles.retain(|profile| wanted.contains(&profile.id));
+    }
+    for profile in &mut profiles {
+        profile.credential_stored = profile_api_key_exists(&profile.id);
+    }
+    Ok(profile_import_export(profiles))
+}
+
+#[tauri::command]
+fn set_profile_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    api_key: String,
+) -> Result<Profile, String> {
+    if api_key.trim().is_empty() {
+        return Err("API key value cannot be empty.".into());
+    }
+    let mut profiles = load_profiles(&app, &state)?;
+    let profile = profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile {profile_id} was not found."))?;
+    store_profile_api_key_local(&profile_id, &api_key)?;
+    profile.credential_stored = true;
+    profile.updated_at = timestamp_label();
+    let updated = profile.clone();
+    save_profiles(&app, &state, &profiles)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+fn delete_profile_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<Profile, String> {
+    delete_profile_api_key_local(&profile_id)?;
+    let mut profiles = load_profiles(&app, &state)?;
+    let profile = profiles
+        .iter_mut()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile {profile_id} was not found."))?;
+    profile.credential_stored = false;
+    profile.updated_at = timestamp_label();
+    let updated = profile.clone();
+    save_profiles(&app, &state, &profiles)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+fn preview_profile_apply(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+    host_ids: Vec<String>,
+) -> Result<ProfileApplyPreview, String> {
+    let profile = find_profile(&app, &state, &profile_id)?;
+    let rendered_toml = render_profile_toml(&profile)?;
+    let hosts = resolve_apply_hosts(&state, &host_ids);
+    let target_files = profile_apply_targets(&hosts, &profile.id);
+    let host_results = hosts
+        .iter()
+        .map(|host| profile_apply_preview_result(host, &profile.id))
+        .collect();
+    Ok(ProfileApplyPreview {
+        profile_id: profile.id.clone(),
+        profile_name: profile.name.clone(),
+        rendered_toml,
+        target_files,
+        host_results,
+        warnings: profile_preview_warnings(&profile),
+    })
+}
+
+#[tauri::command]
+async fn apply_profile(
+    app: AppHandle,
+    profile_id: String,
+    host_ids: Vec<String>,
+    timeout_ms: Option<u64>,
+) -> Result<ProfileApplyBatchResult, String> {
+    run_blocking_command("apply_profile", move || {
+        let state = app.state::<AppState>();
+        let profile = find_profile(&app, &state, &profile_id)?;
+        let rendered_toml = render_profile_toml(&profile)?;
+        let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(30_000)));
+        let result =
+            apply_profile_to_hosts(&app, &state, &profile, &rendered_toml, host_ids, timeout);
+        Ok(result)
+    })
+    .await?
+}
+
+#[tauri::command]
+fn detect_cc_switch_profiles(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CcSwitchDetection, String> {
+    let detected = detect_cc_switch_profiles_inner(&app, &state)?;
+    let source_path = detected.first().map(|item| item.source_path.clone());
+    let profiles = detected
+        .into_iter()
+        .map(|item| item.profile)
+        .collect::<Vec<_>>();
+    let count = profiles.len();
+    Ok(CcSwitchDetection {
+        detected: count > 0,
+        source_path,
+        message: if count > 0 {
+            format!("{count} cc-switch profiles detected.")
+        } else {
+            "No cc-switch profiles detected.".into()
+        },
+        import_export: profile_import_export(profiles),
+    })
+}
+
+#[tauri::command]
+fn import_cc_switch_profiles(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    replace: Option<bool>,
+) -> Result<ProfileImportExport, String> {
+    let detected = detect_cc_switch_profiles_inner(&app, &state)?;
+    let profiles = detected.into_iter().map(|item| item.profile).collect();
+    let result = import_profiles_inner(&app, &state, profiles, replace.unwrap_or(false))?;
+    Ok(profile_import_export(result.imported))
 }
 
 #[tauri::command]
 fn list_skill_packs(state: State<'_, AppState>) -> Vec<SkillPack> {
     state.skill_packs.clone()
-}
-
-#[tauri::command]
-fn apply_profile(state: State<'_, AppState>, profile_id: String, host_ids: Vec<String>) -> TaskRun {
-    let profile_name = state
-        .profiles
-        .iter()
-        .find(|profile| profile.id == profile_id)
-        .map(|profile| profile.name.clone())
-        .unwrap_or_else(|| profile_id.clone());
-
-    let hosts = state.hosts.lock().expect("hosts mutex poisoned");
-    let first_host_id = host_ids
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "no-host".into());
-    let host_name = hosts
-        .iter()
-        .find(|host| host.id == first_host_id)
-        .map(|host| host.name.clone())
-        .unwrap_or_else(|| "No host selected".into());
-    drop(hosts);
-
-    let task_id = format!("task-{}", timestamp_millis());
-    let task = TaskRun {
-        id: task_id.clone(),
-        host_id: first_host_id,
-        host_name: host_name.clone(),
-        action: "Apply profile".into(),
-        status: TaskStatus::Success,
-        started_at: "now".into(),
-        ended_at: Some("now".into()),
-        summary: format!(
-            "{} applied to {} through mock backend.",
-            profile_name, host_name
-        ),
-        logs: vec![
-            basic_log(
-                &task_id,
-                1,
-                TaskLogLevel::Info,
-                "Reserved apply_profile command accepted host selection.",
-            ),
-            basic_log(
-                &task_id,
-                2,
-                TaskLogLevel::Info,
-                "No remote files were changed; this is mock data only.",
-            ),
-        ],
-    };
-
-    state
-        .tasks
-        .lock()
-        .expect("tasks mutex poisoned")
-        .insert(0, task.clone());
-    task
 }
 
 #[tauri::command]
@@ -1264,6 +1628,8 @@ fn merge_discovered_host(hosts: &mut Vec<Host>, discovered: ssh::SshConfigHost) 
             codex_installed: false,
             codex_version: "pending".into(),
             config_exists: None,
+            api_config_name: None,
+            api_config_source: None,
             skills_exists: None,
             skills_count: None,
             profile_id: None,
@@ -1948,6 +2314,7 @@ fn bootstrap_task(
 }
 
 fn run_remote_probe(
+    app: &AppHandle,
     state: &AppState,
     host_alias: String,
     timeout_ms: Option<u64>,
@@ -2010,6 +2377,8 @@ fn run_remote_probe(
             codex_path: None,
             codex_version: "not installed".into(),
             config_exists: false,
+            api_config_name: "No config".into(),
+            api_config_source: "none".into(),
             skills_exists: false,
             skills_count: 0,
             task,
@@ -2033,6 +2402,11 @@ fn run_remote_probe(
         (
             "check ~/.codex/config.toml",
             "test -f \"$HOME/.codex/config.toml\" && printf yes || printf no",
+            TaskLogLevel::Info,
+        ),
+        (
+            "read ~/.codex/config.toml base URL",
+            "if [ -f \"$HOME/.codex/config.toml\" ]; then sed -n -E 's/^[[:space:]]*(openai_base_url|base_url)[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\2/p' \"$HOME/.codex/config.toml\" 2>/dev/null | head -n 1; fi",
             TaskLogLevel::Info,
         ),
         (
@@ -2097,9 +2471,16 @@ fn run_remote_probe(
         .filter(|value| !value.is_empty());
     let path_has_local_bin = path_has_local_bin(path.as_deref());
     let config_exists = stdout_yes(outputs.get(6));
-    let skills_exists = stdout_yes(outputs.get(7));
+    let remote_config_base_url = outputs
+        .get(7)
+        .filter(|output| output.success())
+        .map(|output| output.stdout.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let api_config_match =
+        classify_remote_api_config(app, state, config_exists, remote_config_base_url.as_deref());
+    let skills_exists = stdout_yes(outputs.get(8));
     let skills_count = outputs
-        .get(8)
+        .get(9)
         .and_then(|output| output.stdout.trim().parse::<u16>().ok())
         .unwrap_or(0);
     let summary = format!(
@@ -2123,6 +2504,7 @@ fn run_remote_probe(
     };
 
     update_host_probe(
+        app,
         state,
         &alias,
         &os,
@@ -2133,6 +2515,7 @@ fn run_remote_probe(
         codex_installed,
         &codex_version,
         config_exists,
+        &api_config_match,
         skills_exists,
         skills_count,
     );
@@ -2151,6 +2534,8 @@ fn run_remote_probe(
         codex_path,
         codex_version,
         config_exists,
+        api_config_name: api_config_match.name,
+        api_config_source: api_config_match.source,
         skills_exists,
         skills_count,
         task,
@@ -2974,6 +3359,185 @@ fn download_codex_native_package_locally(
     )
 }
 
+fn run_refresh_latest_codex_version(
+    app: &AppHandle,
+    force: bool,
+    timeout_ms: Option<u64>,
+) -> LatestCodexVersion {
+    let cache_path = latest_codex_version_path(app);
+    let cached = read_latest_codex_version_cache(&cache_path);
+    let now = Local::now().fixed_offset();
+    if !force {
+        if let Some(cache) = cached.as_ref() {
+            if latest_codex_cache_is_fresh(cache, now) {
+                return LatestCodexVersion {
+                    error: None,
+                    ..cache.clone()
+                };
+            }
+        }
+    }
+
+    let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(30_000)));
+    let fetched = fetch_latest_codex_version(timeout);
+    let should_write = fetched.is_ok();
+    let latest = latest_codex_result_from_fetch(fetched, cached, now);
+    if should_write {
+        if let Err(error) = write_latest_codex_version_cache(&cache_path, &latest) {
+            return LatestCodexVersion {
+                error: Some(error),
+                ..latest
+            };
+        }
+    }
+    latest
+}
+
+fn latest_codex_result_from_fetch(
+    fetched: Result<String, String>,
+    cached: Option<LatestCodexVersion>,
+    now: DateTime<FixedOffset>,
+) -> LatestCodexVersion {
+    match fetched {
+        Ok(version) => LatestCodexVersion {
+            version: Some(version),
+            checked_at: Some(now.to_rfc3339()),
+            source: CODEX_LATEST_SOURCE.into(),
+            error: None,
+        },
+        Err(error) => {
+            if let Some(cache) = cached {
+                if cache.version.is_some() {
+                    return LatestCodexVersion {
+                        error: Some(error),
+                        ..cache
+                    };
+                }
+            }
+            LatestCodexVersion {
+                version: None,
+                checked_at: None,
+                source: CODEX_LATEST_SOURCE.into(),
+                error: Some(error),
+            }
+        }
+    }
+}
+
+fn latest_codex_version_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
+        .join("codex-latest.json")
+}
+
+fn read_latest_codex_version_cache(path: &Path) -> Option<LatestCodexVersion> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<LatestCodexVersion>(&content).ok())
+}
+
+fn write_latest_codex_version_cache(
+    path: &Path,
+    latest: &LatestCodexVersion,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(latest).map_err(|error| error.to_string())?;
+    fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn latest_codex_cache_is_fresh(
+    cache: &LatestCodexVersion,
+    now: DateTime<FixedOffset>,
+) -> bool {
+    let Some(checked_at) = cache.checked_at.as_deref() else {
+        return false;
+    };
+    if cache.version.as_deref().unwrap_or_default().trim().is_empty() {
+        return false;
+    }
+    let Ok(checked_at) = DateTime::parse_from_rfc3339(checked_at) else {
+        return false;
+    };
+    checked_at >= latest_codex_refresh_boundary(now)
+}
+
+fn latest_codex_refresh_boundary(now: DateTime<FixedOffset>) -> DateTime<FixedOffset> {
+    let date = now.date_naive();
+    let today = now
+        .timezone()
+        .from_local_datetime(
+            &date
+                .and_hms_opt(CODEX_LATEST_REFRESH_HOUR, 0, 0)
+                .expect("valid refresh hour"),
+        )
+        .single()
+        .unwrap_or(now);
+    if now < today {
+        today - ChronoDuration::days(1)
+    } else {
+        today
+    }
+}
+
+fn fetch_latest_codex_version(timeout: u64) -> Result<String, String> {
+    let temp_dir = env::temp_dir().join(format!("codexhub-codex-latest-{}", timestamp_millis()));
+    fs::create_dir_all(&temp_dir)
+        .map_err(|error| format!("Could not create local temp directory: {error}"))?;
+    let metadata_path = temp_dir.join("codex-npm-metadata.json");
+    let output = local_curl_download(
+        CODEX_NPM_REGISTRY_URL,
+        &metadata_path,
+        "download @openai/codex metadata from npm",
+        timeout,
+        None,
+    );
+    if !output.success() {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err(command_detail(&output));
+    }
+    let metadata = match fs::read_to_string(&metadata_path) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(format!("Could not read downloaded npm metadata: {error}"));
+        }
+    };
+    let latest = parse_npm_latest_metadata(&metadata);
+    let _ = fs::remove_dir_all(&temp_dir);
+    latest
+}
+
+fn parse_npm_latest_metadata(metadata: &str) -> Result<String, String> {
+    let lower = metadata.to_ascii_lowercase();
+    if lower.contains("<html")
+        || lower.contains("authentication is required")
+        || lower.contains("captive")
+        || lower.contains("portal")
+    {
+        return Err(
+            "npm metadata response was HTML instead of JSON; the network may require captive portal authentication before downloads can work."
+                .into(),
+        );
+    }
+    let data: serde_json::Value = serde_json::from_str(metadata)
+        .map_err(|error| format!("npm metadata response was not JSON: {error}"))?;
+    let latest = data
+        .get("dist-tags")
+        .and_then(|value| value.get("latest"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "npm metadata did not include dist-tags.latest for @openai/codex.".to_string())?
+        .trim()
+        .to_string();
+    if !is_safe_codex_package_version(&latest) {
+        return Err(format!("npm returned an unsafe Codex package version: {latest}"));
+    }
+    Ok(latest)
+}
+
 fn local_curl_download(
     url: &str,
     output_path: &Path,
@@ -3201,6 +3765,781 @@ fn codex_maintenance_task(
     }
 }
 
+fn apply_profile_to_hosts(
+    app: &AppHandle,
+    state: &AppState,
+    profile: &Profile,
+    rendered_toml: &str,
+    host_ids: Vec<String>,
+    timeout: u64,
+) -> ProfileApplyBatchResult {
+    let hosts = resolve_apply_hosts(state, &host_ids);
+    if hosts.is_empty() {
+        let task_id = format!("task-profile-{}", timestamp_millis());
+        let task = TaskRun {
+            id: task_id.clone(),
+            host_id: "no-host".into(),
+            host_name: "No host selected".into(),
+            action: "Apply profile".into(),
+            status: TaskStatus::Failed,
+            started_at: "now".into(),
+            ended_at: Some("now".into()),
+            summary: "No matching hosts were selected for profile apply.".into(),
+            logs: vec![basic_log(
+                &task_id,
+                1,
+                TaskLogLevel::Error,
+                "No matching hosts were selected for profile apply.",
+            )],
+        };
+        record_task(state, task.clone());
+        return ProfileApplyBatchResult {
+            profile_id: profile.id.clone(),
+            ok: false,
+            results: vec![ProfileApplyHostResult {
+                host_id: "no-host".into(),
+                host_name: "No host selected".into(),
+                host_alias: String::new(),
+                status: "failed".into(),
+                target_path: "~/.codex/config.toml".into(),
+                backup_path: None,
+                message: task.summary.clone(),
+                task: Some(task.clone()),
+            }],
+            tasks: vec![task],
+            profiles: profile_apply_profiles_snapshot(app, state),
+            hosts: profile_apply_hosts_snapshot(state),
+        };
+    }
+
+    let results: Vec<ProfileApplyHostResult> = hosts
+        .into_iter()
+        .map(|host| {
+            let task =
+                apply_profile_to_host(app, state, profile, rendered_toml, host.clone(), timeout);
+            profile_apply_result_from_task(&host, task)
+        })
+        .collect();
+    let tasks = results
+        .iter()
+        .filter_map(|result| result.task.clone())
+        .collect::<Vec<_>>();
+    ProfileApplyBatchResult {
+        profile_id: profile.id.clone(),
+        ok: results.iter().all(|result| result.status != "failed"),
+        results,
+        tasks,
+        profiles: profile_apply_profiles_snapshot(app, state),
+        hosts: profile_apply_hosts_snapshot(state),
+    }
+}
+
+fn resolve_apply_hosts(state: &AppState, host_ids: &[String]) -> Vec<Host> {
+    let hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+    let requested: BTreeSet<String> = host_ids.iter().cloned().collect();
+    hosts
+        .into_iter()
+        .filter(|host| requested.contains(&host.id) || requested.contains(&host.host_alias))
+        .collect()
+}
+
+fn profile_import_export(profiles: Vec<Profile>) -> ProfileImportExport {
+    ProfileImportExport {
+        schema_version: 1,
+        exported_at: timestamp_label(),
+        profiles,
+    }
+}
+
+fn profile_apply_targets(hosts: &[Host], profile_id: &str) -> Vec<ProfileApplyTargetFile> {
+    hosts
+        .iter()
+        .map(|host| {
+            let no_change_expected = host.profile_id.as_deref() == Some(profile_id);
+            ProfileApplyTargetFile {
+                host_id: host.id.clone(),
+                host_name: host.name.clone(),
+                host_alias: host.host_alias.clone(),
+                path: "~/.codex/config.toml".into(),
+                backup_expected: host.config_exists.unwrap_or(true) && !no_change_expected,
+                no_change_expected,
+            }
+        })
+        .collect()
+}
+
+fn profile_apply_preview_result(host: &Host, profile_id: &str) -> ProfileApplyHostResult {
+    let no_change_expected = host.profile_id.as_deref() == Some(profile_id);
+    ProfileApplyHostResult {
+        host_id: host.id.clone(),
+        host_name: host.name.clone(),
+        host_alias: host.host_alias.clone(),
+        status: "pending".into(),
+        target_path: "~/.codex/config.toml".into(),
+        backup_path: None,
+        message: if no_change_expected {
+            "Preview expects no remote config changes.".into()
+        } else {
+            "Preview expects remote config compare, backup when needed, then atomic replace.".into()
+        },
+        task: None,
+    }
+}
+
+fn profile_apply_result_from_task(host: &Host, task: TaskRun) -> ProfileApplyHostResult {
+    let status = match &task.status {
+        TaskStatus::Success if task.summary.contains("already matched") => "no-change",
+        TaskStatus::Success => "success",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Queued | TaskStatus::Running => "pending",
+    }
+    .to_string();
+    ProfileApplyHostResult {
+        host_id: host.id.clone(),
+        host_name: host.name.clone(),
+        host_alias: host.host_alias.clone(),
+        status,
+        target_path: "~/.codex/config.toml".into(),
+        backup_path: profile_apply_backup_path_from_task(&task),
+        message: task.summary.clone(),
+        task: Some(task),
+    }
+}
+
+fn profile_apply_backup_path_from_task(task: &TaskRun) -> Option<String> {
+    task.logs.iter().find_map(|log| {
+        log.stdout
+            .as_deref()
+            .and_then(|stdout| marker_value(stdout, "CODEXHUB_PROFILE_BACKUP"))
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn apply_profile_to_host(
+    app: &AppHandle,
+    state: &AppState,
+    profile: &Profile,
+    rendered_toml: &str,
+    host: Host,
+    timeout: u64,
+) -> TaskRun {
+    let task_id = format!("task-profile-{}", timestamp_millis());
+    let mut logs = Vec::new();
+    let mut next_log = 1;
+    let alias_result = ssh::validate_ssh_alias(&host.host_alias);
+    let alias = alias_result
+        .clone()
+        .unwrap_or_else(|_| host.host_alias.trim().to_string());
+
+    let check_output = match alias_result {
+        Ok(valid_alias) => ssh::run_ssh_echo_ok(&valid_alias, timeout).unwrap_or_else(|error| {
+            failed_command_output(
+                format!("ssh {valid_alias} echo ok"),
+                format!("Could not start ssh: {error}"),
+            )
+        }),
+        Err(error) => failed_command_output("ssh <invalid-alias> echo ok".into(), error),
+    };
+    let check_ok = check_output.success() && check_output.stdout.trim() == "ok";
+    logs.push(command_log(
+        &task_id,
+        next_log,
+        if check_ok {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        &ssh_check_message(&alias, &check_output, check_ok, timeout),
+        &check_output,
+    ));
+    next_log += 1;
+
+    if !check_ok {
+        update_host_check(state, &alias, false, check_output.duration_ms);
+        let task = profile_apply_task(
+            &task_id,
+            &host,
+            TaskStatus::Failed,
+            "Profile apply skipped because SSH check failed.",
+            logs,
+        );
+        record_task(state, task.clone());
+        return task;
+    }
+    update_host_check(state, &alias, true, check_output.duration_ms);
+
+    let read_output = ssh::run_ssh_script(
+        &alias,
+        "if [ -f \"$HOME/.codex/config.toml\" ]; then cat \"$HOME/.codex/config.toml\"; fi",
+        timeout,
+    )
+    .unwrap_or_else(|error| {
+        failed_command_output(
+            format!("ssh {alias} read ~/.codex/config.toml"),
+            format!("Could not read remote config: {error}"),
+        )
+    });
+    let read_ok = read_output.success();
+    let mut read_log_output = read_output.clone();
+    if read_ok {
+        read_log_output.stdout = "[redacted remote config]".into();
+    }
+    logs.push(command_log(
+        &task_id,
+        next_log,
+        if read_ok {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if read_ok {
+            "Read remote ~/.codex/config.toml state."
+        } else {
+            "Failed to read remote ~/.codex/config.toml."
+        },
+        &read_log_output,
+    ));
+    next_log += 1;
+
+    if !read_ok {
+        let task = profile_apply_task(
+            &task_id,
+            &host,
+            TaskStatus::Failed,
+            "Profile apply failed before mutation because remote config could not be read.",
+            logs,
+        );
+        record_task(state, task.clone());
+        return task;
+    }
+
+    let metadata = AppliedProfileMetadata {
+        profile_id: profile.id.clone(),
+        profile_name: profile.name.clone(),
+        applied_at: timestamp_label(),
+        codexhub_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    let metadata_json =
+        serde_json::to_string_pretty(&metadata).unwrap_or_else(|_| "{}".to_string());
+
+    if read_output.stdout == rendered_toml {
+        let output = ssh::run_ssh_script(
+            &alias,
+            &profile_apply_metadata_script(&metadata_json),
+            timeout,
+        )
+        .unwrap_or_else(|error| {
+            failed_command_output(
+                format!("ssh {alias} write applied-profile metadata"),
+                format!("Could not write remote metadata: {error}"),
+            )
+        });
+        let ok = output.success();
+        logs.push(command_log(
+            &task_id,
+            next_log,
+            if ok {
+                TaskLogLevel::Info
+            } else {
+                TaskLogLevel::Error
+            },
+            if ok {
+                "Remote config was unchanged; metadata updated without creating a config backup."
+            } else {
+                "Remote config was unchanged, but metadata update failed."
+            },
+            &output,
+        ));
+        let summary = if ok {
+            format!(
+                "{} already matched {} on {}; no config backup was created.",
+                profile.name, host.name, alias
+            )
+        } else {
+            format!(
+                "{} matched {}, but metadata update failed.",
+                profile.name, alias
+            )
+        };
+        if ok {
+            update_host_profile_apply(app, state, &host.id, &alias, &profile.id, &profile.name);
+        }
+        let task = profile_apply_task(
+            &task_id,
+            &host,
+            if ok {
+                TaskStatus::Success
+            } else {
+                TaskStatus::Failed
+            },
+            &summary,
+            logs,
+        );
+        record_task(state, task.clone());
+        return task;
+    }
+
+    let local_path = match write_profile_temp_file(app, &task_id, rendered_toml) {
+        Ok(path) => path,
+        Err(error) => {
+            let output = failed_command_output("write local profile temp file".into(), error);
+            logs.push(command_log(
+                &task_id,
+                next_log,
+                TaskLogLevel::Error,
+                "Could not create local profile temp file.",
+                &output,
+            ));
+            let task = profile_apply_task(
+                &task_id,
+                &host,
+                TaskStatus::Failed,
+                "Profile apply failed before upload.",
+                logs,
+            );
+            record_task(state, task.clone());
+            return task;
+        }
+    };
+    let remote_tmp = format!("/tmp/codexhub-profile-{task_id}.toml");
+    let upload_output = ssh::upload_file(&alias, &local_path, &remote_tmp, timeout)
+        .unwrap_or_else(|error| failed_command_output(format!("scp {remote_tmp}"), error));
+    let _ = fs::remove_file(&local_path);
+    let upload_ok = upload_output.success();
+    logs.push(command_log(
+        &task_id,
+        next_log,
+        if upload_ok {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if upload_ok {
+            "Uploaded rendered profile TOML to remote staging path."
+        } else {
+            "Failed to upload rendered profile TOML."
+        },
+        &upload_output,
+    ));
+    next_log += 1;
+
+    if !upload_ok {
+        let task = profile_apply_task(
+            &task_id,
+            &host,
+            TaskStatus::Failed,
+            "Profile apply failed during upload; remote config was not changed.",
+            logs,
+        );
+        record_task(state, task.clone());
+        return task;
+    }
+
+    let sha256 = sha256_hex(rendered_toml.as_bytes());
+    let commit_script = profile_apply_commit_script(
+        &remote_tmp,
+        &sha256,
+        rendered_toml.as_bytes().len(),
+        &metadata_json,
+        &timestamp_label(),
+    );
+    let commit_output =
+        ssh::run_ssh_script(&alias, &commit_script, timeout).unwrap_or_else(|error| {
+            failed_command_output(
+                format!("ssh {alias} commit profile config"),
+                format!("Could not commit profile config: {error}"),
+            )
+        });
+    let commit_ok = commit_output.success();
+    let backup_path = marker_value(&commit_output.stdout, "CODEXHUB_PROFILE_BACKUP");
+    logs.push(command_log(
+        &task_id,
+        next_log,
+        if commit_ok {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if commit_ok {
+            "Validated staged TOML and committed remote profile config atomically."
+        } else {
+            "Failed to validate or commit remote profile config."
+        },
+        &commit_output,
+    ));
+
+    let summary = if commit_ok {
+        update_host_profile_apply(app, state, &host.id, &alias, &profile.id, &profile.name);
+        match backup_path.filter(|value| !value.is_empty()) {
+            Some(path) => format!(
+                "{} applied to {} with backup {}.",
+                profile.name, host.name, path
+            ),
+            None => format!(
+                "{} applied to {}; no previous config backup was needed.",
+                profile.name, host.name
+            ),
+        }
+    } else {
+        format!(
+            "{} could not be applied to {}; see task logs.",
+            profile.name, host.name
+        )
+    };
+    let task = profile_apply_task(
+        &task_id,
+        &host,
+        if commit_ok {
+            TaskStatus::Success
+        } else {
+            TaskStatus::Failed
+        },
+        &summary,
+        logs,
+    );
+    record_task(state, task.clone());
+    task
+}
+
+fn profile_apply_task(
+    task_id: &str,
+    host: &Host,
+    status: TaskStatus,
+    summary: &str,
+    logs: Vec<TaskLog>,
+) -> TaskRun {
+    TaskRun {
+        id: task_id.to_string(),
+        host_id: host.id.clone(),
+        host_name: host.name.clone(),
+        action: "Apply profile".into(),
+        status,
+        started_at: "now".into(),
+        ended_at: Some("now".into()),
+        summary: summary.to_string(),
+        logs,
+    }
+}
+
+fn write_profile_temp_file(
+    app: &AppHandle,
+    task_id: &str,
+    rendered_toml: &str,
+) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .unwrap_or_else(|_| env::temp_dir())
+        .join("profile-apply");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(format!("{task_id}.toml"));
+    let mut file = fs::File::create(&path).map_err(|error| error.to_string())?;
+    file.write_all(rendered_toml.as_bytes())
+        .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn profile_apply_commit_script(
+    staged_path: &str,
+    expected_sha256: &str,
+    expected_bytes: usize,
+    metadata_json: &str,
+    timestamp: &str,
+) -> String {
+    format!(
+        r#"set -u
+staged="{staged_path}"
+expected_sha="{expected_sha256}"
+expected_bytes="{expected_bytes}"
+config_dir="$HOME/.codex"
+hub_dir="$HOME/.codex-hub"
+config="$config_dir/config.toml"
+tmp="$config.codexhub.tmp.{timestamp}"
+backup="$config.codexhub.bak.{timestamp}"
+mkdir -p "$config_dir" "$hub_dir"
+if [ ! -f "$staged" ]; then
+  printf 'staged profile file is missing: %s\n' "$staged" >&2
+  exit 2
+fi
+validation="bytes"
+actual=""
+if command -v sha256sum >/dev/null 2>&1; then
+  actual=$(sha256sum "$staged" | awk '{{print $1}}')
+  validation="sha256"
+elif command -v shasum >/dev/null 2>&1; then
+  actual=$(shasum -a 256 "$staged" | awk '{{print $1}}')
+  validation="sha256"
+fi
+if [ "$validation" = "sha256" ]; then
+  if [ "$actual" != "$expected_sha" ]; then
+    printf 'checksum mismatch for staged profile config\n' >&2
+    rm -f "$staged"
+    exit 3
+  fi
+else
+  actual=$(wc -c < "$staged" | tr -d '[:space:]')
+  if [ "$actual" != "$expected_bytes" ]; then
+    printf 'byte-count mismatch for staged profile config\n' >&2
+    rm -f "$staged"
+    exit 3
+  fi
+fi
+backup_path=""
+changed="yes"
+if [ -f "$config" ] && cmp -s "$config" "$staged"; then
+  changed="no"
+  rm -f "$staged"
+else
+  if [ -f "$config" ]; then
+    cp -p "$config" "$backup"
+    backup_path="$backup"
+  fi
+  mv "$staged" "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$config"
+fi
+cat >"$hub_dir/applied-profile.json" <<'CODEXHUB_PROFILE_JSON'
+{metadata_json}
+CODEXHUB_PROFILE_JSON
+chmod 600 "$hub_dir/applied-profile.json"
+{safe_reconnect}
+printf 'CODEXHUB_PROFILE_CHANGED=%s\n' "$changed"
+printf 'CODEXHUB_PROFILE_BACKUP=%s\n' "$backup_path"
+printf 'CODEXHUB_PROFILE_VALIDATION=%s\n' "$validation"
+"#,
+        safe_reconnect = safe_reconnect_shell_fragment()
+    )
+}
+
+fn profile_apply_metadata_script(metadata_json: &str) -> String {
+    format!(
+        r#"set -u
+hub_dir="$HOME/.codex-hub"
+mkdir -p "$hub_dir"
+cat >"$hub_dir/applied-profile.json" <<'CODEXHUB_PROFILE_JSON'
+{metadata_json}
+CODEXHUB_PROFILE_JSON
+chmod 600 "$hub_dir/applied-profile.json"
+{safe_reconnect}
+printf 'CODEXHUB_PROFILE_CHANGED=no\n'
+printf 'CODEXHUB_PROFILE_BACKUP=\n'
+"#,
+        safe_reconnect = safe_reconnect_shell_fragment()
+    )
+}
+
+fn safe_reconnect_shell_fragment() -> &'static str {
+    r#"matches_file="${TMPDIR:-/tmp}/codexhub-reconnect.$$"
+if command -v ps >/dev/null 2>&1; then
+  ps -u "$(id -u)" -o pid=,comm=,args= 2>/dev/null | awk '
+    {
+      pid=$1
+      comm=$2
+      args=$0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+[^[:space:]]+[[:space:]]*/, "", args)
+      comm_ok=(comm=="codex" || comm=="codex-app-server" || comm=="codex-remote-control")
+      args_ok=(args ~ /(^|[[:space:]])codex([[:space:]].*)?(app-server|remote-control)/ || args ~ /codex[[:space:]]+(app-server|remote-control)/)
+      if (comm_ok && args_ok) print pid
+    }
+  ' > "$matches_file"
+  count=$(wc -l < "$matches_file" | tr -d '[:space:]')
+  if [ "$count" = "1" ]; then
+    pid=$(cat "$matches_file")
+    if kill -TERM "$pid" 2>/dev/null; then
+      printf 'CODEXHUB_RECONNECT=term:%s\n' "$pid"
+    else
+      printf 'CODEXHUB_RECONNECT=manual:term-failed\n'
+    fi
+  elif [ "$count" = "0" ]; then
+    printf 'CODEXHUB_RECONNECT=manual:no-safe-process-match\n'
+  else
+    printf 'CODEXHUB_RECONNECT=manual:ambiguous-process-match\n'
+  fi
+  rm -f "$matches_file"
+else
+  printf 'CODEXHUB_RECONNECT=manual:ps-unavailable\n'
+fi"#
+}
+
+#[allow(dead_code)]
+fn safe_reconnect_decision_from_ps(ps_output: &str) -> SafeReconnectDecision {
+    let pids = safe_reconnect_candidate_pids(ps_output);
+    match pids.as_slice() {
+        [pid] => SafeReconnectDecision::Terminate(*pid),
+        [] => SafeReconnectDecision::Manual("no-safe-process-match".into()),
+        _ => SafeReconnectDecision::Manual("ambiguous-process-match".into()),
+    }
+}
+
+#[allow(dead_code)]
+fn safe_reconnect_candidate_pids(ps_output: &str) -> Vec<u32> {
+    ps_output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let pid = parts.next()?.parse::<u32>().ok()?;
+            let comm = parts.next()?;
+            let args = parts.collect::<Vec<_>>().join(" ");
+            if is_safe_reconnect_process(comm, &args) {
+                Some(pid)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn is_safe_reconnect_process(comm: &str, args: &str) -> bool {
+    let comm_ok = matches!(comm, "codex" | "codex-app-server" | "codex-remote-control");
+    let args_lower = args.to_ascii_lowercase();
+    comm_ok
+        && args_lower.contains("codex")
+        && (args_lower.contains("app-server") || args_lower.contains("remote-control"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn update_host_profile_apply(
+    app: &AppHandle,
+    state: &AppState,
+    host_id: &str,
+    alias: &str,
+    profile_id: &str,
+    profile_name: &str,
+) {
+    {
+        let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+        if let Some(host) = hosts
+            .iter_mut()
+            .find(|host| host.id == host_id || host.host_alias.eq_ignore_ascii_case(alias))
+        {
+            host.status = HostStatus::Online;
+            host.profile_id = Some(profile_id.to_string());
+            host.config_exists = Some(true);
+            host.api_config_name = Some(profile_name.to_string());
+            host.api_config_source = Some("profile".into());
+            host.last_seen = "just now".into();
+        }
+    }
+    if let Err(error) = sync_profile_host_links(app, state, profile_id, host_id, alias) {
+        eprintln!("Failed to persist profile host link: {error}");
+    }
+}
+
+fn sync_profile_host_links(
+    app: &AppHandle,
+    state: &AppState,
+    profile_id: &str,
+    host_id: &str,
+    alias: &str,
+) -> Result<(), String> {
+    let mut profiles = load_profiles(app, state)?;
+    sync_profile_host_ids(&mut profiles, profile_id, host_id, alias);
+    save_profiles(app, state, &profiles)
+}
+
+fn clear_profile_host_links(
+    app: &AppHandle,
+    state: &AppState,
+    host_id: &str,
+    alias: &str,
+) -> Result<(), String> {
+    let mut profiles = load_profiles(app, state)?;
+    clear_profile_host_ids(&mut profiles, host_id, alias);
+    save_profiles(app, state, &profiles)
+}
+
+fn sync_profile_host_ids(profiles: &mut [Profile], profile_id: &str, host_id: &str, alias: &str) {
+    let canonical_host_id = if host_id.trim().is_empty() {
+        alias.trim()
+    } else {
+        host_id.trim()
+    };
+    if canonical_host_id.is_empty() {
+        return;
+    }
+    let host_keys = [host_id, alias, canonical_host_id]
+        .into_iter()
+        .map(normalize_host_link_key)
+        .filter(|key| !key.is_empty())
+        .collect::<BTreeSet<_>>();
+
+    for profile in profiles.iter_mut() {
+        profile
+            .host_ids
+            .retain(|existing| !host_keys.contains(&normalize_host_link_key(existing)));
+        if profile.id == profile_id
+            && !profile
+                .host_ids
+                .iter()
+                .any(|existing| normalize_host_link_key(existing) == normalize_host_link_key(canonical_host_id))
+        {
+            profile.host_ids.push(canonical_host_id.to_string());
+        }
+    }
+}
+
+fn clear_profile_host_ids(profiles: &mut [Profile], host_id: &str, alias: &str) {
+    let host_keys = [host_id, alias]
+        .into_iter()
+        .map(normalize_host_link_key)
+        .filter(|key| !key.is_empty())
+        .collect::<BTreeSet<_>>();
+    for profile in profiles.iter_mut() {
+        profile
+            .host_ids
+            .retain(|existing| !host_keys.contains(&normalize_host_link_key(existing)));
+    }
+}
+
+fn normalize_host_link_key(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn profile_apply_profiles_snapshot(app: &AppHandle, state: &AppState) -> Vec<Profile> {
+    load_profiles(app, state).unwrap_or_else(|_| state.profiles.lock().expect("profiles mutex poisoned").clone())
+}
+
+fn profile_apply_hosts_snapshot(state: &AppState) -> Vec<Host> {
+    let _ = merge_discovered_hosts(state);
+    state.hosts.lock().expect("hosts mutex poisoned").clone()
+}
+
+fn reconcile_hosts_with_profile_links(state: &AppState, profiles: &[Profile]) {
+    let profile_links = profiles
+        .iter()
+        .flat_map(|profile| {
+            profile
+                .host_ids
+                .iter()
+                .map(move |host_id| (normalize_host_link_key(host_id), profile))
+        })
+        .filter(|(host_key, _)| !host_key.is_empty())
+        .collect::<Vec<_>>();
+    if profile_links.is_empty() {
+        return;
+    }
+
+    let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+    for host in hosts.iter_mut() {
+        let host_keys = [
+            normalize_host_link_key(&host.id),
+            normalize_host_link_key(&host.host_alias),
+        ];
+        if let Some((_, profile)) = profile_links
+            .iter()
+            .find(|(linked_host_key, _)| host_keys.iter().any(|host_key| host_key == linked_host_key))
+        {
+            host.profile_id = Some(profile.id.clone());
+        }
+    }
+}
+
 fn record_task(state: &AppState, task: TaskRun) {
     state
         .tasks
@@ -3229,6 +4568,7 @@ fn update_host_check(state: &AppState, alias: &str, ok: bool, duration_ms: u64) 
 
 #[allow(clippy::too_many_arguments)]
 fn update_host_probe(
+    app: &AppHandle,
     state: &AppState,
     alias: &str,
     os: &str,
@@ -3239,26 +4579,44 @@ fn update_host_probe(
     codex_installed: bool,
     codex_version: &str,
     config_exists: bool,
+    api_config_match: &RemoteApiConfigMatch,
     skills_exists: bool,
     skills_count: u16,
 ) {
-    let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
-    if let Some(host) = hosts
-        .iter_mut()
-        .find(|host| host.host_alias.eq_ignore_ascii_case(alias))
+    let mut probed_host_id = None;
     {
-        host.status = HostStatus::Online;
-        host.os = os.to_string();
-        host.arch = arch.to_string();
-        host.shell = shell.to_string();
-        host.path = path;
-        host.path_has_local_bin = Some(path_has_local_bin);
-        host.codex_installed = codex_installed;
-        host.codex_version = codex_version.to_string();
-        host.config_exists = Some(config_exists);
-        host.skills_exists = Some(skills_exists);
-        host.skills_count = Some(skills_count);
-        host.last_seen = "just now".into();
+        let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+        if let Some(host) = hosts
+            .iter_mut()
+            .find(|host| host.host_alias.eq_ignore_ascii_case(alias))
+        {
+            host.status = HostStatus::Online;
+            host.os = os.to_string();
+            host.arch = arch.to_string();
+            host.shell = shell.to_string();
+            host.path = path;
+            host.path_has_local_bin = Some(path_has_local_bin);
+            host.codex_installed = codex_installed;
+            host.codex_version = codex_version.to_string();
+            host.config_exists = Some(config_exists);
+            host.api_config_name = Some(api_config_match.name.clone());
+            host.api_config_source = Some(api_config_match.source.clone());
+            host.profile_id = api_config_match.profile_id.clone();
+            host.skills_exists = Some(skills_exists);
+            host.skills_count = Some(skills_count);
+            host.last_seen = "just now".into();
+            probed_host_id = Some(host.id.clone());
+        }
+    }
+    if let Some(host_id) = probed_host_id {
+        let result = if let Some(profile_id) = api_config_match.profile_id.as_deref() {
+            sync_profile_host_links(app, state, profile_id, &host_id, alias)
+        } else {
+            clear_profile_host_links(app, state, &host_id, alias)
+        };
+        if let Err(error) = result {
+            eprintln!("Failed to persist probed profile host link: {error}");
+        }
     }
 }
 
@@ -3420,9 +4778,504 @@ fn path_has_local_bin(path: Option<&str>) -> bool {
         .any(|segment| segment == "~/.local/bin" || segment.ends_with("/.local/bin"))
 }
 
+fn classify_remote_api_config(
+    app: &AppHandle,
+    state: &AppState,
+    config_exists: bool,
+    remote_base_url: Option<&str>,
+) -> RemoteApiConfigMatch {
+    if !config_exists {
+        return RemoteApiConfigMatch {
+            name: "No config".into(),
+            source: "none".into(),
+            profile_id: None,
+        };
+    }
+    let Some(remote_key) = remote_base_url.and_then(normalize_base_url_key) else {
+        return RemoteApiConfigMatch {
+            name: "Unknown config".into(),
+            source: "unknown".into(),
+            profile_id: None,
+        };
+    };
+    if let Ok(profiles) = load_profiles(app, state) {
+        if let Some(profile) = profiles.into_iter().find(|profile| {
+            profile
+                .base_url
+                .as_deref()
+                .and_then(normalize_base_url_key)
+                .as_deref()
+                == Some(remote_key.as_str())
+        }) {
+            return RemoteApiConfigMatch {
+                source: if profile.source == "cc-switch" {
+                    "cc-switch".into()
+                } else {
+                    "profile".into()
+                },
+                name: profile.name,
+                profile_id: Some(profile.id),
+            };
+        }
+    };
+    if let Ok(detected) = detect_cc_switch_profiles_inner(app, state) {
+        if let Some(profile) = detected
+            .into_iter()
+            .map(|item| item.profile)
+            .find(|profile| {
+                profile
+                    .base_url
+                    .as_deref()
+                    .and_then(normalize_base_url_key)
+                    .as_deref()
+                    == Some(remote_key.as_str())
+            })
+        {
+            return RemoteApiConfigMatch {
+                name: profile.name,
+                source: "cc-switch".into(),
+                profile_id: None,
+            };
+        }
+    }
+    RemoteApiConfigMatch {
+        name: "Unknown config".into(),
+        source: "unknown".into(),
+        profile_id: None,
+    }
+}
+
+fn normalize_base_url_key(value: &str) -> Option<String> {
+    let mut trimmed = value.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+    while trimmed.ends_with('/') {
+        trimmed.pop();
+    }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_ascii_lowercase())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_profile(provider: &str) -> Profile {
+        Profile {
+            id: "profile-1".into(),
+            name: "Profile One".into(),
+            description: "Test profile".into(),
+            model: "gpt-5-codex".into(),
+            provider: provider.into(),
+            base_url: if provider == "openai" {
+                Some("https://proxy.example/v1".into())
+            } else {
+                Some("https://models.example/v1".into())
+            },
+            api_key_env_var: Some("CODEXHUB_TEST_API_KEY".into()),
+            model_reasoning_effort: Some("medium".into()),
+            plan_mode_reasoning_effort: Some("high".into()),
+            fast_mode: true,
+            service_tier: Some("auto".into()),
+            approval_policy: "on-request".into(),
+            sandbox_mode: "workspace-write".into(),
+            extra_toml: String::new(),
+            created_at: "1".into(),
+            updated_at: "1".into(),
+            source: "test".into(),
+            credential_stored: true,
+            host_ids: vec!["host-1".into()],
+        }
+    }
+
+    #[test]
+    fn profile_render_uses_builtin_openai_provider_without_custom_provider_table() {
+        let toml = render_profile_toml(&test_profile("openai")).expect("render profile");
+
+        assert!(toml.contains("model = \"gpt-5-codex\""));
+        assert!(toml.contains("model_provider = \"openai\""));
+        assert!(toml.contains("openai_base_url = \"https://proxy.example/v1\""));
+        assert!(toml.contains("[features]"));
+        assert!(toml.contains("fast_mode = true"));
+        assert!(!toml.contains("[model_providers.openai]"));
+    }
+
+    #[test]
+    fn profile_render_writes_custom_provider_table() {
+        let toml = render_profile_toml(&test_profile("zhipu")).expect("render profile");
+
+        assert!(toml.contains("model_provider = \"zhipu\""));
+        assert!(toml.contains("[model_providers.zhipu]"));
+        assert!(toml.contains("name = \"zhipu\""));
+        assert!(toml.contains("base_url = \"https://models.example/v1\""));
+        assert!(toml.contains("env_key = \"CODEXHUB_TEST_API_KEY\""));
+    }
+
+    #[test]
+    fn profile_extra_toml_rejects_structured_conflicts_and_merges_other_values() {
+        let mut profile = test_profile("openai");
+        profile.extra_toml =
+            "[features]\nexperimental_resume = true\n[history]\npersistence = \"save-all\"\n"
+                .into();
+        let toml = render_profile_toml(&profile).expect("merge non-conflicting extra TOML");
+        assert!(toml.contains("experimental_resume = true"));
+        assert!(toml.contains("[history]"));
+
+        profile.extra_toml = "model = \"other\"\n".into();
+        assert!(render_profile_toml(&profile)
+            .expect_err("model conflict")
+            .contains("structured key `model`"));
+
+        profile.extra_toml = "[features]\nfast_mode = false\n".into();
+        assert!(render_profile_toml(&profile)
+            .expect_err("features conflict")
+            .contains("features.fast_mode"));
+
+        profile.extra_toml = "[provider]\napi_key = \"not-for-disk\"\n".into();
+        assert!(render_profile_toml(&profile)
+            .expect_err("secret key")
+            .contains("secret-like key `provider.api_key`"));
+    }
+
+    #[test]
+    fn profile_export_and_render_do_not_include_key_material() {
+        let profile = test_profile("zhipu");
+        let rendered = render_profile_toml(&profile).expect("render profile");
+        let exported = serde_json::to_string(&profile).expect("serialize profile");
+
+        assert!(!rendered.contains("credential"));
+        assert!(!rendered.contains("sk-"));
+        assert!(!exported.contains("sk-"));
+        assert!(!exported.contains("apiKeyValue"));
+    }
+
+    #[test]
+    fn cc_switch_sqlite_profiles_read_codex_providers_without_secrets() {
+        let dir = env::temp_dir().join(format!("codexhub-cc-switch-{}", timestamp_millis()));
+        fs::create_dir_all(&dir).expect("create temp cc-switch dir");
+        let db_path = dir.join("cc-switch.db");
+        fs::write(
+            dir.join("settings.json"),
+            r#"{"currentProviderCodex":"codex-current"}"#,
+        )
+        .expect("write settings");
+
+        {
+            let connection = rusqlite::Connection::open(&db_path).expect("open sqlite fixture");
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE providers (
+                        id TEXT NOT NULL,
+                        app_type TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        settings_config TEXT NOT NULL,
+                        website_url TEXT,
+                        category TEXT,
+                        created_at INTEGER,
+                        sort_index INTEGER,
+                        notes TEXT,
+                        icon TEXT,
+                        icon_color TEXT,
+                        meta TEXT NOT NULL DEFAULT '{}',
+                        is_current BOOLEAN NOT NULL DEFAULT 0,
+                        in_failover_queue BOOLEAN NOT NULL DEFAULT 0,
+                        PRIMARY KEY (id, app_type)
+                    );
+                    CREATE TABLE provider_endpoints (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        provider_id TEXT NOT NULL,
+                        app_type TEXT NOT NULL,
+                        url TEXT NOT NULL,
+                        added_at INTEGER
+                    );
+                    "#,
+                )
+                .expect("create cc-switch schema");
+            let current_config = "model = \"gpt-5.5\"\nmodel_provider = \"custom\"\nmodel_reasoning_effort = \"xhigh\"\n[features]\nfast_mode = true\n[model_providers.custom]\nname = \"custom\"\n";
+            let other_config = "model = \"gpt-5-codex\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://config.example/v1\"\nenv_key = \"REMOTE_API_KEY\"\n";
+            let current_settings = serde_json::json!({
+                "auth": { "api_key": "sk-test-secret" },
+                "config": current_config
+            })
+            .to_string();
+            let other_settings = serde_json::json!({ "config": other_config }).to_string();
+            let claude_settings =
+                serde_json::json!({ "config": "model = \"claude\"\n" }).to_string();
+            connection
+                .execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, website_url, category, is_current) VALUES (?1, 'codex', ?2, ?3, NULL, 'custom', 0)",
+                    rusqlite::params!["codex-current", "Current Codex", current_settings],
+                )
+                .expect("insert current codex");
+            connection
+                .execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, website_url, category, is_current) VALUES (?1, 'codex', ?2, ?3, NULL, 'custom', 0)",
+                    rusqlite::params!["codex-other", "Other Codex", other_settings],
+                )
+                .expect("insert other codex");
+            connection
+                .execute(
+                    "INSERT INTO providers (id, app_type, name, settings_config, website_url, category, is_current) VALUES (?1, 'claude', ?2, ?3, NULL, 'custom', 0)",
+                    rusqlite::params!["claude-provider", "Claude", claude_settings],
+                )
+                .expect("insert non-codex");
+            connection
+                .execute(
+                    "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at) VALUES (?1, 'codex', ?2, 1)",
+                    rusqlite::params!["codex-current", "https://endpoint.example/v1"],
+                )
+                .expect("insert endpoint");
+        }
+
+        let profiles = parse_cc_switch_sqlite_profiles(&db_path).expect("parse sqlite profiles");
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0].name, "Current Codex");
+        assert_eq!(
+            profiles[0].base_url.as_deref(),
+            Some("https://endpoint.example/v1")
+        );
+        assert_eq!(profiles[0].provider, "custom");
+        assert_eq!(profiles[0].model_reasoning_effort.as_deref(), Some("xhigh"));
+        assert!(profiles[0].fast_mode);
+        assert_eq!(
+            profiles[1].api_key_env_var.as_deref(),
+            Some("REMOTE_API_KEY")
+        );
+        let serialized = serde_json::to_string(&profiles).expect("serialize profiles");
+        assert!(!serialized.contains("sk-test-secret"));
+        assert!(profiles.iter().all(|profile| !profile.credential_stored));
+
+        let _ = fs::remove_file(&db_path);
+        let _ = fs::remove_file(dir.join("settings.json"));
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn cc_switch_raw_db_recovery_extracts_config_without_auth() {
+        let settings = serde_json::json!({
+            "auth": { "api_key": "sk-raw-secret" },
+            "config": "model = \"gpt-5.5\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://raw.example/v1\"\n"
+        })
+        .to_string();
+        let content = format!(
+            "noise 891d8cb1-69b8-4cac-9368-4944b1ec1735codexRaw Provider{settings}https://fallback.example/v1custom"
+        );
+        let profiles = parse_cc_switch_raw_db_profiles(&content, Path::new("cc-switch.db"));
+
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "Raw Provider");
+        assert_eq!(
+            profiles[0].base_url.as_deref(),
+            Some("https://raw.example/v1")
+        );
+        assert_eq!(
+            profiles[0].api_key_env_var.as_deref(),
+            Some("OPENAI_API_KEY")
+        );
+        let serialized = serde_json::to_string(&profiles[0]).expect("serialize profile");
+        assert!(!serialized.contains("sk-raw-secret"));
+    }
+
+    #[test]
+    fn profile_apply_script_checks_no_change_before_backup() {
+        let script = profile_apply_commit_script(
+            "/tmp/codexhub-profile-test.toml",
+            "abc123",
+            42,
+            "{\"profileId\":\"profile-1\"}",
+            "12345",
+        );
+        let cmp_index = script
+            .find("cmp -s \"$config\" \"$staged\"")
+            .expect("cmp guard");
+        let backup_index = script
+            .find("cp -p \"$config\" \"$backup\"")
+            .expect("backup command");
+
+        assert!(cmp_index < backup_index);
+        assert!(script.contains("CODEXHUB_PROFILE_BACKUP"));
+        assert!(script.contains("CODEXHUB_PROFILE_VALIDATION"));
+    }
+
+    #[test]
+    fn profile_apply_metadata_contains_expected_identity() {
+        let metadata = AppliedProfileMetadata {
+            profile_id: "profile-1".into(),
+            profile_name: "Profile One".into(),
+            applied_at: "12345".into(),
+            codexhub_version: "0.1.0".into(),
+        };
+        let json = serde_json::to_string(&metadata).expect("serialize metadata");
+
+        assert!(json.contains("\"profileId\":\"profile-1\""));
+        assert!(json.contains("\"profileName\":\"Profile One\""));
+        assert!(json.contains("\"codexhubVersion\":\"0.1.0\""));
+    }
+
+    #[test]
+    fn npm_latest_metadata_parser_extracts_dist_tag_latest() {
+        let metadata = r#"{
+          "dist-tags": { "latest": "0.142.2", "beta": "0.143.0-beta.1" }
+        }"#;
+
+        let latest = parse_npm_latest_metadata(metadata).expect("parse npm latest");
+
+        assert_eq!(latest, "0.142.2");
+    }
+
+    #[test]
+    fn npm_latest_metadata_parser_rejects_html_missing_and_unsafe_values() {
+        assert!(parse_npm_latest_metadata("<html>login</html>").is_err());
+        assert!(parse_npm_latest_metadata(r#"{"dist-tags":{}}"#).is_err());
+        assert!(parse_npm_latest_metadata(r#"{"dist-tags":{"latest":"0.1.0;rm -rf /"}}"#).is_err());
+    }
+
+    #[test]
+    fn latest_codex_cache_refreshes_after_daily_four_am_boundary() {
+        let now = DateTime::parse_from_rfc3339("2026-06-28T05:00:00+08:00").expect("now");
+        let fresh = LatestCodexVersion {
+            version: Some("0.142.2".into()),
+            checked_at: Some("2026-06-28T04:01:00+08:00".into()),
+            source: CODEX_LATEST_SOURCE.into(),
+            error: None,
+        };
+        let stale = LatestCodexVersion {
+            checked_at: Some("2026-06-28T03:59:00+08:00".into()),
+            ..fresh.clone()
+        };
+
+        assert!(latest_codex_cache_is_fresh(&fresh, now));
+        assert!(!latest_codex_cache_is_fresh(&stale, now));
+    }
+
+    #[test]
+    fn latest_codex_cache_uses_previous_day_boundary_before_four_am() {
+        let now = DateTime::parse_from_rfc3339("2026-06-28T03:00:00+08:00").expect("now");
+        let fresh = LatestCodexVersion {
+            version: Some("0.142.2".into()),
+            checked_at: Some("2026-06-27T04:01:00+08:00".into()),
+            source: CODEX_LATEST_SOURCE.into(),
+            error: None,
+        };
+        let stale = LatestCodexVersion {
+            checked_at: Some("2026-06-27T03:59:00+08:00".into()),
+            ..fresh.clone()
+        };
+
+        assert!(latest_codex_cache_is_fresh(&fresh, now));
+        assert!(!latest_codex_cache_is_fresh(&stale, now));
+    }
+
+    #[test]
+    fn latest_codex_cache_requires_version_and_checked_at() {
+        let now = DateTime::parse_from_rfc3339("2026-06-28T05:00:00+08:00").expect("now");
+        let missing_version = LatestCodexVersion {
+            version: None,
+            checked_at: Some("2026-06-28T04:01:00+08:00".into()),
+            source: CODEX_LATEST_SOURCE.into(),
+            error: None,
+        };
+        let missing_checked_at = LatestCodexVersion {
+            version: Some("0.142.2".into()),
+            checked_at: None,
+            source: CODEX_LATEST_SOURCE.into(),
+            error: None,
+        };
+
+        assert!(!latest_codex_cache_is_fresh(&missing_version, now));
+        assert!(!latest_codex_cache_is_fresh(&missing_checked_at, now));
+    }
+
+    #[test]
+    fn latest_codex_fetch_failure_returns_cached_version_or_error_only_result() {
+        let now = DateTime::parse_from_rfc3339("2026-06-28T05:00:00+08:00").expect("now");
+        let cache = LatestCodexVersion {
+            version: Some("0.142.2".into()),
+            checked_at: Some("2026-06-28T04:01:00+08:00".into()),
+            source: CODEX_LATEST_SOURCE.into(),
+            error: None,
+        };
+
+        let stale = latest_codex_result_from_fetch(Err("offline".into()), Some(cache.clone()), now);
+        let empty = latest_codex_result_from_fetch(Err("offline".into()), None, now);
+
+        assert_eq!(stale.version, cache.version);
+        assert_eq!(stale.checked_at, cache.checked_at);
+        assert_eq!(stale.error.as_deref(), Some("offline"));
+        assert_eq!(empty.version, None);
+        assert_eq!(empty.checked_at, None);
+        assert_eq!(empty.error.as_deref(), Some("offline"));
+    }
+
+    #[test]
+    fn profile_apply_host_link_moves_between_profiles_and_dedupes_alias() {
+        let mut profiles = vec![
+            Profile {
+                id: "old-profile".into(),
+                name: "Old".into(),
+                host_ids: vec!["lab-alias".into(), "other-host".into()],
+                ..test_profile("openai")
+            },
+            Profile {
+                id: "new-profile".into(),
+                name: "New".into(),
+                host_ids: vec!["host-42".into()],
+                ..test_profile("openai")
+            },
+        ];
+
+        sync_profile_host_ids(&mut profiles, "new-profile", "host-42", "lab-alias");
+        sync_profile_host_ids(&mut profiles, "new-profile", "host-42", "LAB-ALIAS");
+
+        assert_eq!(profiles[0].host_ids, vec!["other-host"]);
+        assert_eq!(profiles[1].host_ids, vec!["host-42"]);
+    }
+
+    #[test]
+    fn probe_unknown_config_clears_profile_host_link() {
+        let mut profiles = vec![
+            Profile {
+                id: "profile-1".into(),
+                name: "Known".into(),
+                host_ids: vec!["host-42".into(), "lab-alias".into(), "other-host".into()],
+                ..test_profile("openai")
+            },
+            Profile {
+                id: "profile-2".into(),
+                name: "Other".into(),
+                host_ids: vec!["LAB-ALIAS".into()],
+                ..test_profile("openai")
+            },
+        ];
+
+        clear_profile_host_ids(&mut profiles, "host-42", "lab-alias");
+
+        assert_eq!(profiles[0].host_ids, vec!["other-host"]);
+        assert!(profiles[1].host_ids.is_empty());
+    }
+
+    #[test]
+    fn safe_reconnect_matching_is_single_process_only() {
+        let one = "123 codex /home/me/.local/bin/codex app-server --port 1234\n999 bash bash\n";
+        assert_eq!(
+            safe_reconnect_decision_from_ps(one),
+            SafeReconnectDecision::Terminate(123)
+        );
+
+        let ambiguous = "123 codex codex app-server\n124 codex codex remote-control\n";
+        assert_eq!(
+            safe_reconnect_decision_from_ps(ambiguous),
+            SafeReconnectDecision::Manual("ambiguous-process-match".into())
+        );
+
+        let unsafe_match = "222 node node app-server\n333 codex codex login\n";
+        assert_eq!(
+            safe_reconnect_decision_from_ps(unsafe_match),
+            SafeReconnectDecision::Manual("no-safe-process-match".into())
+        );
+    }
 
     #[test]
     fn codex_resolver_checks_login_paths_and_package_metadata() {
@@ -3631,8 +5484,20 @@ pub fn run() {
             bootstrap_existing_ssh_host,
             remote_probe_codex,
             remote_manage_codex,
+            refresh_latest_codex_version,
             list_profiles,
+            create_profile,
+            update_profile,
+            delete_profile,
+            duplicate_profile,
+            import_profiles,
+            export_profiles,
+            set_profile_api_key,
+            delete_profile_api_key,
+            preview_profile_apply,
             apply_profile,
+            detect_cc_switch_profiles,
+            import_cc_switch_profiles,
             list_tasks,
             list_skill_packs
         ])
@@ -3671,122 +5536,1188 @@ fn write_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String>
     fs::write(path, content).map_err(|error| error.to_string())
 }
 
+fn profiles_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
+        .join("profiles.json")
+}
+
+fn load_profiles(app: &AppHandle, state: &AppState) -> Result<Vec<Profile>, String> {
+    let path = profiles_path(app);
+    let mut profiles = if path.exists() {
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+        serde_json::from_str::<Vec<Profile>>(&content)
+            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
+    } else {
+        state
+            .profiles
+            .lock()
+            .expect("profiles mutex poisoned")
+            .clone()
+    };
+    refresh_credential_flags(&mut profiles);
+    *state.profiles.lock().expect("profiles mutex poisoned") = profiles.clone();
+    Ok(profiles)
+}
+
+fn save_profiles(app: &AppHandle, state: &AppState, profiles: &[Profile]) -> Result<(), String> {
+    for profile in profiles {
+        validate_profile(profile)?;
+    }
+    let path = profiles_path(app);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(profiles).map_err(|error| error.to_string())?;
+    if contains_key_material(&content) {
+        return Err("Refusing to persist profile data that looks like API key material.".into());
+    }
+    fs::write(&path, content)
+        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
+    *state.profiles.lock().expect("profiles mutex poisoned") = profiles.to_vec();
+    Ok(())
+}
+
+fn find_profile(app: &AppHandle, state: &AppState, profile_id: &str) -> Result<Profile, String> {
+    load_profiles(app, state)?
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| format!("Profile {profile_id} was not found."))
+}
+
+fn profile_from_draft(draft: ProfileDraft) -> Result<Profile, String> {
+    let now = timestamp_label();
+    let name = normalize_required_text("Profile name", &draft.name)?;
+    let model = normalize_required_text("Model", &draft.model)?;
+    Ok(Profile {
+        id: format!("{}-{}", slugify(&name), timestamp_millis()),
+        name,
+        description: draft.description.unwrap_or_default(),
+        model,
+        provider: normalize_optional_text(draft.provider).unwrap_or_else(|| "openai".into()),
+        base_url: normalize_optional_text(draft.base_url),
+        api_key_env_var: normalize_optional_text(draft.api_key_env_var),
+        model_reasoning_effort: normalize_optional_text(draft.model_reasoning_effort),
+        plan_mode_reasoning_effort: normalize_optional_text(draft.plan_mode_reasoning_effort),
+        fast_mode: draft.fast_mode.unwrap_or(false),
+        service_tier: normalize_optional_text(draft.service_tier),
+        approval_policy: normalize_optional_text(draft.approval_policy)
+            .unwrap_or_else(|| "on-request".into()),
+        sandbox_mode: normalize_optional_text(draft.sandbox_mode)
+            .unwrap_or_else(|| "workspace-write".into()),
+        extra_toml: draft.extra_toml.unwrap_or_default(),
+        created_at: now.clone(),
+        updated_at: now,
+        source: normalize_optional_text(draft.source).unwrap_or_else(|| "manual".into()),
+        credential_stored: false,
+        host_ids: draft.host_ids.unwrap_or_default(),
+    })
+}
+
+fn apply_profile_patch(profile: &mut Profile, patch: ProfilePatch) -> Result<(), String> {
+    if let Some(name) = patch.name {
+        profile.name = normalize_required_text("Profile name", &name)?;
+    }
+    if let Some(description) = patch.description {
+        profile.description = description;
+    }
+    if let Some(model) = patch.model {
+        profile.model = normalize_required_text("Model", &model)?;
+    }
+    if let Some(provider) = patch.provider {
+        profile.provider = normalize_required_text("Provider", &provider)?;
+    }
+    if patch.base_url.is_some() {
+        profile.base_url = normalize_optional_text(patch.base_url);
+    }
+    if patch.api_key_env_var.is_some() {
+        profile.api_key_env_var = normalize_optional_text(patch.api_key_env_var);
+    }
+    if patch.model_reasoning_effort.is_some() {
+        profile.model_reasoning_effort = normalize_optional_text(patch.model_reasoning_effort);
+    }
+    if patch.plan_mode_reasoning_effort.is_some() {
+        profile.plan_mode_reasoning_effort =
+            normalize_optional_text(patch.plan_mode_reasoning_effort);
+    }
+    if let Some(fast_mode) = patch.fast_mode {
+        profile.fast_mode = fast_mode;
+    }
+    if patch.service_tier.is_some() {
+        profile.service_tier = normalize_optional_text(patch.service_tier);
+    }
+    if let Some(approval_policy) = patch.approval_policy {
+        profile.approval_policy = normalize_required_text("Approval policy", &approval_policy)?;
+    }
+    if let Some(sandbox_mode) = patch.sandbox_mode {
+        profile.sandbox_mode = normalize_required_text("Sandbox mode", &sandbox_mode)?;
+    }
+    if let Some(extra_toml) = patch.extra_toml {
+        profile.extra_toml = extra_toml;
+    }
+    if let Some(source) = patch.source {
+        profile.source = normalize_required_text("Source", &source)?;
+    }
+    if let Some(credential_stored) = patch.credential_stored {
+        profile.credential_stored = credential_stored && profile_api_key_exists(&profile.id);
+    }
+    if let Some(host_ids) = patch.host_ids {
+        profile.host_ids = host_ids;
+    }
+    Ok(())
+}
+
+fn validate_profile(profile: &Profile) -> Result<(), String> {
+    normalize_required_text("Profile id", &profile.id)?;
+    normalize_required_text("Profile name", &profile.name)?;
+    normalize_required_text("Model", &profile.model)?;
+    normalize_required_text("Provider", &profile.provider)?;
+    normalize_required_text("Approval policy", &profile.approval_policy)?;
+    normalize_required_text("Sandbox mode", &profile.sandbox_mode)?;
+    validate_extra_toml(profile)?;
+    let rendered = serde_json::to_string(profile).map_err(|error| error.to_string())?;
+    if contains_key_material(&rendered) {
+        return Err("Profile contains data that looks like API key material.".into());
+    }
+    Ok(())
+}
+
+fn ensure_unique_profile_id(profile: &mut Profile, profiles: &[Profile]) {
+    if !profiles.iter().any(|item| item.id == profile.id) {
+        return;
+    }
+    let base = profile.id.clone();
+    let mut index = 2;
+    while profiles
+        .iter()
+        .any(|item| item.id == format!("{base}-{index}"))
+    {
+        index += 1;
+    }
+    profile.id = format!("{base}-{index}");
+}
+
+fn import_profiles_inner(
+    app: &AppHandle,
+    state: &AppState,
+    incoming: Vec<Profile>,
+    replace: bool,
+) -> Result<ProfileImportResult, String> {
+    let mut profiles = if replace {
+        Vec::new()
+    } else {
+        load_profiles(app, state)?
+    };
+    let mut imported = Vec::new();
+    let mut skipped = Vec::new();
+
+    for mut profile in incoming {
+        profile.credential_stored = profile_api_key_exists(&profile.id);
+        profile.updated_at = timestamp_label();
+        if profile.created_at.trim().is_empty() {
+            profile.created_at = profile.updated_at.clone();
+        }
+        match validate_profile(&profile) {
+            Ok(()) => {
+                profiles.retain(|item| item.id != profile.id);
+                profiles.push(profile.clone());
+                imported.push(profile);
+            }
+            Err(error) => skipped.push(format!("{}: {error}", profile.id)),
+        }
+    }
+
+    save_profiles(app, state, &profiles)?;
+    Ok(ProfileImportResult { imported, skipped })
+}
+
+fn refresh_credential_flags(profiles: &mut [Profile]) {
+    for profile in profiles {
+        profile.credential_stored = profile_api_key_exists(&profile.id);
+    }
+}
+
+fn clear_profile_from_hosts(state: &AppState, profile_id: &str) {
+    let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+    for host in hosts.iter_mut() {
+        if host.profile_id.as_deref() == Some(profile_id) {
+            host.profile_id = None;
+        }
+    }
+}
+
+fn render_profile_toml(profile: &Profile) -> Result<String, String> {
+    validate_profile(profile)?;
+    let mut root = TomlMap::new();
+    insert_toml_string(&mut root, "model", &profile.model);
+    insert_toml_string(&mut root, "model_provider", &profile.provider);
+    insert_toml_string(&mut root, "approval_policy", &profile.approval_policy);
+    insert_toml_string(&mut root, "sandbox_mode", &profile.sandbox_mode);
+    insert_toml_optional_string(
+        &mut root,
+        "model_reasoning_effort",
+        profile.model_reasoning_effort.as_deref(),
+    );
+    insert_toml_optional_string(
+        &mut root,
+        "plan_mode_reasoning_effort",
+        profile.plan_mode_reasoning_effort.as_deref(),
+    );
+    insert_toml_optional_string(&mut root, "service_tier", profile.service_tier.as_deref());
+
+    if profile.provider.eq_ignore_ascii_case("openai") {
+        insert_toml_optional_string(&mut root, "openai_base_url", profile.base_url.as_deref());
+    } else {
+        let provider_key = sanitize_toml_key(&profile.provider)?;
+        let mut provider = TomlMap::new();
+        insert_toml_string(&mut provider, "name", &profile.provider);
+        insert_toml_optional_string(&mut provider, "base_url", profile.base_url.as_deref());
+        insert_toml_optional_string(&mut provider, "env_key", profile.api_key_env_var.as_deref());
+        let mut provider_tables = TomlMap::new();
+        provider_tables.insert(provider_key, TomlValue::Table(provider));
+        root.insert("model_providers".into(), TomlValue::Table(provider_tables));
+    }
+
+    let mut features = TomlMap::new();
+    features.insert("fast_mode".into(), TomlValue::Boolean(profile.fast_mode));
+    root.insert("features".into(), TomlValue::Table(features));
+
+    let extra = parse_extra_toml(profile)?;
+    merge_toml_table(&mut root, extra)?;
+    toml::to_string_pretty(&TomlValue::Table(root)).map_err(|error| error.to_string())
+}
+
+fn parse_extra_toml(profile: &Profile) -> Result<TomlMap<String, TomlValue>, String> {
+    let trimmed = profile.extra_toml.trim();
+    if trimmed.is_empty() {
+        return Ok(TomlMap::new());
+    }
+    let value = trimmed
+        .parse::<TomlValue>()
+        .map_err(|error| format!("extraToml is not valid TOML: {error}"))?;
+    let TomlValue::Table(table) = value else {
+        return Err("extraToml must be a TOML table.".into());
+    };
+    reject_extra_toml_conflicts(profile, &table)?;
+    reject_extra_toml_secret_keys(&table, "")?;
+    Ok(table)
+}
+
+fn validate_extra_toml(profile: &Profile) -> Result<(), String> {
+    parse_extra_toml(profile).map(|_| ())
+}
+
+fn reject_extra_toml_conflicts(
+    profile: &Profile,
+    table: &TomlMap<String, TomlValue>,
+) -> Result<(), String> {
+    let top_level_conflicts = [
+        "model",
+        "model_provider",
+        "approval_policy",
+        "sandbox_mode",
+        "model_reasoning_effort",
+        "plan_mode_reasoning_effort",
+        "service_tier",
+        "openai_base_url",
+    ];
+    for key in top_level_conflicts {
+        if table.contains_key(key) {
+            return Err(format!("extraToml cannot override structured key `{key}`."));
+        }
+    }
+    if let Some(TomlValue::Table(features)) = table.get("features") {
+        if features.contains_key("fast_mode") {
+            return Err("extraToml cannot override structured key `features.fast_mode`.".into());
+        }
+    }
+    if let Some(TomlValue::Table(model_providers)) = table.get("model_providers") {
+        let provider_key = sanitize_toml_key(&profile.provider)?;
+        if model_providers.contains_key(&provider_key) {
+            return Err(format!(
+                "extraToml cannot override structured key `model_providers.{provider_key}`."
+            ));
+        }
+        if model_providers.contains_key("openai") {
+            return Err("extraToml cannot define `model_providers.openai`; OpenAI uses the built-in provider.".into());
+        }
+    }
+    Ok(())
+}
+
+fn merge_toml_table(
+    target: &mut TomlMap<String, TomlValue>,
+    source: TomlMap<String, TomlValue>,
+) -> Result<(), String> {
+    for (key, value) in source {
+        match (target.get_mut(&key), value) {
+            (Some(TomlValue::Table(target_table)), TomlValue::Table(source_table)) => {
+                merge_toml_table(target_table, source_table)?;
+            }
+            (Some(_), _) => {
+                return Err(format!("extraToml conflicts with structured key `{key}`."));
+            }
+            (None, value) => {
+                target.insert(key, value);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_extra_toml_secret_keys(
+    table: &TomlMap<String, TomlValue>,
+    prefix: &str,
+) -> Result<(), String> {
+    for (key, value) in table {
+        let path = if prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        let key_lower = key.to_ascii_lowercase();
+        if matches!(
+            key_lower.as_str(),
+            "api_key" | "apikey" | "token" | "password" | "secret"
+        ) {
+            return Err(format!(
+                "extraToml cannot include secret-like key `{path}`; store local credentials with set_profile_api_key or reference remote environment variables with env_key."
+            ));
+        }
+        if let TomlValue::Table(child) = value {
+            reject_extra_toml_secret_keys(child, &path)?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_toml_string(table: &mut TomlMap<String, TomlValue>, key: &str, value: &str) {
+    table.insert(key.into(), TomlValue::String(value.to_string()));
+}
+
+fn insert_toml_optional_string(
+    table: &mut TomlMap<String, TomlValue>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        table.insert(key.into(), TomlValue::String(value.to_string()));
+    }
+}
+
+fn profile_preview_warnings(profile: &Profile) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if profile.credential_stored {
+        warnings.push("Local credential is stored but will not be rendered or uploaded.".into());
+    }
+    if !profile.provider.eq_ignore_ascii_case("openai") && profile.api_key_env_var.is_none() {
+        warnings.push(
+            "Custom provider has no env_key; remote authentication must be handled separately."
+                .into(),
+        );
+    }
+    warnings
+}
+
+fn store_profile_api_key_local(profile_id: &str, api_key: &str) -> Result<(), String> {
+    profile_key_entry(profile_id)?
+        .set_password(api_key)
+        .map_err(|error| format!("Failed to store profile API key in OS credential store: {error}"))
+}
+
+fn delete_profile_api_key_local(profile_id: &str) -> Result<(), String> {
+    match profile_key_entry(profile_id)?.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(error) if error.to_string().to_ascii_lowercase().contains("no entry") => Ok(()),
+        Err(error) if error.to_string().to_ascii_lowercase().contains("not found") => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to delete profile API key from OS credential store: {error}"
+        )),
+    }
+}
+
+fn profile_api_key_exists(profile_id: &str) -> bool {
+    profile_key_entry(profile_id)
+        .and_then(|entry| {
+            entry
+                .get_password()
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+        .is_ok()
+}
+
+fn profile_key_entry(profile_id: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new("CodexHub", &format!("profile:{profile_id}:api_key"))
+        .map_err(|error| format!("OS credential store is unavailable: {error}"))
+}
+
+fn detect_cc_switch_profiles_inner(
+    app: &AppHandle,
+    _state: &AppState,
+) -> Result<Vec<DetectedCcSwitchProfile>, String> {
+    let mut detected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in cc_switch_candidate_paths(app) {
+        if !path.exists() {
+            continue;
+        }
+        let profiles = match path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("db") | Some("sqlite") | Some("sqlite3") => parse_cc_switch_db_profiles(&path)?,
+            _ => {
+                let content = match fs::read_to_string(&path) {
+                    Ok(content) => content,
+                    Err(_) => continue,
+                };
+                parse_cc_switch_profiles(&content, &path)?
+            }
+        };
+        push_detected_cc_switch_profiles(&mut detected, &mut seen, &path, profiles);
+    }
+    Ok(detected)
+}
+
+fn cc_switch_candidate_paths(app: &AppHandle) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(config_dir) = app.path().app_config_dir() {
+        paths.push(config_dir.join("cc-switch").join("profiles.json"));
+        paths.push(config_dir.join("cc-switch").join("config.json"));
+    }
+    if let Some(home) = home_dir() {
+        paths.push(home.join(".cc-switch").join("profiles.json"));
+        paths.push(home.join(".cc-switch").join("config.json"));
+        paths.push(home.join(".cc-switch").join("settings.json"));
+        paths.push(home.join(".cc-switch").join("cc-switch.db"));
+        paths.push(home.join(".cc-switch").join("cc-switch.sqlite"));
+        paths.push(home.join(".config").join("cc-switch").join("profiles.json"));
+        paths.push(home.join(".config").join("cc-switch").join("config.json"));
+        paths.push(home.join(".config").join("cc-switch").join("settings.json"));
+        paths.push(home.join(".config").join("cc-switch").join("cc-switch.db"));
+    }
+    if let Some(appdata) = env::var_os("APPDATA").map(PathBuf::from) {
+        paths.push(appdata.join("com.ccswitch.desktop").join("profiles.json"));
+        paths.push(appdata.join("com.ccswitch.desktop").join("config.json"));
+        paths.push(appdata.join("com.ccswitch.desktop").join("settings.json"));
+        paths.push(appdata.join("cc-switch").join("profiles.json"));
+        paths.push(appdata.join("cc-switch").join("config.json"));
+    }
+    if let Some(localappdata) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        paths.push(
+            localappdata
+                .join("com.ccswitch.desktop")
+                .join("cc-switch.db"),
+        );
+        paths.push(localappdata.join("cc-switch").join("cc-switch.db"));
+    }
+    paths
+}
+
+fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, String> {
+    let json = match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(value) => value,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut entries = Vec::new();
+    collect_cc_switch_profile_entries(&json, &mut entries);
+    let mut profiles = Vec::new();
+    for (index, item) in entries.iter().enumerate() {
+        let name = item
+            .get("name")
+            .or_else(|| item.get("title"))
+            .or_else(|| item.get("label"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("Imported CC Switch Profile");
+        let settings = item
+            .get("settings")
+            .or_else(|| item.get("settingsConfig"))
+            .or_else(|| item.get("settings_config"));
+        let config = item
+            .get("config")
+            .or_else(|| settings.and_then(|value| value.get("config")))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let mut from_config = cc_switch_profile_from_config(
+            &format!("{}-{}", slugify(name), index + 1),
+            name,
+            config,
+            None,
+            path,
+        );
+        let model = item
+            .get("model")
+            .or_else(|| settings.and_then(|value| value.get("model")))
+            .and_then(|value| value.as_str())
+            .or_else(|| from_config.as_ref().map(|profile| profile.model.as_str()))
+            .unwrap_or("gpt-5-codex");
+        let provider = item
+            .get("provider")
+            .or_else(|| item.get("modelProvider"))
+            .or_else(|| item.get("model_provider"))
+            .or_else(|| settings.and_then(|value| value.get("provider")))
+            .and_then(|value| value.as_str())
+            .or_else(|| {
+                from_config
+                    .as_ref()
+                    .map(|profile| profile.provider.as_str())
+            })
+            .unwrap_or("openai");
+        let now = timestamp_label();
+        let profile = Profile {
+            id: format!("cc-switch-{}-{}", slugify(name), index + 1),
+            name: name.to_string(),
+            description: format!("Imported from {}", path.display()),
+            model: model.to_string(),
+            provider: provider.to_string(),
+            base_url: item
+                .get("base_url")
+                .or_else(|| item.get("baseUrl"))
+                .or_else(|| item.get("url"))
+                .or_else(|| item.get("websiteUrl"))
+                .or_else(|| item.get("website_url"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    from_config
+                        .as_mut()
+                        .and_then(|profile| profile.base_url.take())
+                }),
+            api_key_env_var: item
+                .get("api_key_env_var")
+                .or_else(|| item.get("apiKeyEnvVar"))
+                .or_else(|| item.get("env_key"))
+                .or_else(|| settings.and_then(|value| value.get("env_key")))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    from_config
+                        .as_mut()
+                        .and_then(|profile| profile.api_key_env_var.take())
+                })
+                .or_else(|| Some("OPENAI_API_KEY".into())),
+            model_reasoning_effort: item
+                .get("model_reasoning_effort")
+                .or_else(|| item.get("modelReasoningEffort"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    from_config
+                        .as_mut()
+                        .and_then(|profile| profile.model_reasoning_effort.take())
+                }),
+            plan_mode_reasoning_effort: item
+                .get("plan_mode_reasoning_effort")
+                .or_else(|| item.get("planModeReasoningEffort"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    from_config
+                        .as_mut()
+                        .and_then(|profile| profile.plan_mode_reasoning_effort.take())
+                }),
+            fast_mode: item
+                .get("fast_mode")
+                .or_else(|| item.get("fastMode"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or_else(|| {
+                    from_config
+                        .as_ref()
+                        .map(|profile| profile.fast_mode)
+                        .unwrap_or(false)
+                }),
+            service_tier: item
+                .get("service_tier")
+                .or_else(|| item.get("serviceTier"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+                .or_else(|| {
+                    from_config
+                        .as_mut()
+                        .and_then(|profile| profile.service_tier.take())
+                }),
+            approval_policy: item
+                .get("approval_policy")
+                .or_else(|| item.get("approvalPolicy"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("on-request")
+                .to_string(),
+            sandbox_mode: item
+                .get("sandbox_mode")
+                .or_else(|| item.get("sandboxMode"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("workspace-write")
+                .to_string(),
+            extra_toml: String::new(),
+            created_at: now.clone(),
+            updated_at: now,
+            source: "cc-switch".into(),
+            credential_stored: false,
+            host_ids: Vec::new(),
+        };
+        if validate_profile(&profile).is_ok() {
+            profiles.push(profile);
+        }
+    }
+    Ok(profiles)
+}
+
+fn collect_cc_switch_profile_entries<'a>(
+    value: &'a serde_json::Value,
+    entries: &mut Vec<&'a serde_json::Value>,
+) {
+    if let Some(array) = value.as_array() {
+        for item in array {
+            collect_cc_switch_profile_entries(item, entries);
+        }
+        return;
+    }
+    let Some(object) = value.as_object() else {
+        return;
+    };
+    let app_type = object
+        .get("app_type")
+        .or_else(|| object.get("appType"))
+        .or_else(|| object.get("app"))
+        .and_then(|value| value.as_str());
+    let has_profile_shape = object.contains_key("model")
+        || object.contains_key("provider")
+        || object.contains_key("modelProvider")
+        || object.contains_key("model_provider")
+        || object.contains_key("base_url")
+        || object.contains_key("baseUrl")
+        || object.contains_key("settings_config")
+        || object.contains_key("settingsConfig")
+        || object.contains_key("config");
+    if has_profile_shape && app_type.map(|value| value == "codex").unwrap_or(true) {
+        entries.push(value);
+    }
+    for key in ["profiles", "providers", "items", "data"] {
+        if let Some(child) = object.get(key) {
+            collect_cc_switch_profile_entries(child, entries);
+        }
+    }
+}
+
+fn parse_cc_switch_db_profiles(path: &Path) -> Result<Vec<Profile>, String> {
+    let sqlite_profiles = parse_cc_switch_sqlite_profiles(path)?;
+    if !sqlite_profiles.is_empty() {
+        return Ok(sqlite_profiles);
+    }
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(parse_cc_switch_raw_db_profiles(&text, path))
+}
+
+fn parse_cc_switch_sqlite_profiles(path: &Path) -> Result<Vec<Profile>, String> {
+    let flags =
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let connection = match rusqlite::Connection::open_with_flags(path, flags) {
+        Ok(connection) => connection,
+        Err(_) => return Ok(Vec::new()),
+    };
+    if !sqlite_table_exists(&connection, "providers")? {
+        return Ok(Vec::new());
+    }
+
+    let current_provider = read_cc_switch_current_provider(path);
+    let mut statement = match connection.prepare(
+        "SELECT id, name, settings_config, website_url, is_current \
+         FROM providers WHERE app_type = 'codex'",
+    ) {
+        Ok(statement) => statement,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(CcSwitchSqliteProvider {
+                id: row.get::<_, String>(0)?,
+                name: row.get::<_, String>(1)?,
+                settings_config: row.get::<_, String>(2)?,
+                website_url: row.get::<_, Option<String>>(3).ok().flatten(),
+                is_current: row.get::<_, bool>(4).unwrap_or(false),
+            })
+        })
+        .map_err(|error| format!("Failed to query cc-switch providers: {error}"))?;
+
+    let mut profiles = Vec::new();
+    for row in rows {
+        let row = match row {
+            Ok(row) => row,
+            Err(_) => continue,
+        };
+        let settings = match serde_json::from_str::<serde_json::Value>(&row.settings_config) {
+            Ok(settings) => settings,
+            Err(_) => continue,
+        };
+        let config = settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let endpoint = cc_switch_provider_endpoint(&connection, &row.id)
+            .unwrap_or(None)
+            .or(row.website_url.clone());
+        if let Some(profile) =
+            cc_switch_profile_from_config(&row.id, &row.name, config, endpoint.as_deref(), path)
+        {
+            let is_current = row.is_current || current_provider.as_deref() == Some(row.id.as_str());
+            profiles.push((is_current, profile));
+        }
+    }
+
+    profiles.sort_by_key(|(is_current, profile)| (!*is_current, profile.name.to_ascii_lowercase()));
+    Ok(dedupe_cc_switch_profiles(
+        profiles.into_iter().map(|(_, profile)| profile).collect(),
+    ))
+}
+
+struct CcSwitchSqliteProvider {
+    id: String,
+    name: String,
+    settings_config: String,
+    website_url: Option<String>,
+    is_current: bool,
+}
+
+fn sqlite_table_exists(
+    connection: &rusqlite::Connection,
+    table_name: &str,
+) -> Result<bool, String> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            [table_name],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Failed to inspect cc-switch database schema: {error}"))?;
+    Ok(count > 0)
+}
+
+fn cc_switch_provider_endpoint(
+    connection: &rusqlite::Connection,
+    provider_id: &str,
+) -> Result<Option<String>, String> {
+    if !sqlite_table_exists(connection, "provider_endpoints")? {
+        return Ok(None);
+    }
+    match connection.query_row(
+        "SELECT url FROM provider_endpoints \
+         WHERE provider_id = ?1 AND app_type = 'codex' \
+         ORDER BY id ASC LIMIT 1",
+        [provider_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(url) => Ok(Some(url)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+fn read_cc_switch_current_provider(db_path: &Path) -> Option<String> {
+    let settings_path = db_path.parent()?.join("settings.json");
+    let content = fs::read_to_string(settings_path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    value
+        .get("currentProviderCodex")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn parse_cc_switch_raw_db_profiles(content: &str, path: &Path) -> Vec<Profile> {
+    let mut profiles = Vec::new();
+    let mut seen_json_starts = BTreeSet::new();
+    for marker in ["{\"auth\"", "{\"env\"", "{\"config\""] {
+        let mut offset = 0;
+        while let Some(relative) = content[offset..].find(marker) {
+            let json_start = offset + relative;
+            offset = json_start + marker.len();
+            if !seen_json_starts.insert(json_start) {
+                continue;
+            }
+            let Some((json, json_end)) = extract_json_object(content, json_start) else {
+                continue;
+            };
+            let Ok(settings) = serde_json::from_str::<serde_json::Value>(json) else {
+                continue;
+            };
+            let Some((record_id, name)) = cc_switch_raw_record_identity(content, json_start) else {
+                continue;
+            };
+            let config = settings
+                .get("config")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let fallback_url = extract_url_after(content, json_end);
+            if let Some(profile) = cc_switch_profile_from_config(
+                &record_id,
+                &name,
+                config,
+                fallback_url.as_deref(),
+                path,
+            ) {
+                profiles.push(profile);
+            }
+        }
+    }
+    dedupe_cc_switch_profiles(profiles)
+}
+
+fn extract_json_object(content: &str, start: usize) -> Option<(&str, usize)> {
+    if !content[start..].starts_with('{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in content[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let end = start + offset + ch.len_utf8();
+                    return Some((&content[start..end], end));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn cc_switch_raw_record_identity(content: &str, json_start: usize) -> Option<(String, String)> {
+    let prefix_start = json_start.saturating_sub(260);
+    let prefix = &content[prefix_start..json_start];
+    let marker = prefix.rfind("codex")?;
+    let name = clean_cc_switch_raw_field(&prefix[marker + "codex".len()..]);
+    if name.is_empty() || name.contains("session") {
+        return None;
+    }
+    let before_marker = &prefix[..marker];
+    let id = last_uuid(before_marker).or_else(|| last_cc_switch_ascii_token(before_marker))?;
+    if id.contains("session") {
+        return None;
+    }
+    Some((id, name))
+}
+
+fn clean_cc_switch_raw_field(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_control() || ch == '\u{fffd}' {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect();
+    cleaned
+        .trim_matches(|ch: char| {
+            !(ch.is_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.' | '(' | ')'))
+        })
+        .trim()
+        .to_string()
+}
+
+fn last_uuid(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 36 {
+        return None;
+    }
+    for start in (0..=bytes.len() - 36).rev() {
+        let candidate = &value[start..start + 36];
+        if is_uuid_like(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    value.len() == 36
+        && value.char_indices().all(|(index, ch)| {
+            matches!(index, 8 | 13 | 18 | 23) && ch == '-'
+                || !matches!(index, 8 | 13 | 18 | 23) && ch.is_ascii_hexdigit()
+        })
+}
+
+fn last_cc_switch_ascii_token(value: &str) -> Option<String> {
+    let trimmed = value.trim_end_matches(|ch: char| {
+        !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    });
+    let start = trimmed
+        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let token = trimmed[start..].trim();
+    if matches!(token, "default" | "codex-official") || token.ends_with("-official") {
+        Some(token.to_string())
+    } else {
+        None
+    }
+}
+
+fn extract_url_after(content: &str, start: usize) -> Option<String> {
+    let end = (start + 420).min(content.len());
+    let window = &content[start..end];
+    let http = window.find("http://");
+    let https = window.find("https://");
+    let offset = match (http, https) {
+        (Some(http), Some(https)) => http.min(https),
+        (Some(http), None) => http,
+        (None, Some(https)) => https,
+        (None, None) => return None,
+    };
+    let url = window[offset..]
+        .chars()
+        .take_while(|ch| {
+            !ch.is_whitespace()
+                && !ch.is_control()
+                && !matches!(ch, '"' | '\'' | '<' | '>' | '{' | '}' | '[' | ']')
+        })
+        .collect::<String>()
+        .trim_end_matches(|ch| matches!(ch, ',' | ';' | ')' | '('))
+        .to_string();
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Some(url)
+    } else {
+        None
+    }
+}
+
+fn cc_switch_profile_from_config(
+    record_id: &str,
+    name: &str,
+    config: &str,
+    fallback_url: Option<&str>,
+    path: &Path,
+) -> Option<Profile> {
+    let parsed = config.parse::<TomlValue>().ok();
+    let root = parsed.as_ref().and_then(TomlValue::as_table);
+    let model = root
+        .and_then(|table| toml_string(table, "model"))
+        .or_else(|| toml_line_string(config, "model"))
+        .unwrap_or_else(|| "gpt-5-codex".into());
+    let provider = root
+        .and_then(|table| toml_string(table, "model_provider"))
+        .or_else(|| toml_line_string(config, "model_provider"))
+        .unwrap_or_else(|| "openai".into());
+    let provider_table = root
+        .and_then(|table| table.get("model_providers"))
+        .and_then(TomlValue::as_table)
+        .and_then(|providers| providers.get(&provider))
+        .and_then(TomlValue::as_table);
+    let base_url = provider_table
+        .and_then(|table| toml_string(table, "base_url"))
+        .or_else(|| root.and_then(|table| toml_string(table, "openai_base_url")))
+        .or_else(|| toml_line_string(config, "base_url"))
+        .or_else(|| fallback_url.map(str::to_string));
+    let api_key_env_var = provider_table
+        .and_then(|table| toml_string(table, "env_key"))
+        .or_else(|| toml_line_string(config, "env_key"))
+        .or_else(|| Some("OPENAI_API_KEY".into()));
+    let model_reasoning_effort = root
+        .and_then(|table| toml_string(table, "model_reasoning_effort"))
+        .or_else(|| toml_line_string(config, "model_reasoning_effort"));
+    let plan_mode_reasoning_effort = root
+        .and_then(|table| toml_string(table, "plan_mode_reasoning_effort"))
+        .or_else(|| toml_line_string(config, "plan_mode_reasoning_effort"));
+    let service_tier = root
+        .and_then(|table| toml_string(table, "service_tier"))
+        .or_else(|| toml_line_string(config, "service_tier"));
+    let fast_mode = root
+        .and_then(|table| table.get("features"))
+        .and_then(TomlValue::as_table)
+        .and_then(|table| table.get("fast_mode"))
+        .and_then(TomlValue::as_bool)
+        .unwrap_or(false);
+
+    if config.trim().is_empty() && base_url.is_none() && record_id != "codex-official" {
+        return None;
+    }
+
+    let now = timestamp_label();
+    let profile = Profile {
+        id: format!("cc-switch-{}", slugify(record_id)),
+        name: name.to_string(),
+        description: format!("Imported from {}", path.display()),
+        model,
+        provider,
+        base_url,
+        api_key_env_var,
+        model_reasoning_effort,
+        plan_mode_reasoning_effort,
+        fast_mode,
+        service_tier,
+        approval_policy: "on-request".into(),
+        sandbox_mode: "workspace-write".into(),
+        extra_toml: String::new(),
+        created_at: now.clone(),
+        updated_at: now,
+        source: "cc-switch".into(),
+        credential_stored: false,
+        host_ids: Vec::new(),
+    };
+    validate_profile(&profile).ok().map(|_| profile)
+}
+
+fn toml_string(table: &TomlMap<String, TomlValue>, key: &str) -> Option<String> {
+    table
+        .get(key)
+        .and_then(TomlValue::as_str)
+        .map(str::to_string)
+}
+
+fn toml_line_string(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || !line.starts_with(key) {
+            continue;
+        }
+        let Some((left, right)) = line.split_once('=') else {
+            continue;
+        };
+        if left.trim() != key {
+            continue;
+        }
+        let value = right.trim();
+        if let Some(stripped) = value
+            .strip_prefix('"')
+            .and_then(|item| item.strip_suffix('"'))
+        {
+            return Some(stripped.replace("\\\"", "\""));
+        }
+    }
+    None
+}
+
+fn push_detected_cc_switch_profiles(
+    detected: &mut Vec<DetectedCcSwitchProfile>,
+    seen: &mut BTreeSet<String>,
+    path: &Path,
+    profiles: Vec<Profile>,
+) {
+    for profile in profiles {
+        let key = cc_switch_profile_key(&profile);
+        if seen.insert(key) {
+            detected.push(DetectedCcSwitchProfile {
+                source_path: path.to_string_lossy().into_owned(),
+                profile,
+            });
+        }
+    }
+}
+
+fn dedupe_cc_switch_profiles(profiles: Vec<Profile>) -> Vec<Profile> {
+    let mut seen = BTreeSet::new();
+    profiles
+        .into_iter()
+        .filter(|profile| seen.insert(cc_switch_profile_key(profile)))
+        .collect()
+}
+
+fn cc_switch_profile_key(profile: &Profile) -> String {
+    format!(
+        "{}|{}|{}",
+        profile.id,
+        profile.name,
+        profile.base_url.as_deref().unwrap_or_default()
+    )
+}
+
+fn contains_key_material(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    lower.contains("sk-")
+        || lower.contains("password=")
+        || lower.contains("token=")
+        || lower.contains("-----begin ")
+}
+
+fn normalize_required_text(label: &str, value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        Err(format!("{label} is required."))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn slugify(value: &str) -> String {
+    let slug = value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() {
+        "profile".into()
+    } else {
+        slug
+    }
+}
+
+fn sanitize_toml_key(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Provider is required.".into());
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+    {
+        Ok(value.to_string())
+    } else {
+        Err("Provider may only contain ASCII letters, numbers, hyphens, and underscores.".into())
+    }
+}
+
+fn timestamp_label() -> String {
+    timestamp_millis().to_string()
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(PathBuf::from))
+}
+
 fn mock_hosts() -> Vec<Host> {
-    vec![
-        Host {
-            id: "mac-studio-lab".into(),
-            name: "Mac Studio Lab".into(),
-            host_alias: "mac-studio-lab".into(),
-            source: "mock".into(),
-            address: "10.0.8.12".into(),
-            port: 22,
-            username: "jurio".into(),
-            auth_method: AuthMethod::SshKey,
-            status: HostStatus::Online,
-            os: "macOS 15.5".into(),
-            arch: "arm64".into(),
-            shell: "/bin/zsh".into(),
-            path: Some("/Users/jurio/.local/bin:/usr/local/bin:/usr/bin".into()),
-            path_has_local_bin: Some(true),
-            codex_installed: true,
-            codex_version: "0.32.0".into(),
-            config_exists: Some(true),
-            skills_exists: Some(true),
-            skills_count: Some(5),
-            profile_id: Some("research-default".into()),
-            skill_pack_ids: vec!["paper-review".into(), "tauri-builder".into()],
-            tags: vec!["local".into(), "gpu".into()],
-            last_seen: "2 min ago".into(),
-            latency_ms: Some(18),
-        },
-        Host {
-            id: "win-workstation".into(),
-            name: "Windows Workstation".into(),
-            host_alias: "win-workstation".into(),
-            source: "mock".into(),
-            address: "192.168.31.42".into(),
-            port: 22,
-            username: "pc".into(),
-            auth_method: AuthMethod::Agent,
-            status: HostStatus::Unknown,
-            os: "Windows 11 Pro".into(),
-            arch: "x86_64".into(),
-            shell: "Unknown".into(),
-            path: None,
-            path_has_local_bin: None,
-            codex_installed: false,
-            codex_version: "pending".into(),
-            config_exists: None,
-            skills_exists: None,
-            skills_count: None,
-            profile_id: Some("safe-editing".into()),
-            skill_pack_ids: vec!["tauri-builder".into()],
-            tags: vec!["desktop".into(), "primary".into()],
-            last_seen: "not tested".into(),
-            latency_ms: None,
-        },
-        Host {
-            id: "linux-runner".into(),
-            name: "Linux Runner".into(),
-            host_alias: "linux-runner".into(),
-            source: "mock".into(),
-            address: "172.20.4.8".into(),
-            port: 2222,
-            username: "codex".into(),
-            auth_method: AuthMethod::SshKey,
-            status: HostStatus::Offline,
-            os: "Ubuntu 24.04 LTS".into(),
-            arch: "x86_64".into(),
-            shell: "/bin/bash".into(),
-            path: Some("/home/codex/.local/bin:/usr/local/bin:/usr/bin".into()),
-            path_has_local_bin: Some(true),
-            codex_installed: true,
-            codex_version: "0.31.1".into(),
-            config_exists: Some(false),
-            skills_exists: Some(true),
-            skills_count: Some(1),
-            profile_id: None,
-            skill_pack_ids: vec!["paper-review".into()],
-            tags: vec!["remote".into(), "ci".into()],
-            last_seen: "yesterday".into(),
-            latency_ms: None,
-        },
-    ]
+    Vec::new()
 }
 
 fn mock_profiles() -> Vec<Profile> {
-    vec![
-        Profile {
-            id: "research-default".into(),
-            name: "Research Default".into(),
-            description: "Balanced model and approval policy for literature review, repo browsing, and report drafting.".into(),
-            model: "gpt-5-codex".into(),
-            approval_policy: "on-request".into(),
-            sandbox_mode: "workspace-write".into(),
-            updated_at: "2026-06-24 22:10".into(),
-            host_ids: vec!["mac-studio-lab".into()],
-        },
-        Profile {
-            id: "safe-editing".into(),
-            name: "Safe Editing".into(),
-            description: "Conservative profile for protected repos, narrow write scope, and explicit publish steps.".into(),
-            model: "gpt-5-codex".into(),
-            approval_policy: "on-failure".into(),
-            sandbox_mode: "workspace-write".into(),
-            updated_at: "2026-06-23 18:35".into(),
-            host_ids: vec!["win-workstation".into()],
-        },
-        Profile {
-            id: "diagnostics".into(),
-            name: "Diagnostics".into(),
-            description: "Read-mostly profile for host checks, logs, and environment inspection.".into(),
-            model: "gpt-5-mini".into(),
-            approval_policy: "never".into(),
-            sandbox_mode: "read-only".into(),
-            updated_at: "2026-06-21 09:42".into(),
-            host_ids: Vec::new(),
-        },
-    ]
+    Vec::new()
 }
 
 fn mock_skill_packs() -> Vec<SkillPack> {
@@ -3830,90 +6761,5 @@ fn mock_skill_packs() -> Vec<SkillPack> {
 }
 
 fn mock_tasks() -> Vec<TaskRun> {
-    vec![
-        TaskRun {
-            id: "task-1042".into(),
-            host_id: "mac-studio-lab".into(),
-            host_name: "Mac Studio Lab".into(),
-            action: "Apply profile".into(),
-            status: TaskStatus::Success,
-            started_at: "2026-06-25 09:14".into(),
-            ended_at: Some("2026-06-25 09:15".into()),
-            summary:
-                "Research Default rendered to ~/.codex/config.toml with backup codexhub-1042.toml."
-                    .into(),
-            logs: vec![
-                basic_log(
-                    "task-1042",
-                    1,
-                    TaskLogLevel::Info,
-                    "Opened SFTP session and created remote backup.",
-                ),
-                basic_log(
-                    "task-1042",
-                    2,
-                    TaskLogLevel::Info,
-                    "Rendered profile preview matched expected TOML sections.",
-                ),
-            ],
-        },
-        TaskRun {
-            id: "task-1039".into(),
-            host_id: "linux-runner".into(),
-            host_name: "Linux Runner".into(),
-            action: "Test SSH connection".into(),
-            status: TaskStatus::Failed,
-            started_at: "2026-06-24 22:02".into(),
-            ended_at: Some("2026-06-24 22:02".into()),
-            summary:
-                "Connection timed out. Check VPN route or host firewall before applying profiles."
-                    .into(),
-            logs: vec![
-                basic_log(
-                    "task-1039",
-                    1,
-                    TaskLogLevel::Warn,
-                    "Mock check marks linux-runner offline for UI validation.",
-                ),
-                basic_log(
-                    "task-1039",
-                    2,
-                    TaskLogLevel::Error,
-                    "Connection timeout is simulated; no SSH socket was opened.",
-                ),
-            ],
-        },
-        TaskRun {
-            id: "task-1035".into(),
-            host_id: "win-workstation".into(),
-            host_name: "Windows Workstation".into(),
-            action: "Sync skill pack".into(),
-            status: TaskStatus::Queued,
-            started_at: "2026-06-24 18:25".into(),
-            ended_at: None,
-            summary: "Queued Paper Review skill pack for the next available SSH session.".into(),
-            logs: vec![basic_log(
-                "task-1035",
-                1,
-                TaskLogLevel::Info,
-                "Task created from mock backend reservation.",
-            )],
-        },
-        TaskRun {
-            id: "task-1031".into(),
-            host_id: "win-workstation".into(),
-            host_name: "Windows Workstation".into(),
-            action: "Preview profile".into(),
-            status: TaskStatus::Running,
-            started_at: "2026-06-24 18:10".into(),
-            ended_at: None,
-            summary: "Generating a profile diff preview for the safe editing profile.".into(),
-            logs: vec![basic_log(
-                "task-1031",
-                1,
-                TaskLogLevel::Info,
-                "Mock worker is holding this run in progress for UI coverage.",
-            )],
-        },
-    ]
+    Vec::new()
 }

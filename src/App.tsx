@@ -5,7 +5,14 @@ import type {
   Health,
   Host,
   HostStatus,
+  LatestCodexVersion,
   Profile,
+  ProfileApplyBatchResult,
+  ProfileApplyPreview,
+  ProfileDraft,
+  ProfileImportExport,
+  ProfilePatch,
+  CcSwitchDetection,
   RemoteCodexAction,
   RemoteCodexProgressEvent,
   SkillPack,
@@ -26,6 +33,7 @@ import type { AppSettings, FontPreset, ThemeChoice } from "./settings";
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
 type Locale = "en" | "zh";
 type HostBusyAction = "test" | "bootstrap" | RemoteCodexAction;
+type BadgeTone = "green" | "yellow" | "red" | "blue" | "gray";
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   hostAlias: string;
@@ -37,6 +45,9 @@ type CodexOperationModalState = {
   message?: string;
   error?: string;
 };
+
+const CODEX_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2", "gpt-5-codex"];
+const REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"];
 
 const uiCopy = {
   en: {
@@ -104,7 +115,7 @@ const uiCopy = {
     dashboard: {
       summaryLabel: "Dashboard summary",
       online: "online",
-      mockPresets: "mock presets",
+      managedProfiles: "managed profiles",
       enabled: "enabled",
       active: "active",
       backendContract: "Backend contract",
@@ -179,7 +190,9 @@ const uiCopy = {
       shell: "Shell",
       codexInstalled: "Codex installed",
       codexVersion: "Codex version",
-      configExists: "Config exists",
+      latestCodexVersion: "Latest version",
+      latestCodexUnknown: "Not fetched",
+      configExists: "API config",
       skillsCount: "Skills count",
       yes: "Yes",
       no: "No",
@@ -203,15 +216,76 @@ const uiCopy = {
       latency: "Test latency"
     },
     profiles: {
+      library: "Profile library",
+      editor: "Editor",
+      edit: "Edit",
+      preview: "Preview",
+      applyConfig: "Apply configuration",
+      newProfile: "New",
+      duplicate: "Duplicate",
+      delete: "Delete",
+      import: "Import",
+      export: "Export",
+      actions: "Actions",
+      applyColumn: "Apply",
+      selectHosts: "Select hosts",
+      selectAll: "Select all",
+      apiConfig: "API config",
+      noApiConfig: "No config",
+      unknownApiConfig: "Unknown config",
+      detectCcSwitch: "Detect cc-switch",
+      importDetected: "Import detected",
+      save: "Save",
+      saving: "Saving...",
+      create: "Create",
+      name: "Name",
+      description: "Description",
+      model: "Model",
+      provider: "Provider",
+      baseUrl: "Base URL",
+      apiKeyEnvVar: "API key",
+      apiKey: "API key",
+      apiKeyPlaceholder: "Paste a new key to store",
+      credentialStored: "Credential stored",
+      noCredential: "No stored credential",
+      thirdPartyImport: "Third-party import",
+      localStorageLabel: "Local storage",
+      storeCredential: "Store key",
+      deleteCredential: "Delete key",
+      modelReasoningEffort: "Model reasoning",
+      planModeReasoningEffort: "Plan reasoning",
+      fastMode: "Fast mode",
+      serviceTier: "Service tier",
+      advanced: "Advanced",
+      extraToml: "Extra TOML",
+      source: "Source",
+      selectedHosts: "Selected hosts",
+      targetFiles: "Target files",
+      renderedToml: "Rendered TOML",
+      perHostStatus: "Per-host status",
+      previewApply: "Preview",
+      applySelected: "Apply selected",
+      applyOne: "Apply",
+      batchApply: "Batch apply",
+      backupExpected: "backup",
+      noChangeExpected: "no change",
+      noPreview: "Select hosts and preview before applying.",
+      noProfiles: "No profiles yet.",
+      noProfilesBody: "Create or import a profile to render remote Codex TOML.",
+      noHostTargets: "No hosts available.",
+      applySuccess: (name: string, count: number) => `${name} applied to ${count} host${count === 1 ? "" : "s"}.`,
+      importReady: (count: number) => `${count} profiles imported.`,
+      exportReady: (count: number) => `${count} profiles exported.`,
+      deleteConfirm: (name: string) => `Delete profile ${name}?`,
+      ccSwitchFound: (count: number) => `${count} cc-switch profiles detected.`,
+      ccSwitchNone: "No cc-switch profiles detected.",
+      ccSwitchChecking: "Checking cc-switch...",
       codexPrep: "Remote Codex",
       noHosts: "Add a host before checking remote Codex.",
       notChecked: "Not checked",
       notInstalled: "Not installed",
       operationFailed: "Operation failed",
-      hosts: "hosts",
-      approval: "Approval",
-      sandbox: "Sandbox",
-      updated: "Updated",
+      hosts: "Hosts",
       applyOnline: "Apply to online hosts"
     },
     codexOperation: {
@@ -389,7 +463,7 @@ const uiCopy = {
     dashboard: {
       summaryLabel: "仪表盘概览",
       online: "在线",
-      mockPresets: "mock 预设",
+      managedProfiles: "受管配置",
       enabled: "已启用",
       active: "活跃",
       backendContract: "后端约定",
@@ -464,7 +538,9 @@ const uiCopy = {
       shell: "Shell",
       codexInstalled: "Codex 已安装",
       codexVersion: "Codex版本",
-      configExists: "Config 存在",
+      latestCodexVersion: "最新版本",
+      latestCodexUnknown: "未获取",
+      configExists: "API 配置",
       skillsCount: "Skills 数量",
       yes: "是",
       no: "否",
@@ -488,15 +564,76 @@ const uiCopy = {
       latency: "测试延迟"
     },
     profiles: {
+      library: "配置库",
+      editor: "编辑器",
+      edit: "编辑",
+      preview: "预览",
+      applyConfig: "应用配置",
+      newProfile: "新建",
+      duplicate: "复制",
+      delete: "删除",
+      import: "导入",
+      export: "导出",
+      actions: "操作",
+      applyColumn: "应用",
+      selectHosts: "选择主机",
+      selectAll: "一键全选",
+      apiConfig: "API配置",
+      noApiConfig: "无配置",
+      unknownApiConfig: "未知配置",
+      detectCcSwitch: "检测 cc-switch",
+      importDetected: "导入检测配置",
+      save: "保存",
+      saving: "保存中...",
+      create: "创建",
+      name: "名称",
+      description: "说明",
+      model: "模型",
+      provider: "Provider",
+      baseUrl: "Base URL",
+      apiKeyEnvVar: "API key",
+      apiKey: "API key",
+      apiKeyPlaceholder: "粘贴新 key 后存储",
+      credentialStored: "凭据已存储",
+      noCredential: "未存储凭据",
+      thirdPartyImport: "第三方导入",
+      localStorageLabel: "本地存储",
+      storeCredential: "存储 key",
+      deleteCredential: "删除 key",
+      modelReasoningEffort: "模型推理",
+      planModeReasoningEffort: "计划推理",
+      fastMode: "快速模式",
+      serviceTier: "服务层级",
+      advanced: "高级",
+      extraToml: "额外 TOML",
+      source: "来源",
+      selectedHosts: "已选主机",
+      targetFiles: "目标文件",
+      renderedToml: "渲染 TOML",
+      perHostStatus: "单主机状态",
+      previewApply: "预览",
+      applySelected: "应用所选",
+      applyOne: "应用",
+      batchApply: "批量应用",
+      backupExpected: "备份",
+      noChangeExpected: "无变化",
+      noPreview: "选择主机并预览后再应用。",
+      noProfiles: "暂无配置。",
+      noProfilesBody: "新建或导入配置后即可渲染远端 Codex TOML。",
+      noHostTargets: "暂无可用主机。",
+      applySuccess: (name: string, count: number) => `已将 ${name} 应用到 ${count} 台主机。`,
+      importReady: (count: number) => `已导入 ${count} 个配置。`,
+      exportReady: (count: number) => `已导出 ${count} 个配置。`,
+      deleteConfirm: (name: string) => `删除配置 ${name}？`,
+      ccSwitchFound: (count: number) => `检测到 ${count} 个 cc-switch 配置。`,
+      ccSwitchNone: "未检测到 cc-switch 配置。",
+      ccSwitchChecking: "正在检测 cc-switch...",
       codexPrep: "远端 Codex",
       noHosts: "请先添加主机，再检查远端 Codex。",
       notChecked: "未检查",
       notInstalled: "未安装",
       operationFailed: "操作失败",
-      hosts: "台主机",
-      approval: "审批",
-      sandbox: "沙箱",
-      updated: "更新于",
+      hosts: "主机",
       applyOnline: "应用到在线主机"
     },
     codexOperation: {
@@ -623,6 +760,7 @@ function App() {
   const [tasks, setTasks] = useState<TaskRun[]>([]);
   const [sshStatus, setSshStatus] = useState<SshStatus | null>(null);
   const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
+  const [latestCodexVersion, setLatestCodexVersion] = useState<LatestCodexVersion | null>(null);
   const [loading, setLoading] = useState(true);
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
@@ -642,6 +780,12 @@ function App() {
     setSshStatus(nextSshStatus);
     setSshConfigHosts(nextSshConfigHosts);
     setHosts(nextHosts);
+  };
+
+  const refreshLatestCodex = async (force = false) => {
+    const latest = await api.refreshLatestCodexVersion(force);
+    setLatestCodexVersion(latest);
+    return latest;
   };
 
   useEffect(() => {
@@ -674,6 +818,39 @@ function App() {
 
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void api.refreshLatestCodexVersion(false).then((latest) => {
+      if (mounted) setLatestCodexVersion(latest);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const scheduleNextRefresh = () => {
+      const now = new Date();
+      const next = new Date(now);
+      next.setHours(4, 0, 0, 0);
+      if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        void api.refreshLatestCodexVersion(true).then((latest) => {
+          if (!cancelled) setLatestCodexVersion(latest);
+          scheduleNextRefresh();
+        });
+      }, next.getTime() - now.getTime());
+    };
+    scheduleNextRefresh();
+    return () => {
+      cancelled = true;
+      if (typeof timer === "number") window.clearTimeout(timer);
     };
   }, []);
 
@@ -802,6 +979,8 @@ function App() {
               codexInstalled: result.codexInstalled,
               codexVersion: result.codexVersion,
               configExists: result.configExists,
+              apiConfigName: result.apiConfigName,
+              apiConfigSource: result.apiConfigSource,
               skillsExists: result.skillsExists,
               skillsCount: result.skillsCount,
               latencyMs: result.latencyMs,
@@ -810,6 +989,9 @@ function App() {
           : host
       )
     );
+    const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
+    setHosts(refreshedHosts);
+    setProfiles(refreshedProfiles);
     setTasks((current) => [result.task, ...current]);
     setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
     setHostBusy((current) => {
@@ -907,6 +1089,7 @@ function App() {
       );
       setTasks((current) => [result.task, ...current]);
       setNotice(`${hostName}: ${result.message}`);
+      void refreshLatestCodex(true);
       if (showProgressModal) {
         setCodexOperationModal((current) =>
           current && current.hostAlias === hostAlias && current.action === action
@@ -943,6 +1126,157 @@ function App() {
     }
   };
 
+  const replaceProfile = (profile: Profile) => {
+    setProfiles((current) => current.map((item) => (item.id === profile.id ? profile : item)));
+  };
+
+  const handleCreateProfile = async (draft: ProfileDraft) => {
+    const profile = await api.createProfile(draft);
+    setProfiles((current) => [...current, profile]);
+    setNotice(`${profile.name}: ${copy.profiles.create}`);
+    return profile;
+  };
+
+  const handleUpdateProfile = async (id: string, patch: ProfilePatch) => {
+    const profile = await api.updateProfile(id, patch);
+    replaceProfile(profile);
+    setNotice(`${profile.name}: ${copy.profiles.save}`);
+    return profile;
+  };
+
+  const handleDeleteProfile = async (id: string) => {
+    const profile = profiles.find((item) => item.id === id);
+    await api.deleteProfile(id);
+    setProfiles((current) => current.filter((item) => item.id !== id));
+    setHosts((current) => current.map((host) => (host.profileId === id ? { ...host, profileId: null, apiConfigName: null, apiConfigSource: null } : host)));
+    setNotice(profile ? `${profile.name}: ${copy.profiles.delete}` : copy.profiles.delete);
+  };
+
+  const handleDuplicateProfile = async (id: string) => {
+    const profile = await api.duplicateProfile(id);
+    setProfiles((current) => [...current, profile]);
+    setNotice(`${profile.name}: ${copy.profiles.duplicate}`);
+    return profile;
+  };
+
+  const handleImportProfiles = async (bundle: ProfileImportExport) => {
+    const result = await api.importProfiles(bundle);
+    setProfiles((current) => [...current, ...result.profiles]);
+    setNotice(copy.profiles.importReady(result.profiles.length));
+    return result;
+  };
+
+  const handleExportProfiles = async (profileIds?: string[]) => {
+    const result = await api.exportProfiles(profileIds);
+    setNotice(copy.profiles.exportReady(result.profiles.length));
+    return result;
+  };
+
+  const handleSetProfileApiKey = async (profileId: string, apiKey: string) => {
+    const profile = await api.setProfileApiKey(profileId, apiKey);
+    replaceProfile(profile);
+    setNotice(`${profile.name}: ${copy.profiles.credentialStored}`);
+    return profile;
+  };
+
+  const handleDeleteProfileApiKey = async (profileId: string) => {
+    const profile = await api.deleteProfileApiKey(profileId);
+    replaceProfile(profile);
+    setNotice(`${profile.name}: ${copy.profiles.noCredential}`);
+    return profile;
+  };
+
+  const handlePreviewProfileApply = (profileId: string, hostIds: string[]) => api.previewProfileApply(profileId, hostIds);
+
+  const handleApplyProfile = async (profileId: string, hostIds: string[]) => {
+    const result = await api.applyProfile(profileId, hostIds);
+    if (result.tasks.length > 0) setTasks((current) => [...result.tasks, ...current]);
+    const profileName =
+      result.profiles.find((profile) => profile.id === profileId)?.name ??
+      profiles.find((profile) => profile.id === profileId)?.name ??
+      profileId;
+    if (result.profiles.length > 0 || result.hosts.length > 0) {
+      if (result.profiles.length > 0) setProfiles(result.profiles);
+      if (result.hosts.length > 0) setHosts(result.hosts);
+      setNotice(`${profileName}: ${copy.profiles.applySelected}`);
+      void refreshLatestCodex(true);
+      return result;
+    }
+    const appliedAt = copy.common.justNow;
+    const normalizeHostKey = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
+    const appliedHostKeys = new Set<string>();
+    const successfulResults = result.results.filter((entry) => entry.status === "success" || entry.status === "no-change");
+    for (const item of successfulResults) {
+      for (const key of [item.hostId, item.hostAlias]) {
+        const normalizedKey = normalizeHostKey(key);
+        if (normalizedKey) appliedHostKeys.add(normalizedKey);
+      }
+    }
+    const appliedHostIds = new Set<string>();
+    for (const host of hosts) {
+      if (appliedHostKeys.has(normalizeHostKey(host.id)) || appliedHostKeys.has(normalizeHostKey(host.hostAlias))) {
+        appliedHostIds.add(host.id);
+      }
+    }
+    for (const item of successfulResults) {
+      const resultKeys = [normalizeHostKey(item.hostId), normalizeHostKey(item.hostAlias)].filter(Boolean);
+      const hasCurrentHostMatch = hosts.some(
+        (host) => resultKeys.includes(normalizeHostKey(host.id)) || resultKeys.includes(normalizeHostKey(host.hostAlias))
+      );
+      if (!hasCurrentHostMatch && item.hostId) {
+        appliedHostIds.add(item.hostId);
+      }
+    }
+    setProfiles((current) =>
+      current.map((profile) => {
+        const hostIdsWithoutApplied = profile.hostIds.filter(
+          (hostId) => !appliedHostIds.has(hostId) && !appliedHostKeys.has(normalizeHostKey(hostId))
+        );
+        if (profile.id !== profileId) {
+          return hostIdsWithoutApplied.length === profile.hostIds.length ? profile : { ...profile, hostIds: hostIdsWithoutApplied };
+        }
+        const nextHostIds = Array.from(new Set([...hostIdsWithoutApplied, ...appliedHostIds]));
+        return nextHostIds.length === profile.hostIds.length && nextHostIds.every((hostId, index) => hostId === profile.hostIds[index])
+          ? profile
+          : { ...profile, hostIds: nextHostIds };
+      })
+    );
+    setHosts((current) =>
+      current.map((host) =>
+        appliedHostIds.has(host.id) ||
+        appliedHostKeys.has(normalizeHostKey(host.id)) ||
+        appliedHostKeys.has(normalizeHostKey(host.hostAlias))
+          ? {
+              ...host,
+              profileId,
+              apiConfigName: profileName,
+              apiConfigSource: "profile",
+              profileAppliedAt: appliedAt,
+              profileAppliedSource: "CodexHub"
+            }
+          : host
+      )
+    );
+    setNotice(`${profileName}: ${copy.profiles.applySelected}`);
+    void refreshLatestCodex(true);
+    return result;
+  };
+
+  const handleDetectCcSwitchProfiles = async () => {
+    const detection = await api.detectCcSwitchProfiles();
+    setNotice(
+      detection.detected ? copy.profiles.ccSwitchFound(detection.importExport.profiles.length) : copy.profiles.ccSwitchNone
+    );
+    return detection;
+  };
+
+  const handleImportCcSwitchProfiles = async (detection: CcSwitchDetection) => {
+    const result = await api.importCcSwitchProfiles(detection);
+    setProfiles((current) => [...current, ...result.profiles]);
+    setNotice(copy.profiles.importReady(result.profiles.length));
+    return result;
+  };
+
   const persistSettings = (nextSettings: AppSettings) => {
     setSettings(nextSettings);
     applyAppSettings(nextSettings);
@@ -958,6 +1292,7 @@ function App() {
             copy={copy}
             health={health}
             hosts={hosts}
+            latestCodexVersion={latestCodexVersion}
             loading={loading}
             notice={notice}
             onlineCount={onlineCount}
@@ -975,6 +1310,7 @@ function App() {
             copy={copy}
             hosts={hosts}
             hostBusy={hostBusy}
+            latestCodexVersion={latestCodexVersion}
             sshConfigHosts={sshConfigHosts}
             sshStatus={sshStatus}
             addHostOpen={hostModalOpen}
@@ -990,7 +1326,26 @@ function App() {
           />
         );
       case "profiles":
-        return <ProfilesView />;
+        return (
+          <ProfilesView
+            copy={copy}
+            hosts={hosts}
+            latestCodexVersion={latestCodexVersion}
+            profiles={profiles}
+            onCreateProfile={handleCreateProfile}
+            onDeleteProfile={handleDeleteProfile}
+            onDeleteProfileApiKey={handleDeleteProfileApiKey}
+            onDetectCcSwitchProfiles={handleDetectCcSwitchProfiles}
+            onDuplicateProfile={handleDuplicateProfile}
+            onExportProfiles={handleExportProfiles}
+            onImportCcSwitchProfiles={handleImportCcSwitchProfiles}
+            onImportProfiles={handleImportProfiles}
+            onPreviewProfileApply={handlePreviewProfileApply}
+            onRunProfileApply={handleApplyProfile}
+            onSetProfileApiKey={handleSetProfileApiKey}
+            onUpdateProfile={handleUpdateProfile}
+          />
+        );
       case "skills":
         return <SkillsView copy={copy} skillPacks={skillPacks} />;
       case "tasks":
@@ -1182,6 +1537,7 @@ function DashboardView({
   copy,
   health,
   hosts,
+  latestCodexVersion,
   loading,
   notice,
   onlineCount,
@@ -1196,6 +1552,7 @@ function DashboardView({
   copy: UICopy;
   health: Health;
   hosts: Host[];
+  latestCodexVersion: LatestCodexVersion | null;
   loading: boolean;
   notice: string;
   onlineCount: number;
@@ -1210,7 +1567,7 @@ function DashboardView({
     <div className="pageGrid">
       <section className="summaryStrip" aria-label={copy.dashboard.summaryLabel}>
         <MetricCard label={copy.navItems[1].label} value={String(hosts.length)} detail={`${onlineCount} ${copy.dashboard.online}`} />
-        <MetricCard label={copy.navItems[2].label} value={String(profiles.length)} detail={copy.dashboard.mockPresets} />
+        <MetricCard label={copy.navItems[2].label} value={String(profiles.length)} detail={copy.dashboard.managedProfiles} />
         <MetricCard label={copy.navItems[3].label} value={String(skillPacks.length)} detail={`${skillPacks.filter((pack) => pack.enabled).length} ${copy.dashboard.enabled}`} />
         <MetricCard label={copy.navItems[4].label} value={String(tasks.length)} detail={`${activeTasks} ${copy.dashboard.active}`} />
       </section>
@@ -1227,7 +1584,7 @@ function DashboardView({
         </div>
       </section>
 
-      <ServerMatrix copy={copy} hosts={hosts} profileById={profileById} skillPackById={skillPackById} />
+      <ServerMatrix copy={copy} hosts={hosts} latestCodexVersion={latestCodexVersion} profileById={profileById} skillPackById={skillPackById} />
       <BatchOperationsPlaceholder copy={copy} />
       <RecentTasks copy={copy} tasks={tasks} onViewAll={() => onSelectSection("tasks")} />
     </div>
@@ -1265,11 +1622,13 @@ function BatchOperationsPlaceholder({ copy }: { copy: UICopy }) {
 function ServerMatrix({
   copy,
   hosts,
+  latestCodexVersion,
   profileById,
   skillPackById
 }: {
   copy: UICopy;
   hosts: Host[];
+  latestCodexVersion: LatestCodexVersion | null;
   profileById: Map<string, Profile>;
   skillPackById: Map<string, SkillPack>;
 }) {
@@ -1291,7 +1650,9 @@ function ServerMatrix({
         </div>
       ) : (
         <div className="matrixGrid">
-          {hosts.map((host) => (
+          {hosts.map((host) => {
+            const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
+            return (
             <article className="hostCard" key={host.id}>
               <div className="hostHeader">
                 <div>
@@ -1308,11 +1669,14 @@ function ServerMatrix({
                 </div>
                 <div>
                   <dt>{copy.hosts.codex}</dt>
-                  <dd>{formatBoolean(host.codexInstalled, copy)} · {host.codexVersion}</dd>
+                  <dd><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></dd>
                 </div>
                 <div>
                   <dt>{copy.hosts.profile}</dt>
-                  <dd>{host.profileId ? profileById.get(host.profileId)?.name ?? host.profileId : copy.common.unassigned}</dd>
+                  <dd>
+                    {host.profileId ? profileById.get(host.profileId)?.name ?? host.profileId : copy.common.unassigned}
+                    {host.profileAppliedAt ? <span>{host.profileAppliedSource ? ` / ${host.profileAppliedSource}` : ""} {host.profileAppliedAt}</span> : null}
+                  </dd>
                 </div>
                 <div>
                   <dt>{copy.hosts.latency}</dt>
@@ -1328,7 +1692,8 @@ function ServerMatrix({
                 {host.skillPackIds.length > 0 ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ") : copy.dashboard.noSkillPacks}
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
@@ -1366,6 +1731,7 @@ function HostsView({
   copy,
   hostBusy,
   hosts,
+  latestCodexVersion,
   sshBusy,
   sshConfigHosts,
   sshStatus,
@@ -1382,6 +1748,7 @@ function HostsView({
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
+  latestCodexVersion: LatestCodexVersion | null;
   sshBusy: boolean;
   sshConfigHosts: SshConfigHost[];
   sshStatus: SshStatus | null;
@@ -1478,6 +1845,7 @@ function HostsView({
                   <th className="sshHostsPortCol">{copy.hosts.port}</th>
                   <th className="sshHostsUserCol">{copy.hosts.user}</th>
                   <th className="sshHostsVersionCol">{copy.hosts.codexVersion}</th>
+                  <th className="sshHostsLatestVersionCol">{copy.hosts.latestCodexVersion}</th>
                   <th className="sshHostsActionsCol">{copy.hosts.actions}</th>
                   <th className="sshHostsCodexCol">{copy.hosts.codex}</th>
                 </tr>
@@ -1486,10 +1854,11 @@ function HostsView({
                 {sshConfigHosts.map((sshHost) => {
                   const host = hostByAlias.get(sshHost.alias.toLowerCase()) ?? null;
                   const busy = hostBusy[sshHost.alias];
-                  const codexStatus = hostCodexStatus(copy, host, busy);
+                  const codexStatus = hostCodexStatus(copy, host, busy, hosts, latestCodexVersion);
+                  const latestStatus = latestCodexStatus(copy, latestCodexVersion);
                   const codexTested = isHostCodexTested(host);
                   const installDisabled = Boolean(busy) || !codexTested || Boolean(host?.codexInstalled);
-                  const updateDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled;
+                  const updateDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled || !isCodexVersionBehind(host.codexVersion, latestCodexVersion?.version);
 
                   return (
                     <tr className="selectableRow" data-selected={selectedHostAlias === sshHost.alias} key={sshHost.alias} onClick={() => setSelectedHostAlias(sshHost.alias)}>
@@ -1499,6 +1868,7 @@ function HostsView({
                       <td className="sshHostsPortCol">{sshHost.port}</td>
                       <td className="sshHostsUserCol">{sshHost.user}</td>
                       <td className="sshHostsVersionCol"><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
+                      <td className="sshHostsLatestVersionCol"><Badge tone={latestStatus.tone} title={latestStatus.title}>{latestStatus.label}</Badge></td>
                       <td className="sshHostsActionsCol">
                         <div className="tableActions sshHostsActionGroup">
                           <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(sshHost.alias); }}>
@@ -1527,7 +1897,7 @@ function HostsView({
         )}
       </section>
 
-      <HostDetailsPanel copy={copy} host={selectedHost} />
+      <HostDetailsPanel copy={copy} host={selectedHost} hosts={hosts} latestCodexVersion={latestCodexVersion} />
     </div>
   );
 }
@@ -1758,11 +2128,18 @@ function StepStatusIcon({ status }: { status: SshBootstrapStepStatus }) {
 }
 function HostDetailsPanel({
   copy,
-  host
+  host,
+  hosts,
+  latestCodexVersion
 }: {
   copy: UICopy;
   host: Host | null;
+  hosts: Host[];
+  latestCodexVersion: LatestCodexVersion | null;
 }) {
+  const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
+  const codexInstalledStatus = hostCodexInstalledStatus(copy, host);
+
   return (
     <section className="panel spanWide">
       <div className="panelHeader">
@@ -1777,47 +2154,880 @@ function HostDetailsPanel({
       <dl className="detailGrid">
         <div>
           <dt>{copy.hosts.sshStatus}</dt>
-          <dd>{host ? copy.status.host[host.status] : copy.hosts.unknown}</dd>
+          <dd>
+            {host ? <StatusBadge copy={copy} status={host.status} /> : <HostDetailValueBadge label={copy.hosts.unknown} tone="gray" />}
+          </dd>
         </div>
         <div>
           <dt>{copy.hosts.os}</dt>
-          <dd>{host?.os ?? copy.hosts.unknown}</dd>
+          <dd><HostDetailValueBadge label={knownHostValue(host?.os, copy)} tone={knownValueTone(host?.os, copy)} /></dd>
         </div>
         <div>
           <dt>{copy.hosts.arch}</dt>
-          <dd>{host?.arch ?? copy.hosts.unknown}</dd>
+          <dd><HostDetailValueBadge label={knownHostValue(host?.arch, copy)} tone={archTone(host?.arch, copy)} /></dd>
         </div>
         <div>
           <dt>{copy.hosts.shell}</dt>
-          <dd>{host?.shell ?? copy.hosts.unknown}</dd>
+          <dd><HostDetailValueBadge label={knownHostValue(host?.shell, copy)} tone={knownValueTone(host?.shell, copy)} /></dd>
         </div>
         <div>
           <dt>{copy.hosts.latency}</dt>
-          <dd>{formatLatency(host?.latencyMs, copy)}</dd>
+          <dd><HostDetailValueBadge label={formatLatency(host?.latencyMs, copy)} tone={latencyTone(host?.latencyMs, hosts)} /></dd>
         </div>
         <div>
           <dt>{copy.hosts.codexInstalled}</dt>
-          <dd>{host ? formatBoolean(host.codexInstalled, copy) : copy.hosts.unknown}</dd>
+          <dd><HostDetailValueBadge label={codexInstalledStatus.label} tone={codexInstalledStatus.tone} /></dd>
         </div>
         <div>
           <dt>{copy.hosts.codexVersion}</dt>
-          <dd>{host?.codexVersion ?? copy.hosts.unknown}</dd>
+          <dd><HostDetailValueBadge label={codexStatus.label} tone={codexStatus.tone} /></dd>
         </div>
         <div>
           <dt>{copy.hosts.configExists}</dt>
-          <dd>{host ? formatNullableBoolean(host.configExists, copy) : copy.hosts.unknown}</dd>
+          <dd>{host ? <HostApiConfigBadge copy={copy} host={host} /> : <HostDetailValueBadge label={copy.hosts.unknown} tone="gray" />}</dd>
         </div>
         <div>
           <dt>{copy.hosts.skillsCount}</dt>
-          <dd>{host?.skillsCount ?? copy.hosts.unknown}</dd>
+          <dd><HostDetailValueBadge label={typeof host?.skillsCount === "number" ? String(host.skillsCount) : copy.hosts.unknown} tone={skillCountTone(host?.skillsCount)} /></dd>
         </div>
       </dl>
     </section>
   );
 }
 
-function ProfilesView() {
-  return <div className="profilesStack" />;
+function ProfilesView({
+  copy,
+  hosts,
+  latestCodexVersion,
+  profiles,
+  onCreateProfile,
+  onDeleteProfile,
+  onDeleteProfileApiKey,
+  onDetectCcSwitchProfiles,
+  onDuplicateProfile,
+  onExportProfiles,
+  onImportCcSwitchProfiles,
+  onImportProfiles,
+  onPreviewProfileApply,
+  onRunProfileApply,
+  onSetProfileApiKey,
+  onUpdateProfile
+}: {
+  copy: UICopy;
+  hosts: Host[];
+  latestCodexVersion: LatestCodexVersion | null;
+  profiles: Profile[];
+  onCreateProfile: (draft: ProfileDraft) => Promise<Profile>;
+  onDeleteProfile: (id: string) => Promise<void>;
+  onDeleteProfileApiKey: (profileId: string) => Promise<Profile>;
+  onDetectCcSwitchProfiles: () => Promise<CcSwitchDetection>;
+  onDuplicateProfile: (id: string) => Promise<Profile>;
+  onExportProfiles: (profileIds?: string[]) => Promise<ProfileImportExport>;
+  onImportCcSwitchProfiles: (detection: CcSwitchDetection) => Promise<ProfileImportExport>;
+  onImportProfiles: (bundle: ProfileImportExport) => Promise<ProfileImportExport>;
+  onPreviewProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyPreview>;
+  onRunProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyBatchResult>;
+  onSetProfileApiKey: (profileId: string, apiKey: string) => Promise<Profile>;
+  onUpdateProfile: (id: string, patch: ProfilePatch) => Promise<Profile>;
+}) {
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(profiles[0]?.id ?? null);
+  const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? profiles[0] ?? null;
+  const [selectedHostIds, setSelectedHostIds] = useState<string[]>(() => selectedProfile?.hostIds ?? []);
+  const [preview, setPreview] = useState<ProfileApplyPreview | null>(null);
+  const [applyResult, setApplyResult] = useState<ProfileApplyBatchResult | null>(null);
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [hostPickerProfileId, setHostPickerProfileId] = useState<string | null>(null);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [ccDetection, setCcDetection] = useState<CcSwitchDetection | null>(null);
+  const [ccDetectionError, setCcDetectionError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const editingProfile = editingProfileId ? profiles.find((profile) => profile.id === editingProfileId) ?? null : null;
+  const hostPickerProfile = hostPickerProfileId ? profiles.find((profile) => profile.id === hostPickerProfileId) ?? null : null;
+  const profileById = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
+  const appliedHostCountByProfileId = useMemo(() => {
+    const counts = new Map<string, Set<string>>();
+    const addHost = (profileId: string, hostId: string) => {
+      const profileHosts = counts.get(profileId) ?? new Set<string>();
+      profileHosts.add(hostId);
+      counts.set(profileId, profileHosts);
+    };
+    for (const host of hosts) {
+      for (const profile of profiles) {
+        if (profileMatchesConfirmedHostApiConfig(profile, host)) {
+          addHost(profile.id, host.id);
+        }
+      }
+    }
+    return new Map(Array.from(counts.entries()).map(([profileId, profileHosts]) => [profileId, profileHosts.size]));
+  }, [hosts, profiles]);
+  const selectedAppliedHostIds = useMemo(() => {
+    if (!selectedProfile) return [];
+    return hosts
+      .filter((host) => profileMatchesConfirmedHostApiConfig(selectedProfile, host))
+      .map((host) => host.id);
+  }, [hosts, selectedProfile]);
+
+  useEffect(() => {
+    if (!selectedProfileId && profiles[0]) setSelectedProfileId(profiles[0].id);
+    if (selectedProfileId && !profiles.some((profile) => profile.id === selectedProfileId)) {
+      setSelectedProfileId(profiles[0]?.id ?? null);
+    }
+  }, [profiles, selectedProfileId]);
+
+  useEffect(() => {
+    setSelectedHostIds(selectedAppliedHostIds);
+    setPreview(null);
+    setApplyResult(null);
+  }, [selectedProfile?.id, selectedAppliedHostIds]);
+
+  const runBusy = async <T,>(label: string, action: () => Promise<T>) => {
+    setBusy(label);
+    try {
+      return await action();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleSaveProfile = async (profile: Profile | null, draft: ProfileDraft) => {
+    const saved = profile
+      ? await runBusy("save", () => onUpdateProfile(profile.id, draft))
+      : await runBusy("create", () => onCreateProfile(draft));
+    setSelectedProfileId(saved.id);
+    return saved;
+  };
+
+  const handleDelete = async (profile: Profile) => {
+    if (!window.confirm(copy.profiles.deleteConfirm(profile.name))) return;
+    await runBusy("delete", () => onDeleteProfile(profile.id));
+  };
+
+  const handleDuplicate = async (profile: Profile) => {
+    const duplicate = await runBusy("duplicate", () => onDuplicateProfile(profile.id));
+    setSelectedProfileId(duplicate.id);
+  };
+
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    setCcDetectionError(null);
+    const text = await file.text();
+    const parsed = JSON.parse(text) as ProfileImportExport | Profile[];
+    const bundle: ProfileImportExport = Array.isArray(parsed)
+      ? { schemaVersion: 1, exportedAt: new Date().toISOString(), profiles: parsed }
+      : parsed;
+    const imported = await runBusy("import", () => onImportProfiles(bundle));
+    setSelectedProfileId(imported.profiles[0]?.id ?? selectedProfileId);
+    if (importInputRef.current) importInputRef.current.value = "";
+  };
+
+  const handleExport = async (profile: Profile) => {
+    const exported = await runBusy("export", () => onExportProfiles([profile.id]));
+    downloadProfileExport(exported);
+  };
+
+  const handleDetectCcSwitch = async () => {
+    setCcDetectionError(null);
+    try {
+      const detection = await runBusy("detect", onDetectCcSwitchProfiles);
+      setCcDetection(detection);
+    } catch (error) {
+      setCcDetection(null);
+      setCcDetectionError(formatError(error));
+    }
+  };
+
+  const handleImportDetected = async () => {
+    if (!ccDetection) return;
+    setCcDetectionError(null);
+    const imported = await runBusy("import-cc", () => onImportCcSwitchProfiles(ccDetection));
+    setSelectedProfileId(imported.profiles[0]?.id ?? selectedProfileId);
+    setCcDetection(null);
+  };
+
+  const handleStoreCredential = async (profileId: string, apiKey: string) => {
+    const updated = await runBusy("store-key", () => onSetProfileApiKey(profileId, apiKey));
+    setSelectedProfileId(updated.id);
+    return updated;
+  };
+
+  const handleDeleteCredential = async (profileId: string) => {
+    return runBusy("delete-key", () => onDeleteProfileApiKey(profileId));
+  };
+
+  const clearApplyState = () => {
+    setPreview(null);
+    setApplyResult(null);
+  };
+
+  const handleSelectAllHosts = () => {
+    setSelectedHostIds(hosts.map((host) => host.id));
+    clearApplyState();
+  };
+
+  const handlePreview = async (hostIds = selectedHostIds) => {
+    if (!selectedProfile || hostIds.length === 0) return;
+    setSelectedHostIds(hostIds);
+    setPreviewModalOpen(true);
+    setPreview(null);
+    setApplyResult(null);
+    const result = await runBusy("preview", () => onPreviewProfileApply(selectedProfile.id, hostIds));
+    setPreview(result);
+  };
+
+  const runProfileApply = async (profile: Profile, hostIds: string[], syncSelection = false) => {
+    if (hostIds.length === 0) return null;
+    if (syncSelection) {
+      setSelectedProfileId(profile.id);
+      setSelectedHostIds(hostIds);
+    }
+    const result = await runBusy("apply", () => onRunProfileApply(profile.id, hostIds));
+    if (syncSelection || selectedProfile?.id === profile.id) {
+      setApplyResult(result);
+      setPreview((current) => (current && current.profileId === profile.id ? { ...current, hostResults: result.results } : current));
+    }
+    return result;
+  };
+
+  const handleApply = async (hostIds = selectedHostIds) => {
+    if (!selectedProfile || hostIds.length === 0) return null;
+    return runProfileApply(selectedProfile, hostIds, true);
+  };
+
+  const toggleHost = (hostId: string) => {
+    setSelectedHostIds((current) => (current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]));
+    clearApplyState();
+  };
+
+  const previewWithResults = preview && applyResult ? { ...preview, hostResults: applyResult.results } : preview;
+  const ccSwitchStatus = busy === "detect"
+    ? copy.profiles.ccSwitchChecking
+    : ccDetectionError ?? (ccDetection
+      ? ccDetection.detected
+        ? copy.profiles.ccSwitchFound(ccDetection.importExport.profiles.length)
+        : copy.profiles.ccSwitchNone
+      : "");
+  const canImportCcSwitchDetection = Boolean(ccDetection?.detected);
+
+  return (
+    <div className="profilesStack">
+      <section className="panel spanWide">
+        <div className="panelHeader">
+          <div>
+            <h2>{copy.profiles.library}</h2>
+          </div>
+          <div className="topActions profileLibraryActions">
+            <button className="secondaryButton" type="button" onClick={() => {
+              setEditingProfileId(null);
+              setProfileEditorOpen(true);
+            }}>{copy.profiles.newProfile}</button>
+            <button className="secondaryButton" type="button" onClick={() => importInputRef.current?.click()}>{copy.profiles.import}</button>
+            <button
+              className={`${canImportCcSwitchDetection ? "primaryButton" : "secondaryButton"} ccSwitchActionButton`}
+              disabled={canImportCcSwitchDetection ? busy === "import-cc" : busy === "detect"}
+              type="button"
+              onClick={() => void (canImportCcSwitchDetection ? handleImportDetected() : handleDetectCcSwitch())}
+            >
+              {canImportCcSwitchDetection ? copy.profiles.importDetected : copy.profiles.detectCcSwitch}
+            </button>
+            <input
+              ref={importInputRef}
+              hidden
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => void handleImportFile(event.currentTarget.files?.[0])}
+            />
+          </div>
+        </div>
+
+        {ccSwitchStatus ? (
+          <div className="profileCcSwitchStatus" role="status">
+            <Badge tone={ccDetectionError ? "red" : ccDetection?.detected ? "green" : busy === "detect" ? "blue" : "gray"}>
+              cc-switch
+            </Badge>
+            <span>{ccSwitchStatus}</span>
+            {ccDetection?.sourcePath ? <code>{ccDetection.sourcePath}</code> : null}
+          </div>
+        ) : null}
+
+        <div className="tableWrap">
+          <table className="profilesTable profileTable">
+            <thead>
+              <tr>
+                <th>{copy.profiles.name}</th>
+                <th>{copy.profiles.model}</th>
+                <th>{copy.profiles.provider}</th>
+                <th>{copy.profiles.apiKey}</th>
+                <th>{copy.profiles.hosts}</th>
+                <th>{copy.profiles.actions}</th>
+                <th>{copy.profiles.applyColumn}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {profiles.map((profile) => (
+                <tr
+                  className="selectableRow"
+                  data-selected={selectedProfile?.id === profile.id}
+                  key={profile.id}
+                  onClick={() => setSelectedProfileId(profile.id)}
+                >
+                  <td><strong>{profile.name}</strong></td>
+                  <td>{profile.model}</td>
+                  <td>{profile.provider}</td>
+                  <td><ProfileStorageBadge copy={copy} profile={profile} /></td>
+                  <td>{appliedHostCountByProfileId.get(profile.id) ?? 0}</td>
+                  <td>
+                    <div className="profileRowActions" onClick={(event) => event.stopPropagation()}>
+                      <button className="miniButton" type="button" onClick={() => {
+                        setEditingProfileId(profile.id);
+                        setProfileEditorOpen(true);
+                      }}>{copy.profiles.edit}</button>
+                      <button className="miniButton" disabled={busy === "duplicate"} type="button" onClick={() => void handleDuplicate(profile)}>{copy.profiles.duplicate}</button>
+                      <button className="miniButton" disabled={busy === "export"} type="button" onClick={() => void handleExport(profile)}>{copy.profiles.export}</button>
+                      <button className="miniButton danger" disabled={busy === "delete"} type="button" onClick={() => void handleDelete(profile)}>{copy.profiles.delete}</button>
+                    </div>
+                  </td>
+                  <td>
+                    <button
+                      className="miniButton"
+                      disabled={hosts.length === 0 || busy === "apply"}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedProfileId(profile.id);
+                        setHostPickerProfileId(profile.id);
+                      }}
+                    >
+                      {copy.profiles.selectHosts}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel spanWide profileApplyPanel">
+        <div className="panelHeader compact">
+          <div>
+            <h2>{copy.profiles.applyConfig}</h2>
+          </div>
+          <div className="topActions">
+            <button className="secondaryButton" disabled={hosts.length === 0} type="button" onClick={handleSelectAllHosts}>{copy.profiles.selectAll}</button>
+            <button className="primaryButton" disabled={!selectedProfile || selectedHostIds.length === 0 || busy === "apply"} type="button" onClick={() => void handleApply()}>{copy.profiles.applySelected}</button>
+          </div>
+        </div>
+
+        {hosts.length === 0 ? (
+          <p className="mutedText">{copy.profiles.noHostTargets}</p>
+        ) : (
+          <div className="tableWrap">
+            <table className="sshHostsTable profileApplyTable">
+              <thead>
+                <tr>
+                  <th className="sshHostsAliasCol">{copy.hosts.alias}</th>
+                  <th className="sshHostsSourceCol">{copy.hosts.source}</th>
+                  <th className="sshHostsAddressCol">{copy.hosts.hostName}</th>
+                  <th className="sshHostsVersionCol">{copy.hosts.codexVersion}</th>
+                  <th className="profileApplyConfigCol">{copy.profiles.apiConfig}</th>
+                  <th className="sshHostsActionsCol">{copy.hosts.actions}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hosts.map((host) => {
+                  const selected = selectedHostIds.includes(host.id);
+                  const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
+                  return (
+                    <tr
+                      className="selectableRow"
+                      data-selected={selected}
+                      key={host.id}
+                      onClick={() => toggleHost(host.id)}
+                    >
+                      <td className="sshHostsAliasCol">
+                        <label className="profileHostSelectCell" onClick={(event) => event.stopPropagation()}>
+                          <input checked={selected} type="checkbox" onChange={() => toggleHost(host.id)} />
+                          <strong>{host.hostAlias}</strong>
+                        </label>
+                      </td>
+                      <td className="sshHostsSourceCol"><Badge tone={host.source === "managed" ? "blue" : "gray"}>{hostSourceLabel(copy, host)}</Badge></td>
+                      <td className="sshHostsAddressCol">{host.address}</td>
+                      <td className="sshHostsVersionCol"><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
+                      <td className="profileApplyConfigCol"><HostApiConfigBadge copy={copy} host={host} profileById={profileById} /></td>
+                      <td className="sshHostsActionsCol">
+                        <div className="tableActions sshHostsActionGroup">
+                          <button className="miniButton" disabled={!selectedProfile || busy === "preview"} type="button" onClick={(event) => { event.stopPropagation(); void handlePreview([host.id]); }}>
+                            {copy.profiles.previewApply}
+                          </button>
+                          <button className="miniButton" disabled={!selectedProfile || busy === "apply"} type="button" onClick={(event) => { event.stopPropagation(); void handleApply([host.id]); }}>
+                            {copy.profiles.applyOne}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <ProfileEditModal
+        busy={busy}
+        copy={copy}
+        open={profileEditorOpen}
+        profile={editingProfile}
+        onClose={() => setProfileEditorOpen(false)}
+        onDeleteCredential={handleDeleteCredential}
+        onSave={handleSaveProfile}
+        onStoreCredential={handleStoreCredential}
+      />
+
+      <ProfileHostSelectModal
+        busy={busy}
+        copy={copy}
+        hosts={hosts}
+        open={Boolean(hostPickerProfile)}
+        profile={hostPickerProfile}
+        profileById={profileById}
+        onApply={(profile, hostIds) => runProfileApply(profile, hostIds, true)}
+        onClose={() => setHostPickerProfileId(null)}
+      />
+
+      <ProfileApplyPreviewModal
+        busy={busy}
+        copy={copy}
+        open={previewModalOpen}
+        preview={previewWithResults}
+        selectedCount={selectedHostIds.length}
+        onApplySelected={() => void handleApply()}
+        onClose={() => setPreviewModalOpen(false)}
+      />
+    </div>
+  );
+}
+
+function ProfileHostSelectModal({
+  busy,
+  copy,
+  hosts,
+  open,
+  profile,
+  profileById,
+  onApply,
+  onClose
+}: {
+  busy: string | null;
+  copy: UICopy;
+  hosts: Host[];
+  open: boolean;
+  profile: Profile | null;
+  profileById: Map<string, Profile>;
+  onApply: (profile: Profile, hostIds: string[]) => Promise<ProfileApplyBatchResult | null>;
+  onClose: () => void;
+}) {
+  const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || !profile) return;
+    setSelectedHostIds(
+      hosts
+        .filter((host) => profileMatchesConfirmedHostApiConfig(profile, host))
+        .map((host) => host.id)
+    );
+    setMessage(null);
+  }, [open, profile, hosts]);
+
+  if (!open || !profile) return null;
+
+  const toggleHost = (hostId: string) => {
+    setSelectedHostIds((current) => (current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]));
+    setMessage(null);
+  };
+
+  const handleApply = async () => {
+    if (selectedHostIds.length === 0 || busy === "apply") return;
+    setMessage(null);
+    try {
+      const result = await onApply(profile, selectedHostIds);
+      if (!result) return;
+      if (!result.ok) {
+        setMessage(result.results.find((row) => row.status === "failed")?.message ?? copy.profiles.operationFailed);
+        return;
+      }
+      setMessage(copy.profiles.applySuccess(profile.name, selectedHostIds.length));
+      window.setTimeout(() => onClose(), 650);
+    } catch (error) {
+      setMessage(formatError(error));
+    }
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <div className="sshHostModal profileHostSelectModal ProfileHostSelectModal" role="dialog" aria-modal="true" aria-labelledby="profile-host-select-title">
+        <button className="modalCloseButton" disabled={busy === "apply"} type="button" onClick={onClose} aria-label="Close">&times;</button>
+        <div className="modalHero">
+          <h2 id="profile-host-select-title">{copy.profiles.selectHosts}</h2>
+        </div>
+
+        <div className="profileHostSelectList">
+          {hosts.map((host) => {
+            const selected = selectedHostIds.includes(host.id);
+            return (
+              <label className="profileHostSelectRow" data-selected={selected} key={host.id}>
+                <input checked={selected} disabled={busy === "apply"} type="checkbox" onChange={() => toggleHost(host.id)} />
+                <strong>{host.name}</strong>
+                <HostApiConfigBadge copy={copy} host={host} profileById={profileById} />
+              </label>
+            );
+          })}
+        </div>
+
+        {message ? <p className="profileHostSelectMessage" role="status">{message}</p> : null}
+
+        <div className="modalActions profileHostSelectActions">
+          <button className="secondaryButton" disabled={hosts.length === 0 || busy === "apply"} type="button" onClick={() => {
+            setSelectedHostIds(hosts.map((host) => host.id));
+            setMessage(null);
+          }}>
+            {copy.profiles.selectAll}
+          </button>
+          <button className="primaryButton" disabled={selectedHostIds.length === 0 || busy === "apply"} type="button" onClick={() => void handleApply()}>
+            {copy.profiles.applySelected}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileEditModal({
+  busy,
+  copy,
+  open,
+  profile,
+  onClose,
+  onDeleteCredential,
+  onSave,
+  onStoreCredential
+}: {
+  busy: string | null;
+  copy: UICopy;
+  open: boolean;
+  profile: Profile | null;
+  onClose: () => void;
+  onDeleteCredential: (profileId: string) => Promise<Profile>;
+  onSave: (profile: Profile | null, draft: ProfileDraft) => Promise<Profile>;
+  onStoreCredential: (profileId: string, apiKey: string) => Promise<Profile>;
+}) {
+  const [draft, setDraft] = useState<ProfileDraft>(() => profileToDraft(profile));
+  const [credentialInput, setCredentialInput] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setDraft(profileToDraft(profile));
+    setCredentialInput("");
+  }, [open, profile]);
+
+  if (!open) return null;
+
+  const updateDraft = <K extends keyof ProfileDraft>(key: K, value: ProfileDraft[K]) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const saved = await onSave(profile, draft);
+    if (credentialInput.trim()) {
+      await onStoreCredential(saved.id, credentialInput.trim());
+    }
+    onClose();
+  };
+
+  const handleStoreCredential = async () => {
+    if (!profile || !credentialInput.trim()) return;
+    await onStoreCredential(profile.id, credentialInput.trim());
+    setCredentialInput("");
+  };
+
+  const handleDeleteCredential = async () => {
+    if (!profile) return;
+    await onDeleteCredential(profile.id);
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <div className="sshHostModal profileEditModal ProfileEditModal" role="dialog" aria-modal="true" aria-labelledby="profile-edit-modal-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">×</button>
+        <div className="modalHero">
+          <h2 id="profile-edit-modal-title">{profile ? copy.profiles.editor : copy.profiles.newProfile}</h2>
+        </div>
+
+        <form className="modalForm profileModalForm" onSubmit={handleSubmit}>
+          <label className="fieldGroup">
+            <span>{copy.profiles.name}</span>
+            <input value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} required />
+          </label>
+          <div className="fieldGroup">
+            <span>{copy.profiles.model}</span>
+            <ProfileModelCombobox value={draft.model} onChange={(value) => updateDraft("model", value)} />
+          </div>
+          <label className="fieldGroup">
+            <span>{copy.profiles.provider}</span>
+            <input value={draft.provider} onChange={(event) => updateDraft("provider", event.target.value)} />
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.profiles.baseUrl}</span>
+            <input value={draft.baseUrl} onChange={(event) => updateDraft("baseUrl", event.target.value)} />
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.profiles.apiKeyEnvVar}</span>
+            <input value={draft.apiKeyEnvVar} onChange={(event) => updateDraft("apiKeyEnvVar", event.target.value)} />
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.profiles.modelReasoningEffort}</span>
+            <select value={draft.modelReasoningEffort} onChange={(event) => updateDraft("modelReasoningEffort", event.target.value)}>
+              {REASONING_EFFORT_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <label className="fieldGroup">
+            <span>{copy.profiles.planModeReasoningEffort}</span>
+            <select value={draft.planModeReasoningEffort} onChange={(event) => updateDraft("planModeReasoningEffort", event.target.value)}>
+              {REASONING_EFFORT_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <div className="fieldGroup profileFastModeField">
+            <span>{copy.profiles.fastMode}</span>
+            <div className="profileFastModeSegment" role="radiogroup" aria-label={copy.profiles.fastMode}>
+              <button
+                aria-pressed={draft.fastMode}
+                className="profileFastModeOption"
+                data-selected={draft.fastMode}
+                type="button"
+                onClick={() => updateDraft("fastMode", true)}
+              >
+                {copy.hosts.yes}
+              </button>
+              <button
+                aria-pressed={!draft.fastMode}
+                className="profileFastModeOption"
+                data-selected={!draft.fastMode}
+                type="button"
+                onClick={() => updateDraft("fastMode", false)}
+              >
+                {copy.hosts.no}
+              </button>
+            </div>
+          </div>
+
+          <details className="profileAdvancedDetails">
+            <summary>{copy.profiles.advanced}</summary>
+            <div className="profileAdvancedGrid">
+              <label className="fieldGroup">
+                <span>{copy.profiles.serviceTier}</span>
+                <input value={draft.serviceTier} onChange={(event) => updateDraft("serviceTier", event.target.value)} />
+              </label>
+              <label className="fieldGroup">
+                <span>{copy.profiles.description}</span>
+                <input value={draft.description} onChange={(event) => updateDraft("description", event.target.value)} />
+              </label>
+              <label className="fieldGroup fieldWide">
+                <span>{copy.profiles.extraToml}</span>
+                <textarea value={draft.extraToml} onChange={(event) => updateDraft("extraToml", event.target.value)} rows={5} />
+              </label>
+              <div className="profileCredentialRow">
+                <Badge tone={profile?.credentialStored ? "green" : "gray"}>
+                  {profile?.credentialStored ? copy.profiles.credentialStored : copy.profiles.noCredential}
+                </Badge>
+                <input
+                  autoComplete="new-password"
+                  placeholder={copy.profiles.apiKeyPlaceholder}
+                  type="password"
+                  value={credentialInput}
+                  onChange={(event) => setCredentialInput(event.target.value)}
+                />
+                <button className="secondaryButton" disabled={!profile || !credentialInput.trim() || busy === "store-key"} type="button" onClick={() => void handleStoreCredential()}>
+                  {copy.profiles.storeCredential}
+                </button>
+                <button className="secondaryButton" disabled={!profile?.credentialStored || busy === "delete-key"} type="button" onClick={() => void handleDeleteCredential()}>
+                  {copy.profiles.deleteCredential}
+                </button>
+              </div>
+            </div>
+          </details>
+
+          <div className="modalActions">
+            <button className="primaryButton" disabled={!draft.name.trim() || busy === "save" || busy === "create"} type="submit">
+              {busy === "save" || busy === "create" ? copy.profiles.saving : profile ? copy.profiles.save : copy.profiles.create}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ProfileModelCombobox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const query = value.trim().toLowerCase();
+  const options = useMemo(
+    () => CODEX_MODEL_OPTIONS.filter((model) => !query || model.toLowerCase().includes(query)),
+    [query]
+  );
+
+  return (
+    <div className="profileModelCombobox">
+      <input
+        aria-autocomplete="list"
+        aria-expanded={open}
+        role="combobox"
+        value={value}
+        onBlur={() => window.setTimeout(() => setOpen(false), 90)}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+      />
+      {open && options.length > 0 ? (
+        <div className="profileModelOptions" role="listbox">
+          {options.map((model) => (
+            <button
+              className="profileModelOption"
+              data-selected={model === value}
+              key={model}
+              role="option"
+              type="button"
+              onClick={() => {
+                onChange(model);
+                setOpen(false);
+              }}
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              {model}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfileApplyPreviewModal({
+  busy,
+  copy,
+  open,
+  preview,
+  selectedCount,
+  onApplySelected,
+  onClose
+}: {
+  busy: string | null;
+  copy: UICopy;
+  open: boolean;
+  preview: ProfileApplyPreview | null;
+  selectedCount: number;
+  onApplySelected: () => void;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <div className="sshHostModal profileApplyPreviewModal ProfileApplyPreviewModal" role="dialog" aria-modal="true" aria-labelledby="profile-apply-preview-modal-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">×</button>
+        <div className="modalHero">
+          <h2 id="profile-apply-preview-modal-title">{copy.profiles.preview}</h2>
+        </div>
+
+        <div className="profilePreviewGrid">
+          <div>
+            <div className="profileSubhead">
+              <strong>{copy.profiles.targetFiles}</strong>
+              <span>{preview?.targetFiles.length ?? 0}</span>
+            </div>
+            <div className="profileTargetList">
+              {preview?.targetFiles.map((target) => (
+                <div key={target.hostId}>
+                  <strong>{target.hostName}</strong>
+                  <code>{target.path}</code>
+                  <span>{target.noChangeExpected ? copy.profiles.noChangeExpected : target.backupExpected ? copy.profiles.backupExpected : "-"}</span>
+                </div>
+              )) ?? <p className="mutedText">{copy.profiles.noPreview}</p>}
+            </div>
+          </div>
+          <div>
+            <div className="profileSubhead">
+              <strong>{copy.profiles.perHostStatus}</strong>
+              <span>{preview?.hostResults.length ?? 0}</span>
+            </div>
+            <div className="profileStatusList">
+              {preview?.hostResults.map((row) => (
+                <div key={row.hostId}>
+                  <Badge tone={profileApplyTone(row.status)}>{row.status}</Badge>
+                  <strong>{row.hostName}</strong>
+                  <span>{row.message}</span>
+                </div>
+              )) ?? null}
+            </div>
+          </div>
+        </div>
+
+        <div className="configPreviewBox">
+          <div className="profileSubhead">
+            <strong>{copy.profiles.renderedToml}</strong>
+          </div>
+          <pre>{preview?.renderedToml ?? copy.profiles.noPreview}</pre>
+        </div>
+
+        <div className="modalActions">
+          <button className="primaryButton" disabled={!preview || selectedCount === 0 || busy === "apply"} type="button" onClick={onApplySelected}>
+            {copy.profiles.applySelected}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function profileToDraft(profile: Profile | null): ProfileDraft {
+  return {
+    name: profile?.name ?? "",
+    description: profile?.description ?? "",
+    model: profile?.model ?? "gpt-5-codex",
+    provider: profile?.provider ?? "openai",
+    baseUrl: profile?.baseUrl ?? "https://api.openai.com/v1",
+    apiKeyEnvVar: profile?.apiKeyEnvVar ?? "OPENAI_API_KEY",
+    modelReasoningEffort: profile?.modelReasoningEffort ?? "medium",
+    planModeReasoningEffort: profile?.planModeReasoningEffort ?? "high",
+    fastMode: profile?.fastMode ?? false,
+    serviceTier: profile?.serviceTier ?? "auto",
+    approvalPolicy: profile?.approvalPolicy ?? "on-request",
+    sandboxMode: profile?.sandboxMode ?? "workspace-write",
+    extraToml: profile?.extraToml ?? "",
+    hostIds: profile?.hostIds ?? []
+  };
+}
+
+function downloadProfileExport(bundle: ProfileImportExport) {
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `codexhub-profiles-${bundle.exportedAt.slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function profileApplyTone(status: ProfileApplyBatchResult["results"][number]["status"]): "green" | "yellow" | "red" | "blue" | "gray" {
+  if (status === "success") return "green";
+  if (status === "failed") return "red";
+  if (status === "no-change") return "blue";
+  return "gray";
 }
 
 function SkillsView({ copy, skillPacks }: { copy: UICopy; skillPacks: SkillPack[] }) {
@@ -1987,8 +3197,20 @@ function SettingsView({
     "bootstrap_ssh_host",
     "bootstrap_existing_ssh_host",
     "remote_probe_codex",
+    "remote_manage_codex",
     "list_profiles",
+    "create_profile",
+    "update_profile",
+    "delete_profile",
+    "duplicate_profile",
+    "import_profiles",
+    "export_profiles",
+    "set_profile_api_key",
+    "delete_profile_api_key",
+    "preview_profile_apply",
     "apply_profile",
+    "detect_cc_switch_profiles",
+    "import_cc_switch_profiles",
     "list_tasks"
   ];
   const publicKey = sshStatus?.ed25519.publicKey ?? sshStatus?.rsa.publicKey ?? "";
@@ -2128,17 +3350,73 @@ function KeyStatusCard({ copy, keyInfo, title }: { copy: UICopy; keyInfo: SshKey
   );
 }
 
-function Badge({ children, tone }: { children: ReactNode; tone: "green" | "yellow" | "red" | "blue" | "gray" }) {
-  return <span className="badge" data-tone={tone}>{children}</span>;
+function Badge({ children, tone, title }: { children: ReactNode; tone: BadgeTone; title?: string | null }) {
+  return <span className="badge" data-tone={tone} title={title ?? undefined}>{children}</span>;
 }
 
 function StatusBadge({ copy, status }: { copy: UICopy; status: HostStatus }) {
-  const tone = status === "online" ? "green" : status === "offline" ? "red" : status === "testing" ? "yellow" : "gray";
-  return <Badge tone={tone}>{copy.status.host[status]}</Badge>;
+  return <Badge tone={hostStatusTone(status)}>{copy.status.host[status]}</Badge>;
+}
+
+function HostDetailValueBadge({ label, tone }: { label: string; tone: BadgeTone }) {
+  return <Badge tone={tone}>{label}</Badge>;
+}
+
+function hostStatusTone(status: HostStatus): BadgeTone {
+  if (status === "online") return "green";
+  if (status === "offline") return "red";
+  if (status === "testing") return "yellow";
+  return "gray";
+}
+
+function HostApiConfigBadge({ copy, host, profileById }: { copy: UICopy; host: Host; profileById?: Map<string, Profile> }) {
+  if (!hostApiConfigChecked(host)) {
+    return <Badge tone="gray">{copy.profiles.unknownApiConfig}</Badge>;
+  }
+  const source = host.apiConfigSource ?? (host.configExists === false ? "none" : "unknown");
+  if (source === "none" || host.configExists === false) {
+    return <Badge tone="gray">{copy.profiles.noApiConfig}</Badge>;
+  }
+  if (source === "unknown") {
+    return <Badge tone="yellow">{copy.profiles.unknownApiConfig}</Badge>;
+  }
+  const label = host.apiConfigName
+    ?? (source === "profile" && host.profileId ? profileById?.get(host.profileId)?.name ?? host.profileId : null)
+    ?? copy.profiles.unknownApiConfig;
+  return <Badge tone={source === "cc-switch" ? "green" : "blue"}>{label}</Badge>;
+}
+
+function hostApiConfigChecked(host: Host) {
+  return isHostCodexTested(host) && (host.configExists !== null || Boolean(host.apiConfigSource || host.apiConfigName));
+}
+
+function profileMatchesConfirmedHostApiConfig(profile: Profile, host: Host) {
+  if (!hostApiConfigChecked(host)) return false;
+  const source = host.apiConfigSource ?? (host.configExists === false ? "none" : "unknown");
+  if (source !== "profile" && source !== "cc-switch") return false;
+  const profileIdMatches = host.profileId === profile.id;
+  const profileNameMatches = normalizeApiConfigName(host.apiConfigName) === normalizeApiConfigName(profile.name);
+  if (source === "cc-switch") {
+    return profile.source === "cc-switch" && (profileIdMatches || profileNameMatches);
+  }
+  return profileIdMatches || profileNameMatches;
+}
+
+function normalizeApiConfigName(value: string | null | undefined) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function ProfileStorageBadge({ copy, profile }: { copy: UICopy; profile: Profile }) {
+  const isThirdPartyImport = profile.source === "cc-switch";
+  return (
+    <Badge tone={isThirdPartyImport ? "green" : "blue"}>
+      {isThirdPartyImport ? copy.profiles.thirdPartyImport : copy.profiles.localStorageLabel}
+    </Badge>
+  );
 }
 
 function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus }) {
-  const tone = status === "success" ? "green" : status === "failed" ? "red" : status === "running" ? "yellow" : "gray";
+  const tone: BadgeTone = status === "success" ? "green" : status === "failed" ? "red" : status === "running" ? "yellow" : "gray";
   return <Badge tone={tone}>{copy.status.task[status]}</Badge>;
 }
 
@@ -2147,7 +3425,13 @@ function localizeTaskAction(action: string, copy: UICopy) {
   return labels[action] ?? action;
 }
 
-function hostCodexStatus(copy: UICopy, host: Host | null, busy: HostBusyAction | undefined): { label: string; tone: "green" | "yellow" | "red" | "blue" | "gray" } {
+function hostCodexStatus(
+  copy: UICopy,
+  host: Host | null,
+  busy: HostBusyAction | undefined,
+  hosts: Host[],
+  latestCodexVersion: LatestCodexVersion | null
+): { label: string; tone: BadgeTone } {
   if (!host) return { label: copy.profiles.notChecked, tone: "gray" };
   if (busy === "test") return { label: copy.hosts.testing, tone: "yellow" };
   if (busy === "check-version") return { label: copy.hosts.checkingVersion, tone: "yellow" };
@@ -2157,7 +3441,13 @@ function hostCodexStatus(copy: UICopy, host: Host | null, busy: HostBusyAction |
   if (!host.codexInstalled) {
     return { label: copy.profiles.notInstalled, tone: "gray" };
   }
-  return { label: host.codexVersion || copy.profiles.notChecked, tone: "green" };
+  const label = formatCodexVersionLabel(host.codexVersion, copy.profiles.notChecked);
+  return { label, tone: codexVersionTone(host.codexVersion, hosts, latestCodexVersion?.version) };
+}
+
+function hostCodexInstalledStatus(copy: UICopy, host: Host | null): { label: string; tone: BadgeTone } {
+  if (!host || !isHostCodexTested(host)) return { label: copy.profiles.notChecked, tone: "gray" };
+  return { label: formatBoolean(host.codexInstalled, copy), tone: booleanTone(host.codexInstalled) };
 }
 
 function isHostCodexTested(host: Host | null) {
@@ -2166,8 +3456,140 @@ function isHostCodexTested(host: Host | null) {
   return Boolean(version && version !== "pending" && version !== "unknown");
 }
 
+function latestCodexStatus(copy: UICopy, latestCodexVersion: LatestCodexVersion | null): { label: string; tone: BadgeTone; title?: string | null } {
+  if (latestCodexVersion?.version) {
+    return {
+      label: formatCodexVersionLabel(latestCodexVersion.version, latestCodexVersion.version),
+      tone: "green",
+      title: latestCodexVersion.error
+    };
+  }
+  return { label: copy.hosts.latestCodexUnknown, tone: "gray", title: latestCodexVersion?.error };
+}
+
+function formatCodexVersionLabel(value: string | null | undefined, fallback: string) {
+  const parsed = parseCodexVersion(value);
+  if (parsed) return parsed.label;
+  const normalized = value?.trim();
+  return normalized || fallback;
+}
+
+function parseCodexVersion(value: string | null | undefined): { label: string; parts: number[] } | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  const match = normalized.match(/(?:^|[\s@/:-])v?(\d+(?:\.\d+){1,3})(?:[-+][0-9A-Za-z._-]+)?/i);
+  if (!match) return null;
+  const label = match[1];
+  return {
+    label,
+    parts: label.split(".").map((part) => Number.parseInt(part, 10))
+  };
+}
+
+function compareVersionParts(left: number[], right: number[]) {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = left[index] ?? 0;
+    const rightPart = right[index] ?? 0;
+    if (leftPart !== rightPart) return leftPart - rightPart;
+  }
+  return 0;
+}
+
+function isCodexVersionBehind(current: string | null | undefined, latest: string | null | undefined) {
+  const currentVersion = parseCodexVersion(current);
+  const latestVersion = parseCodexVersion(latest);
+  return Boolean(currentVersion && latestVersion && compareVersionParts(currentVersion.parts, latestVersion.parts) < 0);
+}
+
+function codexVersionTone(current: string | null | undefined, hosts: Host[], latest: string | null | undefined): BadgeTone {
+  const currentVersion = parseCodexVersion(current);
+  if (!currentVersion) return "gray";
+  const latestVersion = parseCodexVersion(latest);
+  if (latestVersion) {
+    if (compareVersionParts(currentVersion.parts, latestVersion.parts) >= 0) return "green";
+    const versions = uniqueSortedCodexVersions([
+      ...hosts.filter((host) => host.codexInstalled).map((host) => host.codexVersion),
+      latest
+    ]);
+    return isLowestCodexVersion(currentVersion.parts, versions) ? "red" : "yellow";
+  }
+  const versions = uniqueSortedCodexVersions(hosts.filter((host) => host.codexInstalled).map((host) => host.codexVersion));
+  if (versions.length <= 1) return "green";
+  if (isHighestCodexVersion(currentVersion.parts, versions)) return "green";
+  if (isLowestCodexVersion(currentVersion.parts, versions)) return "red";
+  return "yellow";
+}
+
+function uniqueSortedCodexVersions(values: Array<string | null | undefined>) {
+  const parsed = values
+    .map(parseCodexVersion)
+    .filter((version): version is { label: string; parts: number[] } => Boolean(version));
+  const unique = new Map<string, number[]>();
+  for (const version of parsed) {
+    unique.set(version.parts.join("."), version.parts);
+  }
+  return Array.from(unique.values()).sort(compareVersionParts);
+}
+
+function isLowestCodexVersion(parts: number[], versions: number[][]) {
+  return versions.length > 0 && compareVersionParts(parts, versions[0]) === 0;
+}
+
+function isHighestCodexVersion(parts: number[], versions: number[][]) {
+  return versions.length > 0 && compareVersionParts(parts, versions[versions.length - 1]) === 0;
+}
+
 function sshHostSourceLabel(copy: UICopy, host: SshConfigHost) {
   return host.managed || host.source === "managed" ? copy.hosts.codexhubManaged : copy.hosts.localSource;
+}
+
+function knownHostValue(value: string | null | undefined, copy: UICopy) {
+  const normalized = value?.trim();
+  return normalized && normalized.toLowerCase() !== "unknown" ? normalized : copy.hosts.unknown;
+}
+
+function knownValueTone(value: string | null | undefined, copy: UICopy): BadgeTone {
+  return knownHostValue(value, copy) === copy.hosts.unknown ? "gray" : "blue";
+}
+
+function latencyTone(value: number | null | undefined, hosts: Host[]): BadgeTone {
+  if (typeof value !== "number") return "gray";
+  const values = hosts
+    .map((host) => host.latencyMs)
+    .filter((latency): latency is number => typeof latency === "number");
+  if (values.length <= 1) return "green";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (min === max) return "green";
+  const relative = (value - min) / (max - min);
+  if (relative <= 0.34) return "green";
+  if (relative >= 0.67) return "red";
+  return "yellow";
+}
+
+function booleanTone(value: boolean | null | undefined): BadgeTone {
+  return value ? "green" : "gray";
+}
+
+function skillCountTone(value: number | null | undefined): BadgeTone {
+  if (typeof value !== "number" || value <= 0) return "gray";
+  if (value >= 10) return "green";
+  return "blue";
+}
+
+function archTone(value: string | null | undefined, copy: UICopy): BadgeTone {
+  const arch = knownHostValue(value, copy).toLowerCase();
+  if (arch === copy.hosts.unknown.toLowerCase()) return "gray";
+  if (arch.includes("aarch64") || arch.includes("arm64") || arch.includes("arm")) return "green";
+  if (arch.includes("x86_64") || arch.includes("amd64")) return "blue";
+  return "yellow";
+}
+
+function hostSourceLabel(copy: UICopy, host: Host) {
+  if (host.source === "managed") return copy.hosts.codexhubManaged;
+  if (host.source === "local") return copy.hosts.localSource;
+  return host.source || copy.hosts.unknown;
 }
 
 function remoteCodexButtonLabel(copy: UICopy, busy: HostBusyAction | undefined, action: RemoteCodexAction) {

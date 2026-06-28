@@ -7,7 +7,14 @@ import type {
   Host,
   HostDraft,
   HostPatch,
+  LatestCodexVersion,
+  CcSwitchDetection,
   Profile,
+  ProfileApplyBatchResult,
+  ProfileApplyPreview,
+  ProfileDraft,
+  ProfileImportExport,
+  ProfilePatch,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
@@ -32,119 +39,16 @@ export const fallbackHealth: Health = {
   remoteWrapperRequired: false
 };
 
-export const fallbackHosts: Host[] = [
-  {
-    id: "mac-studio-lab",
-    name: "Mac Studio Lab",
-    hostAlias: "mac-studio-lab",
-    source: "mock",
-    address: "10.0.8.12",
-    port: 22,
-    username: "jurio",
-    authMethod: "ssh-key",
-    status: "online",
-    os: "macOS 15.5",
-    arch: "arm64",
-    shell: "/bin/zsh",
-    path: "/Users/jurio/.local/bin:/usr/local/bin:/usr/bin",
-    pathHasLocalBin: true,
-    codexInstalled: true,
-    codexVersion: "0.32.0",
-    configExists: true,
-    skillsExists: true,
-    skillsCount: 5,
-    profileId: "research-default",
-    skillPackIds: ["paper-review", "tauri-builder"],
-    tags: ["local", "gpu"],
-    lastSeen: "2 min ago",
-    latencyMs: 18
-  },
-  {
-    id: "win-workstation",
-    name: "Windows Workstation",
-    hostAlias: "win-workstation",
-    source: "mock",
-    address: "192.168.31.42",
-    port: 22,
-    username: "pc",
-    authMethod: "agent",
-    status: "unknown",
-    os: "Windows 11 Pro",
-    arch: "x86_64",
-    shell: "Unknown",
-    path: null,
-    pathHasLocalBin: null,
-    codexInstalled: false,
-    codexVersion: "pending",
-    configExists: null,
-    skillsExists: null,
-    skillsCount: null,
-    profileId: "safe-editing",
-    skillPackIds: ["tauri-builder"],
-    tags: ["desktop", "primary"],
-    lastSeen: "not tested",
-    latencyMs: null
-  },
-  {
-    id: "linux-runner",
-    name: "Linux Runner",
-    hostAlias: "linux-runner",
-    source: "mock",
-    address: "172.20.4.8",
-    port: 2222,
-    username: "codex",
-    authMethod: "ssh-key",
-    status: "offline",
-    os: "Ubuntu 24.04 LTS",
-    arch: "x86_64",
-    shell: "/bin/bash",
-    path: "/home/codex/.local/bin:/usr/local/bin:/usr/bin",
-    pathHasLocalBin: true,
-    codexInstalled: true,
-    codexVersion: "0.31.1",
-    configExists: false,
-    skillsExists: true,
-    skillsCount: 1,
-    profileId: null,
-    skillPackIds: ["paper-review"],
-    tags: ["remote", "ci"],
-    lastSeen: "yesterday",
-    latencyMs: null
-  }
-];
+export const fallbackHosts: Host[] = [];
 
-export const fallbackProfiles: Profile[] = [
-  {
-    id: "research-default",
-    name: "Research Default",
-    description: "Balanced model and approval policy for literature review, repo browsing, and report drafting.",
-    model: "gpt-5-codex",
-    approvalPolicy: "on-request",
-    sandboxMode: "workspace-write",
-    updatedAt: "2026-06-24 22:10",
-    hostIds: ["mac-studio-lab"]
-  },
-  {
-    id: "safe-editing",
-    name: "Safe Editing",
-    description: "Conservative profile for protected repos: narrow write scope, explicit publish steps, and no private-state writes.",
-    model: "gpt-5-codex",
-    approvalPolicy: "on-failure",
-    sandboxMode: "workspace-write",
-    updatedAt: "2026-06-23 18:35",
-    hostIds: ["win-workstation"]
-  },
-  {
-    id: "diagnostics",
-    name: "Diagnostics",
-    description: "Read-mostly profile for host checks, logs, and environment inspection before any remediation.",
-    model: "gpt-5-mini",
-    approvalPolicy: "never",
-    sandboxMode: "read-only",
-    updatedAt: "2026-06-21 09:42",
-    hostIds: []
-  }
-];
+export const fallbackLatestCodexVersion: LatestCodexVersion = {
+  version: "0.32.0",
+  checkedAt: "mock",
+  source: "npm",
+  error: null
+};
+
+export const fallbackProfiles: Profile[] = [];
 
 export const fallbackSkillPacks: SkillPack[] = [
   {
@@ -179,72 +83,7 @@ export const fallbackSkillPacks: SkillPack[] = [
   }
 ];
 
-export const fallbackTasks: TaskRun[] = [
-  {
-    id: "task-1042",
-    hostId: "mac-studio-lab",
-    hostName: "Mac Studio Lab",
-    action: "Apply profile",
-    status: "success",
-    startedAt: "2026-06-25 09:14",
-    endedAt: "2026-06-25 09:15",
-    summary: "Research Default rendered to ~/.codex/config.toml with backup codexhub-1042.toml.",
-    logs: [
-      {
-        id: "log-1042-1",
-        taskRunId: "task-1042",
-        level: "info",
-        timestamp: "09:14:10",
-        message: "Opened SFTP session and created remote backup."
-      },
-      {
-        id: "log-1042-2",
-        taskRunId: "task-1042",
-        level: "info",
-        timestamp: "09:14:41",
-        message: "Rendered profile preview matched expected TOML sections."
-      }
-    ]
-  },
-  {
-    id: "task-1039",
-    hostId: "linux-runner",
-    hostName: "Linux Runner",
-    action: "Test SSH connection",
-    status: "failed",
-    startedAt: "2026-06-24 22:02",
-    endedAt: "2026-06-24 22:02",
-    summary: "Connection timed out. Check VPN route or host firewall before applying profiles.",
-    logs: [
-      {
-        id: "log-1039-1",
-        taskRunId: "task-1039",
-        level: "warn",
-        timestamp: "22:02:18",
-        message: "Mock check marks linux-runner offline for UI validation."
-      }
-    ]
-  },
-  {
-    id: "task-1035",
-    hostId: "win-workstation",
-    hostName: "Windows Workstation",
-    action: "Sync skill pack",
-    status: "queued",
-    startedAt: "2026-06-24 18:25",
-    endedAt: null,
-    summary: "Queued Paper Review skill pack for the next available SSH session.",
-    logs: [
-      {
-        id: "log-1035-1",
-        taskRunId: "task-1035",
-        level: "info",
-        timestamp: "18:25:00",
-        message: "Task created from mock backend reservation."
-      }
-    ]
-  }
-];
+export const fallbackTasks: TaskRun[] = [];
 
 const fallbackConnection: ConnectionTest = {
   ok: true,
@@ -275,26 +114,7 @@ export const fallbackSshStatus: SshStatus = {
   }
 };
 
-export const fallbackSshConfigHosts: SshConfigHost[] = [
-  {
-    alias: "mac-studio-lab",
-    hostName: "10.0.8.12",
-    port: 22,
-    user: "jurio",
-    identityFile: "~/.ssh/id_ed25519",
-    managed: false,
-    source: "local"
-  },
-  {
-    alias: "linux-runner",
-    hostName: "172.20.4.8",
-    port: 2222,
-    user: "codex",
-    identityFile: "~/.ssh/id_ed25519",
-    managed: true,
-    source: "managed"
-  }
-];
+export const fallbackSshConfigHosts: SshConfigHost[] = [];
 
 async function safeInvoke<T>(command: string, args: Record<string, unknown> | undefined, fallback: T | (() => T)): Promise<T> {
   try {
@@ -324,9 +144,287 @@ function formatInvokeError(error: unknown) {
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+let mockProfiles = clone(fallbackProfiles);
+
+function nowStamp() {
+  return new Date().toISOString().slice(0, 16).replace("T", " ");
+}
+
+function slugifyProfileName(name: string) {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `profile-${Date.now()}`;
+}
+
+function uniqueProfileId(name: string) {
+  const base = slugifyProfileName(name);
+  let candidate = base;
+  let index = 2;
+  while (mockProfiles.some((profile) => profile.id === candidate)) {
+    candidate = `${base}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function normalizeProfile(profile: Profile): Profile {
+  return {
+    ...profile,
+    provider: profile.provider || "openai",
+    baseUrl: profile.baseUrl || "https://api.openai.com/v1",
+    apiKeyEnvVar: profile.apiKeyEnvVar || "OPENAI_API_KEY",
+    modelReasoningEffort: profile.modelReasoningEffort || "medium",
+    planModeReasoningEffort: profile.planModeReasoningEffort || "high",
+    serviceTier: profile.serviceTier || "auto",
+    extraToml: profile.extraToml || "",
+    createdAt: profile.createdAt || profile.updatedAt || nowStamp(),
+    updatedAt: profile.updatedAt || nowStamp(),
+    source: profile.source || "imported",
+    credentialStored: Boolean(profile.credentialStored),
+    hostIds: profile.hostIds ?? []
+  };
+}
+
+function createMockProfile(draft: ProfileDraft): Profile {
+  const timestamp = nowStamp();
+  return {
+    id: uniqueProfileId(draft.name),
+    ...draft,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    source: "managed",
+    credentialStored: false
+  };
+}
+
+function normalizeProfileApplyResult(result: ProfileApplyBatchResult): ProfileApplyBatchResult {
+  return {
+    ...result,
+    profiles: (result.profiles ?? []).map(normalizeProfile),
+    hosts: result.hosts ?? []
+  };
+}
+
+function renderProfileToml(profile: Profile) {
+  const lines = [
+    `model = "${escapeToml(profile.model)}"`,
+    `model_provider = "${escapeToml(profile.provider)}"`,
+    `approval_policy = "${escapeToml(profile.approvalPolicy)}"`,
+    `sandbox_mode = "${escapeToml(profile.sandboxMode)}"`,
+    `model_reasoning_effort = "${escapeToml(profile.modelReasoningEffort)}"`,
+    `plan_mode_reasoning_effort = "${escapeToml(profile.planModeReasoningEffort)}"`,
+    `service_tier = "${escapeToml(profile.serviceTier)}"`,
+    "",
+    "[features]",
+    `fast_mode = ${profile.fastMode ? "true" : "false"}`
+  ];
+  if (profile.provider === "openai") {
+    if (profile.baseUrl && profile.baseUrl !== "https://api.openai.com/v1") {
+      lines.splice(2, 0, `openai_base_url = "${escapeToml(profile.baseUrl)}"`);
+    }
+  } else {
+    lines.push(
+      "",
+      `[model_providers.${profile.provider}]`,
+      `name = "${escapeToml(profile.provider)}"`,
+      `base_url = "${escapeToml(profile.baseUrl)}"`,
+      `env_key = "${escapeToml(profile.apiKeyEnvVar)}"`
+    );
+  }
+  if (profile.extraToml.trim()) {
+    lines.push("", "# Extra TOML", profile.extraToml.trim());
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function escapeToml(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function fallbackHostForAlias(hostAlias: string): Host {
+  const alias = hostAlias || "mock-host";
+  return (
+    fallbackHosts.find((item) => item.hostAlias === alias || item.id === alias) ?? {
+      id: `mock-${slugifyProfileName(alias)}`,
+      name: alias,
+      hostAlias: alias,
+      source: "mock",
+      address: alias,
+      port: 22,
+      username: "codex",
+      authMethod: "ssh-key",
+      status: "unknown",
+      os: "Unknown",
+      arch: "Unknown",
+      shell: "Unknown",
+      path: null,
+      pathHasLocalBin: null,
+      codexInstalled: false,
+      codexVersion: "pending",
+      configExists: null,
+      apiConfigName: null,
+      apiConfigSource: null,
+      skillsExists: null,
+      skillsCount: null,
+      profileId: null,
+      skillPackIds: [],
+      tags: [],
+      lastSeen: "not tested",
+      latencyMs: null
+    }
+  );
+}
+
+function mockPreviewProfileApply(profileId: string, hostIds: string[]): ProfileApplyPreview {
+  const profile = mockProfiles.find((item) => item.id === profileId);
+  if (!profile) {
+    return {
+      profileId,
+      renderedToml: "",
+      targetFiles: [],
+      hostResults: []
+    };
+  }
+  const targetHosts = fallbackHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
+  const renderedToml = renderProfileToml(profile);
+  return {
+    profileId: profile.id,
+    renderedToml,
+    targetFiles: targetHosts.map((host) => ({
+      hostId: host.id,
+      hostName: host.name,
+      hostAlias: host.hostAlias,
+      path: "~/.codex/config.toml",
+      backupExpected: host.configExists !== false && host.profileId !== profile.id,
+      noChangeExpected: host.profileId === profile.id
+    })),
+    hostResults: targetHosts.map((host) => ({
+      hostId: host.id,
+      hostName: host.name,
+      hostAlias: host.hostAlias,
+      status: "pending",
+      targetPath: "~/.codex/config.toml",
+      backupPath: host.configExists === false || host.profileId === profile.id ? null : "~/.codex/config.toml.codexhub.bak.mock",
+      message: host.profileId === profile.id ? "Preview expects no changes." : "Preview expects backup then replace."
+    }))
+  };
+}
+
+function mockApplyProfile(profileId: string, hostIds: string[]): ProfileApplyBatchResult {
+  const profile = mockProfiles.find((item) => item.id === profileId);
+  if (!profile) {
+    return {
+      profileId,
+      ok: false,
+      results: [],
+      tasks: [],
+      profiles: clone(mockProfiles).map(normalizeProfile),
+      hosts: clone(fallbackHosts)
+    };
+  }
+  const targetHosts = fallbackHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
+  const tasks = targetHosts.map((host): TaskRun => {
+    const noChange = host.profileId === profile.id;
+    return {
+      id: `mock-apply-${host.id}-${Date.now()}`,
+      hostId: host.id,
+      hostName: host.name,
+      action: "Apply profile",
+      status: "success",
+      startedAt: "now",
+      endedAt: "now",
+      summary: noChange
+        ? `${profile.name} already matches ${host.name}; no remote backup needed.`
+        : `${profile.name} rendered to ~/.codex/config.toml with mock backup.`,
+      logs: [
+        {
+          id: `mock-apply-log-${host.id}-${Date.now()}`,
+          taskRunId: "mock-apply",
+          level: "info",
+          timestamp: "now",
+          message: noChange ? "Remote config matched rendered TOML." : "Mock remote backup and replace completed.",
+          command: `ssh ${host.hostAlias} apply-profile ${profile.id}`,
+          stdout: noChange ? "no changes" : "config.toml updated",
+          stderr: "",
+          exitCode: 0,
+          durationMs: 36,
+          timedOut: false
+        }
+      ]
+    };
+  });
+  const successfulHostIds = new Set(targetHosts.map((host) => host.id));
+  const nextProfiles = mockProfiles.map((item) =>
+    item.id === profileId
+      ? normalizeProfile({ ...item, hostIds: Array.from(new Set([...item.hostIds, ...successfulHostIds])), updatedAt: nowStamp() })
+      : normalizeProfile({ ...item, hostIds: item.hostIds.filter((hostId) => !successfulHostIds.has(hostId)) })
+  );
+  mockProfiles = nextProfiles;
+  const nextHosts = fallbackHosts.map((host) =>
+    successfulHostIds.has(host.id)
+      ? { ...host, profileId, apiConfigName: profile.name, apiConfigSource: "profile", configExists: true, lastSeen: "just now" }
+      : host
+  );
+  return {
+    profileId: profile.id,
+    ok: true,
+    tasks,
+    results: targetHosts.map((host, index) => ({
+      hostId: host.id,
+      hostName: host.name,
+      hostAlias: host.hostAlias,
+      status: host.profileId === profile.id ? "no-change" : "success",
+      targetPath: "~/.codex/config.toml",
+      backupPath: host.profileId === profile.id ? null : "~/.codex/config.toml.codexhub.bak.mock",
+      message: tasks[index].summary,
+      task: tasks[index]
+    })),
+    profiles: clone(nextProfiles).map(normalizeProfile),
+    hosts: clone(nextHosts)
+  };
+}
+
+function mockCcSwitchDetection(): CcSwitchDetection {
+  const timestamp = nowStamp();
+  const profile: Profile = {
+    id: uniqueProfileId("cc-switch-import"),
+    name: "cc-switch Import",
+    description: "Imported from a detected cc-switch configuration.",
+    model: "claude-3-5-sonnet-latest",
+    provider: "anthropic",
+    baseUrl: "https://api.anthropic.com",
+    apiKeyEnvVar: "ANTHROPIC_API_KEY",
+    modelReasoningEffort: "medium",
+    planModeReasoningEffort: "high",
+    fastMode: false,
+    serviceTier: "auto",
+    approvalPolicy: "on-request",
+    sandboxMode: "workspace-write",
+    extraToml: "",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    source: "cc-switch",
+    credentialStored: false,
+    hostIds: []
+  };
+  return {
+    detected: true,
+    sourcePath: "~/.cc-switch/config.json",
+    message: "Mock cc-switch profile detected.",
+    importExport: {
+      schemaVersion: 1,
+      exportedAt: timestamp,
+      profiles: [profile]
+    }
+  };
+}
+
 function mockSshCheck(hostAlias: string): SshCheckResult {
-  const host = fallbackHosts.find((item) => item.hostAlias === hostAlias || item.id === hostAlias) ?? fallbackHosts[0];
-  const ok = host.id !== "linux-runner";
+  const host = fallbackHostForAlias(hostAlias);
+  const ok = false;
   const task: TaskRun = {
     id: `mock-ssh-${Date.now()}`,
     hostId: host.id,
@@ -457,7 +555,7 @@ async function mockSshBootstrapHostWithProgress(
 }
 
 function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
-  const host = fallbackHosts.find((item) => item.hostAlias === hostAlias || item.id === hostAlias) ?? fallbackHosts[0];
+  const host = fallbackHostForAlias(hostAlias);
   const task: TaskRun = {
     id: `mock-probe-${Date.now()}`,
     hostId: host.id,
@@ -509,6 +607,8 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
     codexPath: host.codexInstalled ? "/usr/local/bin/codex" : null,
     codexVersion: host.codexVersion,
     configExists: Boolean(host.configExists),
+    apiConfigName: host.configExists ? host.apiConfigName ?? "Unknown config" : "No config",
+    apiConfigSource: host.configExists ? host.apiConfigSource ?? "unknown" : "none",
     skillsExists: Boolean(host.skillsExists),
     skillsCount: host.skillsCount ?? 0,
     task
@@ -516,7 +616,7 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
 }
 
 function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
-  const host = fallbackHosts.find((item) => item.hostAlias === hostAlias || item.id === hostAlias) ?? fallbackHosts[0];
+  const host = fallbackHostForAlias(hostAlias);
   const actionLabel =
     action === "check-version" ? "Check Codex version" : action === "install" ? "Install Codex" : "Update Codex";
   const nextVersion = host.codexInstalled && action === "check-version" ? host.codexVersion : "codex-cli 0.32.0";
@@ -568,7 +668,7 @@ async function mockRemoteManageCodexWithProgress(
   requestId?: string,
   onProgress?: (event: RemoteCodexProgressEvent) => void
 ): Promise<RemoteCodexMaintenanceResult> {
-  const host = fallbackHosts.find((item) => item.hostAlias === hostAlias || item.id === hostAlias) ?? fallbackHosts[0];
+  const host = fallbackHostForAlias(hostAlias);
   const emit = (step: string, status: RemoteCodexProgressEvent["status"], message: string, line?: string) => {
     if (!requestId || !onProgress) return;
     onProgress({
@@ -625,6 +725,11 @@ export const api = {
   deleteSshConfigHost: (alias: string) => requiredInvoke<SshConfigWriteResult>("delete_ssh_config_host", { alias }),
   listHosts: () => safeInvoke<Host[]>("list_hosts", undefined, () => clone(fallbackHosts)),
   refreshDiscoveredHosts: () => safeInvoke<Host[]>("refresh_discovered_hosts", undefined, () => clone(fallbackHosts)),
+  refreshLatestCodexVersion: (force = false, timeoutMs = 30000) =>
+    safeInvoke<LatestCodexVersion>("refresh_latest_codex_version", { force, timeoutMs }, () => ({
+      ...fallbackLatestCodexVersion,
+      checkedAt: new Date().toISOString()
+    })),
   addHost: (draft: HostDraft) =>
     safeInvoke<Host>("add_host", { draft }, () => ({
       id: `mock-host-${Date.now()}`,
@@ -644,6 +749,8 @@ export const api = {
       codexInstalled: false,
       codexVersion: "pending",
       configExists: null,
+      apiConfigName: null,
+      apiConfigSource: null,
       skillsExists: null,
       skillsCount: null,
       profileId: null,
@@ -654,7 +761,7 @@ export const api = {
     })),
   updateHost: (id: string, patch: HostPatch) =>
     safeInvoke<Host>("update_host", { id, patch }, () => ({
-      ...(fallbackHosts.find((host) => host.id === id) ?? fallbackHosts[0]),
+      ...fallbackHostForAlias(id),
       ...patch
     })),
   deleteHost: (id: string) => safeInvoke<boolean>("delete_host", { id }, true),
@@ -733,32 +840,116 @@ export const api = {
       unlisten?.();
     }
   },
-  listProfiles: () => safeInvoke<Profile[]>("list_profiles", undefined, () => clone(fallbackProfiles)),
-  listSkillPacks: () => safeInvoke<SkillPack[]>("list_skill_packs", undefined, () => clone(fallbackSkillPacks)),
-  applyProfile: (profileId: string, hostIds: string[]) =>
-    safeInvoke<TaskRun>("apply_profile", { profileId, hostIds }, () => {
-      const host = fallbackHosts.find((item) => item.id === hostIds[0]) ?? fallbackHosts[0];
-      const profile = fallbackProfiles.find((item) => item.id === profileId) ?? fallbackProfiles[0];
-
-      return {
-        id: `mock-task-${Date.now()}`,
-        hostId: host.id,
-        hostName: host.name,
-        action: "Apply profile",
-        status: "success",
-        startedAt: "now",
-        endedAt: "now",
-        summary: `${profile.name} applied to ${host.name} through mock command.`,
-        logs: [
-          {
-            id: `mock-log-${Date.now()}`,
-            taskRunId: "mock-task",
-            level: "info",
-            timestamp: "now",
-            message: "Frontend fallback completed without a Tauri runtime."
-          }
-        ]
-      };
+  listProfiles: () => safeInvoke<Profile[]>("list_profiles", undefined, () => clone(mockProfiles)).then((profiles) => profiles.map(normalizeProfile)),
+  createProfile: (draft: ProfileDraft) =>
+    safeInvoke<Profile>("create_profile", { draft }, () => {
+      const profile = createMockProfile(draft);
+      mockProfiles = [...mockProfiles, profile];
+      return clone(profile);
+    }).then(normalizeProfile),
+  updateProfile: (id: string, patch: ProfilePatch) =>
+    safeInvoke<Profile>("update_profile", { id, patch }, () => {
+      const current = mockProfiles.find((profile) => profile.id === id);
+      if (!current) throw new Error(`Profile ${id} was not found.`);
+      const next = normalizeProfile({ ...current, ...patch, updatedAt: nowStamp() });
+      mockProfiles = mockProfiles.map((profile) => (profile.id === id ? next : profile));
+      return clone(next);
+    }).then(normalizeProfile),
+  deleteProfile: (id: string) =>
+    safeInvoke<boolean>("delete_profile", { id }, () => {
+      mockProfiles = mockProfiles.filter((profile) => profile.id !== id);
+      return true;
     }),
+  duplicateProfile: (id: string) =>
+    safeInvoke<Profile>("duplicate_profile", { id }, () => {
+      const source = mockProfiles.find((profile) => profile.id === id);
+      if (!source) throw new Error(`Profile ${id} was not found.`);
+      const duplicate = normalizeProfile({
+        ...source,
+        id: uniqueProfileId(`${source.name} copy`),
+        name: `${source.name} Copy`,
+        createdAt: nowStamp(),
+        updatedAt: nowStamp(),
+        source: "managed",
+        credentialStored: false
+      });
+      mockProfiles = [...mockProfiles, duplicate];
+      return clone(duplicate);
+    }).then(normalizeProfile),
+  importProfiles: (bundle: ProfileImportExport) =>
+    safeInvoke<ProfileImportExport>("import_profiles", { bundle }, () => {
+      const imported = bundle.profiles.map((profile) =>
+        normalizeProfile({
+          ...profile,
+          id: mockProfiles.some((item) => item.id === profile.id) ? uniqueProfileId(profile.name) : profile.id,
+          updatedAt: nowStamp(),
+          source: profile.source || "imported",
+          credentialStored: false
+        })
+      );
+      mockProfiles = [...mockProfiles, ...imported];
+      return { schemaVersion: bundle.schemaVersion || 1, exportedAt: nowStamp(), profiles: clone(imported) };
+    }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
+  exportProfiles: (profileIds?: string[]) =>
+    safeInvoke<ProfileImportExport>("export_profiles", { profileIds }, () => {
+      const selected = profileIds?.length ? mockProfiles.filter((profile) => profileIds.includes(profile.id)) : mockProfiles;
+      return { schemaVersion: 1, exportedAt: nowStamp(), profiles: clone(selected) };
+    }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
+  setProfileApiKey: async (profileId: string, apiKey: string) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile);
+    }
+    const current = mockProfiles.find((item) => item.id === profileId);
+    if (!current) throw new Error(`Profile ${profileId} was not found.`);
+    const profile = normalizeProfile({
+      ...current,
+      credentialStored: Boolean(apiKey),
+      updatedAt: nowStamp()
+    });
+    mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
+    return clone(profile);
+  },
+  deleteProfileApiKey: async (profileId: string) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<Profile>("delete_profile_api_key", { profileId }).then(normalizeProfile);
+    }
+    const current = mockProfiles.find((item) => item.id === profileId);
+    if (!current) throw new Error(`Profile ${profileId} was not found.`);
+    const profile = normalizeProfile({
+      ...current,
+      credentialStored: false,
+      updatedAt: nowStamp()
+    });
+    mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
+    return clone(profile);
+  },
+  previewProfileApply: (profileId: string, hostIds: string[]) =>
+    safeInvoke<ProfileApplyPreview>("preview_profile_apply", { profileId, hostIds }, () => mockPreviewProfileApply(profileId, hostIds)),
+  applyProfile: async (profileId: string, hostIds: string[]) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<ProfileApplyBatchResult>("apply_profile", { profileId, hostIds }).then(normalizeProfileApplyResult);
+    }
+    return normalizeProfileApplyResult(mockApplyProfile(profileId, hostIds));
+  },
+  detectCcSwitchProfiles: () =>
+    safeInvoke<CcSwitchDetection>("detect_cc_switch_profiles", undefined, () => mockCcSwitchDetection()).then((detection) => ({
+      ...detection,
+      importExport: { ...detection.importExport, profiles: detection.importExport.profiles.map(normalizeProfile) }
+    })),
+  importCcSwitchProfiles: (detection: CcSwitchDetection) =>
+    safeInvoke<ProfileImportExport>("import_cc_switch_profiles", { detection }, () => {
+      const imported = detection.importExport.profiles.map((profile) =>
+        normalizeProfile({
+          ...profile,
+          id: mockProfiles.some((item) => item.id === profile.id) ? uniqueProfileId(profile.name) : profile.id,
+          source: "cc-switch",
+          credentialStored: false,
+          updatedAt: nowStamp()
+        })
+      );
+      mockProfiles = [...mockProfiles, ...imported];
+      return { schemaVersion: 1, exportedAt: nowStamp(), profiles: clone(imported) };
+    }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
+  listSkillPacks: () => safeInvoke<SkillPack[]>("list_skill_packs", undefined, () => clone(fallbackSkillPacks)),
   listTasks: () => safeInvoke<TaskRun[]>("list_tasks", undefined, () => clone(fallbackTasks))
 };

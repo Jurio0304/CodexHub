@@ -31,7 +31,7 @@ flowchart LR
 ## Frontend Modules
 
 - Servers: host inventory, aliases, labels, SSH config status, connection health.
-- Profiles: local profile templates and rendered remote TOML preview.
+- Profiles: local profile templates, CRUD/import/export, env-var-first API key policy, rendered remote TOML preview, and single or selected-host batch apply.
 - Skills: local skill packages and remote upload/sync status.
 - Operations: backup, apply, restore, dry-run, and audit log.
 - Codex App Fallback: manual steps for enabling SSH hosts and reconnecting in Codex App.
@@ -39,7 +39,7 @@ flowchart LR
 
 ## Rust Backend Services
 
-Planned Tauri commands:
+Tauri command surface:
 
 - `app_health()`: smoke-test command exposed by the skeleton.
 - `list_ssh_hosts()`: parse safe managed and unmanaged `%USERPROFILE%\.ssh\config` aliases without modifying user-owned blocks.
@@ -51,9 +51,13 @@ Planned Tauri commands:
 - `bootstrap_existing_ssh_host(host_alias, password)`: run the same key setup for a host already discovered in SSH config without changing unmanaged blocks.
 - `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and `~/.codex/skills` on the backend blocking worker pool.
 - `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command on the backend blocking worker pool, returning before/after version, Codex path, install method, PATH repair metadata, backup path, and full task log.
-- `remote_read_config(server_id)`: download `~/.codex/config.toml` if present.
+- `create_profile(profile)`, `update_profile(profile)`, `delete_profile(profile_id)`, `duplicate_profile(profile_id)`: manage local structured profile templates.
+- `import_profiles(payload)`, `export_profiles(profile_ids)`: move profile definitions in and out without secret values.
+- `set_profile_api_key(profile_id, api_key)` and `delete_profile_api_key(profile_id)`: optionally store a local API key value in the OS credential store. Profile JSON keeps only `credentialStored` state, and the stored credential never leaves the local machine.
+- `detect_cc_switch_profiles()` and `import_cc_switch_profiles()`: import compatible local profile definitions without importing credential values.
 - `render_profile_config(profile_id)`: render TOML from structured profile state.
-- `remote_apply_config(server_id, rendered_toml)`: backup, upload temp file, atomic replace.
+- `preview_profile_apply(profile_id, host_ids)`: render TOML and summarize per-host remote config actions before mutation.
+- `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, and record redacted task logs for a single host or selected-host batch.
 - `remote_sync_skill(server_id, skill_id)`: validate and upload a skill folder.
 - `remote_restore_backup(server_id, backup_id)`: restore a known CodexHub backup.
 
@@ -82,6 +86,8 @@ type ProfileTemplate = {
   description?: string;
   config: Record<string, unknown>;
   profileTables: Record<string, Record<string, unknown>>;
+  apiKeyEnvVar?: string;
+  credentialStored: boolean;
 };
 
 type SkillPackage = {
@@ -137,13 +143,16 @@ Every remote file mutation must be previewable, backed up, and idempotent.
 7. Store operation metadata and backup path locally.
 8. If the rendered config is identical to the current remote config, report "no changes" and do not create a new backup.
 
-## Profile Switching
+## Profile And API Config Management
 
-MVP profile switching is file-based:
+Window 5 profile switching is file-based and implemented through the direct SSH/SFTP path:
 
-- CodexHub stores structured profile templates locally.
+- CodexHub stores structured profile templates locally and supports CRUD plus import/export.
+- API key handling is env-var-first. Rendered TOML uses `env_key` / `apiKeyEnvVar` so the remote host resolves its own environment variable.
+- An optional API key value can be stored in the local OS credential store for local convenience, but only a `credentialStored` boolean is kept in profile JSON and the stored credential is never written into remote config, apply metadata, or task logs.
 - Applying a profile renders the entire desired `~/.codex/config.toml`.
-- CodexHub replaces the remote config after diff/backup.
+- CodexHub replaces the remote config after diff/backup and writes local/remote apply metadata.
+- Apply can target one host or a selected-host batch, with each host producing a separate redacted task log.
 - The user starts a new Codex session or follows the reconnect fallback in Codex App.
 
 This avoids a remote wrapper and avoids assumptions about Codex App internals. A future wrapper can be added as an opt-in enhancement for hosts where runtime `codex --profile <name>` orchestration is desired.
@@ -174,7 +183,8 @@ Optional write behavior must follow these rules:
 
 - Do not store SSH private keys or passphrases in CodexHub data files.
 - Prefer Windows OpenSSH agent, Windows credential store, or references to existing key paths.
-- If a secret must be remembered later, use an OS credential store plugin/crate, not plaintext JSON.
+- If an API key must be remembered locally, store only through the OS credential store and keep profile JSON to non-secret credential state.
+- Remote config must use `env_key` / `apiKeyEnvVar`; CodexHub must never write the stored local credential or an API key value to remote hosts.
 - Operation logs must redact usernames only when requested, but always redact key material, passphrases, tokens, and private host secrets.
 
 ## Codex App Fallback UX

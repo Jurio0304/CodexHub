@@ -326,8 +326,55 @@ dd {
 .profilesStack {
   display: grid;
   gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
   max-width: 1220px;
   margin: 0 auto;
+  min-width: 0;
+}
+
+.profilesStack .spanWide {
+  grid-column: 1 / -1;
+}
+
+.profileToolbar {
+  flex-wrap: wrap;
+}
+
+.profileLibraryActions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ccSwitchActionButton {
+  flex: 0 0 168px;
+  width: 168px;
+  min-width: 168px;
+  height: 38px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.profileCcSwitchStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: -4px 0 12px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.profileCcSwitchStatus span,
+.profileCcSwitchStatus code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profileCcSwitchStatus code {
+  color: var(--text-faint);
+  font-size: 0.78rem;
 }
 
 .panel,
@@ -341,6 +388,7 @@ dd {
 
 .panel {
   padding: 20px;
+  min-width: 0;
 }
 
 .metricCard {
@@ -619,6 +667,7 @@ dd {
 
 .tableWrap {
   width: 100%;
+  min-width: 0;
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -711,9 +760,38 @@ tr:last-child td {
   white-space: nowrap;
 }
 
+.sshHostsLatestVersionCol,
 .sshHostsActionsCol,
 .sshHostsCodexCol {
   white-space: nowrap;
+}
+
+.profilesTable,
+.profileTable {
+  min-width: 720px;
+  table-layout: auto;
+}
+
+.profilesTable th,
+.profilesTable td,
+.profileTable th,
+.profileTable td {
+  overflow-wrap: anywhere;
+}
+
+.profilesTable td:first-child,
+.profileTable td:first-child {
+  min-width: 180px;
+}
+
+.profilesTable td:first-child span,
+.profileTable td:first-child span,
+.hostMeta dd span {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .selectableRow {
@@ -723,6 +801,84 @@ tr:last-child td {
 .selectableRow:hover,
 .selectableRow[data-selected="true"] {
   background: color-mix(in srgb, var(--blue) 8%, transparent);
+}
+
+.profileRowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.profileHostSelectCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profileApplyTable {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.profileApplyConfigCol {
+  min-width: 0;
+}
+
+.profileApplyPanel .tableWrap {
+  overflow-x: hidden;
+}
+
+.profileApplyTable th,
+.profileApplyTable td {
+  padding: 9px 7px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.profileApplyTable .sshHostsAliasCol {
+  width: 18%;
+}
+
+.profileApplyTable .sshHostsSourceCol {
+  width: 13%;
+}
+
+.profileApplyTable .sshHostsAddressCol {
+  width: 21%;
+}
+
+.profileApplyTable .sshHostsVersionCol {
+  width: 15%;
+}
+
+.profileApplyTable .profileApplyConfigCol {
+  width: 17%;
+}
+
+.profileApplyTable .sshHostsActionsCol {
+  width: 16%;
+  white-space: normal;
+}
+
+.profileApplyTable .profileHostSelectCell {
+  flex-wrap: wrap;
+}
+
+.profileApplyTable .tableActions,
+.profileApplyTable .sshHostsActionGroup {
+  width: 100%;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.profileApplyTable .miniButton {
+  flex: 1 1 56px;
+  min-width: 0;
+  white-space: normal;
+  text-align: center;
 }
 
 .miniButton {
@@ -858,6 +1014,15 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.detailGrid .badge {
+  max-width: 100%;
+  min-width: 0;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .settingsGrid .panel:first-child,
 .settingsGrid .panel:nth-child(2) {
   min-height: 220px;
@@ -949,7 +1114,8 @@ tr:last-child td {
 
   .pageGrid,
   .settingsGrid,
-  .tasksGrid {
+  .tasksGrid,
+  .profilesStack {
     grid-template-columns: 1fr;
   }
 
@@ -1036,9 +1202,80 @@ tr:last-child td {
     width: auto;
   }
 
+  .sshHostsLatestVersionCol,
   .sshHostsActionsCol,
   .sshHostsCodexCol {
     white-space: normal;
+  }
+
+  .profileApplyTable th,
+  .profileApplyTable td {
+    padding: 6px 4px;
+    font-size: 0.76rem;
+  }
+
+  .profileApplyTable th {
+    font-size: 0.6rem;
+    letter-spacing: 0.03em;
+  }
+
+  .profileApplyTable .sshHostsActionGroup {
+    width: 100%;
+  }
+
+  .profileApplyTable .miniButton {
+    flex: 1 1 48px;
+    padding: 3px 4px;
+    white-space: normal;
+  }
+
+  .profileForm,
+  .profilePreviewGrid,
+  .profileCredentialRow,
+  .profileApplyRow,
+  .profileHostSelectRow,
+  .hostCheckRow,
+  .profileTargetList div,
+  .profileStatusList div {
+    grid-template-columns: 1fr;
+  }
+
+  .profileCredentialRow,
+  .profileRowActions {
+    align-items: stretch;
+  }
+
+  .profileRowActions .miniButton,
+  .profileApplyRow .miniButton {
+    width: fit-content;
+  }
+
+  .profileEditModal .fieldGroup,
+  .profileApplyPreviewModal .fieldGroup,
+  .ProfileEditModal .fieldGroup,
+  .ProfileApplyPreviewModal .fieldGroup {
+    grid-template-columns: 1fr;
+  }
+
+  .profileEditModal .fieldGroup input,
+  .profileEditModal .fieldGroup select,
+  .profileEditModal .fieldGroup textarea,
+  .profileEditModal .profileModelCombobox,
+  .profileEditModal .profileFastModeSegment,
+  .profileHostSelectRow .badge,
+  .profileApplyPreviewModal .fieldGroup input,
+  .profileApplyPreviewModal .fieldGroup select,
+  .profileApplyPreviewModal .fieldGroup textarea,
+  .ProfileEditModal .fieldGroup input,
+  .ProfileEditModal .fieldGroup select,
+  .ProfileEditModal .fieldGroup textarea,
+  .ProfileEditModal .profileModelCombobox,
+  .ProfileEditModal .profileFastModeSegment,
+  .ProfileHostSelectModal .profileHostSelectRow .badge,
+  .ProfileApplyPreviewModal .fieldGroup input,
+  .ProfileApplyPreviewModal .fieldGroup select,
+  .ProfileApplyPreviewModal .fieldGroup textarea {
+    grid-column: 1;
   }
 }
 
@@ -1085,6 +1322,22 @@ tr:last-child td {
   .sshHostsTable .miniButton {
     padding: 3px 4px;
     font-size: 0.7rem;
+  }
+
+  .profileApplyTable th,
+  .profileApplyTable td {
+    padding: 5px 3px;
+    font-size: 0.72rem;
+  }
+
+  .profileApplyTable th {
+    font-size: 0.56rem;
+    letter-spacing: 0;
+  }
+
+  .profileApplyTable .miniButton {
+    padding: 3px;
+    font-size: 0.66rem;
   }
 }
 
@@ -1150,7 +1403,8 @@ tr:last-child td {
 }
 
 .fieldGroup input,
-.fieldGroup select {
+.fieldGroup select,
+.fieldGroup textarea {
   width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
@@ -1158,6 +1412,312 @@ tr:last-child td {
   color: var(--text);
   background: var(--surface-solid);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.fieldGroup textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
+.profileApplyPanel {
+  min-width: 0;
+}
+
+.profileForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profileForm .fieldGroup {
+  display: grid;
+  gap: 5px;
+}
+
+.profileForm .fieldGroup > span,
+.profileSubhead strong {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.profileForm .fieldWide {
+  grid-column: 1 / -1;
+}
+
+.profileCredentialRow {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.profileCredentialRow input {
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--surface-solid);
+}
+
+.profileEditModal,
+.ProfileEditModal,
+.profileHostSelectModal,
+.ProfileHostSelectModal,
+.profileApplyPreviewModal,
+.ProfileApplyPreviewModal {
+  width: min(720px, 100%);
+}
+
+.profileApplyPreviewModal,
+.ProfileApplyPreviewModal {
+  width: min(960px, 100%);
+}
+
+.profileModalForm {
+  min-width: 0;
+}
+
+.profileModelCombobox,
+.profileFastModeSegment {
+  grid-column: 2;
+  width: 100%;
+  min-width: 0;
+}
+
+.profileModelCombobox {
+  position: relative;
+}
+
+.profileModelCombobox input {
+  width: 100%;
+}
+
+.profileModelOptions {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: grid;
+  max-height: 190px;
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 4px;
+  background: var(--surface);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+}
+
+.profileModelOption {
+  min-height: 32px;
+  border: 0;
+  border-radius: 9px;
+  padding: 7px 9px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+}
+
+.profileModelOption:hover,
+.profileModelOption[data-selected="true"] {
+  background: color-mix(in srgb, var(--blue) 12%, transparent);
+}
+
+.profileFastModeSegment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 3px;
+  background: var(--surface-solid);
+}
+
+.profileFastModeOption {
+  min-height: 32px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.profileFastModeOption[data-selected="true"] {
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.profileAdvancedDetails {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px;
+  background: var(--surface-muted);
+}
+
+.profileAdvancedDetails summary {
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.profileAdvancedGrid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.profileEditModal .fieldWide textarea,
+.ProfileEditModal .fieldWide textarea {
+  grid-column: 2;
+}
+
+.profileApplyList,
+.profileHostList,
+.profileHostSelectList,
+.profileTargetList,
+.profileStatusList {
+  display: grid;
+  gap: 8px;
+}
+
+.profileSubhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.profileSubhead span,
+.hostCheckRow small,
+.profileStatusList span,
+.profileTargetList span {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
+.profileApplyRow,
+.hostCheckRow,
+.profileTargetList div,
+.profileStatusList div {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 9px;
+  background: var(--surface-solid);
+}
+
+.profileApplyRow {
+  grid-template-columns: auto minmax(160px, 1.3fr) minmax(150px, 1fr) auto auto;
+}
+
+.hostCheckRow {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.profileApplyHost,
+.profileAppliedName,
+.hostCheckRow span,
+.profileStatusList div {
+  min-width: 0;
+}
+
+.profileApplyHost,
+.profileAppliedName,
+.hostCheckRow span {
+  display: grid;
+  gap: 2px;
+}
+
+.profileApplyHost small,
+.profileAppliedName small {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
+.profileApplyHost strong,
+.profileAppliedName strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.profileHostSelectRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 9px;
+  background: var(--surface-solid);
+}
+
+.profileHostSelectRow[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--blue) 38%, var(--border));
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface-solid));
+}
+
+.profileHostSelectRow strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profileHostSelectMessage {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.profileHostSelectActions {
+  gap: 8px;
+}
+
+.profilePreviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.profileTargetList div {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr) auto;
+}
+
+.profileTargetList code {
+  min-width: 0;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.profileStatusList div {
+  grid-template-columns: auto minmax(100px, 0.7fr) minmax(0, 1fr);
+}
+
+.configPreviewBox {
+  margin-top: 14px;
+}
+
+.configPreviewBox pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-muted);
 }
 
 button:disabled {
