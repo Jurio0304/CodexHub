@@ -1214,25 +1214,31 @@ fn upsert_ssh_config_host(draft: ssh::SshHostDraft) -> Result<ssh::SshConfigWrit
 
 #[tauri::command]
 fn delete_ssh_config_host(
+    app: AppHandle,
     alias: String,
     state: State<'_, AppState>,
 ) -> Result<ssh::SshConfigWriteResult, String> {
     let result = ssh::delete_ssh_config_host(alias.clone())?;
     if result.changed {
-        state
-            .hosts
-            .lock()
-            .expect("hosts mutex poisoned")
-            .retain(|host| !host.host_alias.eq_ignore_ascii_case(alias.trim()));
+        let next_hosts = {
+            let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+            hosts.retain(|host| !host.host_alias.eq_ignore_ascii_case(alias.trim()));
+            hosts.clone()
+        };
+        save_hosts(&app, &state, &next_hosts)?;
     }
     Ok(result)
 }
 
 #[tauri::command]
-fn list_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<Host> {
+fn list_hosts(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Host>, String> {
+    let hosts = load_hosts(&app, &state)?;
+    *state.hosts.lock().expect("hosts mutex poisoned") = hosts;
     let profiles = profile_apply_profiles_snapshot(&app, &state);
     reconcile_hosts_with_profile_links(&state, &profiles);
-    state.hosts.lock().expect("hosts mutex poisoned").clone()
+    let next_hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+    save_hosts(&app, &state, &next_hosts)?;
+    Ok(next_hosts)
 }
 
 #[tauri::command]
@@ -1240,14 +1246,18 @@ fn refresh_discovered_hosts(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<Host>, String> {
+    let hosts = load_hosts(&app, &state)?;
+    *state.hosts.lock().expect("hosts mutex poisoned") = hosts;
     merge_discovered_hosts(&state)?;
     let profiles = load_profiles(&app, &state)?;
     reconcile_hosts_with_profile_links(&state, &profiles);
-    Ok(state.hosts.lock().expect("hosts mutex poisoned").clone())
+    let next_hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+    save_hosts(&app, &state, &next_hosts)?;
+    Ok(next_hosts)
 }
 
 #[tauri::command]
-fn add_host(state: State<'_, AppState>, draft: HostDraft) -> Host {
+fn add_host(app: AppHandle, state: State<'_, AppState>, draft: HostDraft) -> Result<Host, String> {
     let host = Host {
         id: format!("host-{}", timestamp_millis()),
         name: draft.name,
@@ -1277,16 +1287,17 @@ fn add_host(state: State<'_, AppState>, draft: HostDraft) -> Host {
         latency_ms: None,
     };
 
-    state
-        .hosts
-        .lock()
-        .expect("hosts mutex poisoned")
-        .insert(0, host.clone());
-    host
+    let next_hosts = {
+        let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+        hosts.insert(0, host.clone());
+        hosts.clone()
+    };
+    save_hosts(&app, &state, &next_hosts)?;
+    Ok(host)
 }
 
 #[tauri::command]
-fn update_host(state: State<'_, AppState>, id: String, patch: HostPatch) -> Host {
+fn update_host(app: AppHandle, state: State<'_, AppState>, id: String, patch: HostPatch) -> Result<Host, String> {
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
 
     if let Some(host) = hosts.iter_mut().find(|host| host.id == id) {
@@ -1314,7 +1325,11 @@ fn update_host(state: State<'_, AppState>, id: String, patch: HostPatch) -> Host
         if let Some(tags) = patch.tags {
             host.tags = tags;
         }
-        return host.clone();
+        let updated = host.clone();
+        let next_hosts = hosts.clone();
+        drop(hosts);
+        save_hosts(&app, &state, &next_hosts)?;
+        return Ok(updated);
     }
 
     let host = Host {
@@ -1346,19 +1361,28 @@ fn update_host(state: State<'_, AppState>, id: String, patch: HostPatch) -> Host
         latency_ms: None,
     };
     hosts.insert(0, host.clone());
-    host
+    let next_hosts = hosts.clone();
+    drop(hosts);
+    save_hosts(&app, &state, &next_hosts)?;
+    Ok(host)
 }
 
 #[tauri::command]
-fn delete_host(state: State<'_, AppState>, id: String) -> bool {
+fn delete_host(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
     let before = hosts.len();
     hosts.retain(|host| host.id != id);
-    hosts.len() != before
+    let changed = hosts.len() != before;
+    let next_hosts = hosts.clone();
+    drop(hosts);
+    if changed {
+        save_hosts(&app, &state, &next_hosts)?;
+    }
+    Ok(changed)
 }
 
 #[tauri::command]
-fn test_ssh_connection(state: State<'_, AppState>, id: String) -> ConnectionTest {
+fn test_ssh_connection(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<ConnectionTest, String> {
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
 
     if let Some(host) = hosts.iter_mut().find(|host| host.id == id) {
@@ -1373,7 +1397,7 @@ fn test_ssh_connection(state: State<'_, AppState>, id: String) -> ConnectionTest
             host.last_seen = "just now".into();
         }
 
-        return ConnectionTest {
+        let result = ConnectionTest {
             ok,
             latency_ms: host.latency_ms,
             message: if ok {
@@ -1382,13 +1406,17 @@ fn test_ssh_connection(state: State<'_, AppState>, id: String) -> ConnectionTest
                 format!("Mock SSH handshake to {} timed out.", host.name)
             },
         };
+        let next_hosts = hosts.clone();
+        drop(hosts);
+        save_hosts(&app, &state, &next_hosts)?;
+        return Ok(result);
     }
 
-    ConnectionTest {
+    Ok(ConnectionTest {
         ok: false,
         latency_ms: None,
         message: "Host not found.".into(),
-    }
+    })
 }
 
 #[tauri::command]
@@ -1418,12 +1446,17 @@ fn bootstrap_ssh_host(
 
 #[tauri::command]
 fn bootstrap_existing_ssh_host(
+    app: AppHandle,
     state: State<'_, AppState>,
     host_alias: String,
     password: String,
     timeout_ms: Option<u64>,
 ) -> Result<SshBootstrapResult, String> {
-    run_existing_ssh_bootstrap(&state, host_alias, password, timeout_ms)
+    let result = run_existing_ssh_bootstrap(&state, host_alias, password, timeout_ms)?;
+    if result.ok {
+        save_current_hosts(&app, &state)?;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2473,6 +2506,11 @@ fn run_bootstrap_for_config_host(
         let _ = merge_discovered_hosts(state);
     }
     update_host_check(state, &alias, ok, check_output.duration_ms);
+    if ok {
+        if let Some(handle) = app {
+            save_current_hosts(handle, state)?;
+        }
+    }
     record_task(state, task.clone());
 
     Ok(SshBootstrapResult {
@@ -4928,6 +4966,9 @@ fn update_host_probe(
             eprintln!("Failed to persist probed profile host link: {error}");
         }
     }
+    if let Err(error) = save_current_hosts(app, state) {
+        eprintln!("Failed to persist probed host state: {error}");
+    }
 }
 
 fn update_host_codex_status(
@@ -6023,6 +6064,44 @@ fn write_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String>
     }
     let content = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
     fs::write(path, content).map_err(|error| error.to_string())
+}
+
+fn hosts_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
+        .join("hosts.json")
+}
+
+fn load_hosts(app: &AppHandle, state: &AppState) -> Result<Vec<Host>, String> {
+    let path = hosts_path(app);
+    let hosts = if path.exists() {
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+        serde_json::from_str::<Vec<Host>>(&content)
+            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
+    } else {
+        state.hosts.lock().expect("hosts mutex poisoned").clone()
+    };
+    *state.hosts.lock().expect("hosts mutex poisoned") = hosts.clone();
+    Ok(hosts)
+}
+
+fn save_hosts(app: &AppHandle, state: &AppState, hosts: &[Host]) -> Result<(), String> {
+    let path = hosts_path(app);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(hosts).map_err(|error| error.to_string())?;
+    fs::write(&path, content)
+        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
+    *state.hosts.lock().expect("hosts mutex poisoned") = hosts.to_vec();
+    Ok(())
+}
+
+fn save_current_hosts(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+    save_hosts(app, state, &hosts)
 }
 
 fn profiles_path(app: &AppHandle) -> PathBuf {

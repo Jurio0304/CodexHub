@@ -241,6 +241,9 @@ for (const token of [
 for (const token of ["LatestCodexVersion", "parse_npm_latest_metadata", "latest_codex_cache_is_fresh", "CODEX_LATEST_REFRESH_HOUR", "https://registry.npmjs.org/@openai/codex", "codex-latest.json"]) {
   if (!rustLib.includes(token)) fail(`missing latest Codex version backend token: ${token}`);
 }
+for (const token of ["hosts.json", "load_hosts", "save_hosts", "save_current_hosts"]) {
+  if (!rustLib.includes(token)) fail(`missing host persistence token: ${token}`);
+}
 for (const token of ["setup_guide_dismissed", "#[serde(default)]"]) {
   if (!rustLib.includes(token)) fail(`missing setup guide settings backend token: ${token}`);
 }
