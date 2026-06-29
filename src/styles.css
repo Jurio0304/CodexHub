@@ -646,6 +646,40 @@ dd {
     linear-gradient(0deg, transparent 47%, var(--border-strong) 48%, var(--border-strong) 52%, transparent 53%);
 }
 
+.emptyListState {
+  min-height: 180px;
+  align-content: center;
+  gap: 14px;
+}
+
+.emptyListState p {
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  white-space: normal;
+}
+
+.emptyListIcon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  color: var(--text);
+  font-size: 1.85rem;
+  line-height: 1;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-soft);
+}
+
+.emptyListActions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
 .matrixEmptyState {
   min-height: 320px;
   align-content: center;
@@ -657,48 +691,17 @@ dd {
 }
 
 .matrixEmptyIcon {
-  position: relative;
   display: grid;
   width: 70px;
   height: 70px;
   place-items: center;
   border: 1px solid var(--border-strong);
   border-radius: 20px;
-  color: var(--blue);
+  color: var(--text);
+  font-size: 2.2rem;
+  line-height: 1;
   background: var(--surface-solid);
   box-shadow: var(--shadow-soft);
-}
-
-.matrixEmptyIcon::before {
-  content: "";
-  width: 34px;
-  height: 24px;
-  border: 2px solid currentColor;
-  border-radius: 7px;
-}
-
-.matrixEmptyIcon::after {
-  content: "";
-  position: absolute;
-  bottom: 17px;
-  left: 50%;
-  width: 24px;
-  height: 9px;
-  border-bottom: 2px solid currentColor;
-  border-left: 2px solid currentColor;
-  transform: translateX(-50%) skewX(-18deg);
-  opacity: 0.8;
-}
-
-.matrixEmptyIcon span {
-  position: absolute;
-  top: 25px;
-  left: 26px;
-  width: 18px;
-  height: 2px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: 0.65;
 }
 
 .tableWrap {
@@ -1950,6 +1953,145 @@ button:disabled {
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
 }
 
+.setupGuideModal {
+  display: grid;
+  gap: 16px;
+  width: min(660px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 22px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+}
+
+.setupGuideHero {
+  display: grid;
+  gap: 8px;
+}
+
+.setupGuideHero h2 {
+  font-size: 1.32rem;
+  letter-spacing: 0;
+}
+
+.setupGuideHero p {
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.setupGuideHero code {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  color: var(--text-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: var(--surface-muted);
+}
+
+.setupGuideLanguage {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.setupGuideLanguageOption {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  color: var(--text);
+  text-align: left;
+  background: var(--surface-solid);
+}
+
+.setupGuideLanguageOption[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--blue) 64%, var(--border));
+  background: color-mix(in srgb, var(--blue) 10%, var(--surface-solid));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 26%, transparent);
+}
+
+.setupGuideLanguageOption strong,
+.setupGuideLanguageOption span {
+  overflow-wrap: anywhere;
+}
+
+.setupGuideLanguageOption span {
+  color: var(--text-faint);
+  font-size: 0.82rem;
+}
+
+.setupGuideHostList {
+  display: grid;
+  max-height: min(360px, 46vh);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+}
+
+.setupGuideHostRow {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.9fr) minmax(140px, 1.2fr) minmax(90px, 0.7fr) minmax(92px, 0.7fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 520px;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 11px;
+}
+
+.setupGuideHostRow:last-of-type {
+  border-bottom: 0;
+}
+
+.setupGuideHostHeader {
+  color: var(--text-faint);
+  font-size: 0.76rem;
+  font-weight: 760;
+  background: var(--surface-muted);
+}
+
+.setupGuideHostRow strong,
+.setupGuideHostRow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.setupGuideHostRow span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.setupGuideHostHeader span {
+  color: var(--text-faint);
+}
+
+.setupGuideMore {
+  justify-self: center;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.setupGuideActions {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setupGuideActions[data-has-hosts="false"] {
+  justify-content: flex-end;
+}
+
+.setupGuideActions .primaryButton,
+.setupGuideActions .secondaryButton {
+  min-width: 128px;
+}
+
 .modalCloseButton {
   position: absolute;
   top: 14px;
@@ -2344,5 +2486,18 @@ td code {
 
   .codexOperationLogRow code {
     grid-column: auto;
+  }
+
+  .setupGuideModal {
+    padding: 18px;
+  }
+
+  .setupGuideLanguage {
+    grid-template-columns: 1fr;
+  }
+
+  .setupGuideActions {
+    align-items: stretch;
+    flex-direction: column-reverse;
   }
 }

@@ -606,6 +606,8 @@ enum FontPreset {
 struct AppSettings {
     theme: ThemeChoice,
     font_preset: FontPreset,
+    #[serde(default)]
+    setup_guide_dismissed: bool,
 }
 
 impl Default for AppSettings {
@@ -613,6 +615,7 @@ impl Default for AppSettings {
         Self {
             theme: ThemeChoice::System,
             font_preset: FontPreset::English,
+            setup_guide_dismissed: false,
         }
     }
 }
@@ -1190,8 +1193,8 @@ fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, S
 }
 
 #[tauri::command]
-fn get_ssh_status() -> Result<ssh::SshStatus, String> {
-    ssh::get_ssh_status()
+async fn get_ssh_status() -> Result<ssh::SshStatus, String> {
+    run_blocking_command("get_ssh_status", ssh::get_ssh_status).await?
 }
 
 #[tauri::command]
@@ -1200,8 +1203,8 @@ fn generate_ed25519_key() -> Result<ssh::SshKeyGenerationResult, String> {
 }
 
 #[tauri::command]
-fn list_ssh_config_hosts() -> Result<Vec<ssh::SshConfigHost>, String> {
-    ssh::list_ssh_config_hosts()
+async fn list_ssh_config_hosts() -> Result<Vec<ssh::SshConfigHost>, String> {
+    run_blocking_command("list_ssh_config_hosts", ssh::list_ssh_config_hosts).await?
 }
 
 #[tauri::command]
@@ -1210,13 +1213,23 @@ fn upsert_ssh_config_host(draft: ssh::SshHostDraft) -> Result<ssh::SshConfigWrit
 }
 
 #[tauri::command]
-fn delete_ssh_config_host(alias: String) -> Result<ssh::SshConfigWriteResult, String> {
-    ssh::delete_ssh_config_host(alias)
+fn delete_ssh_config_host(
+    alias: String,
+    state: State<'_, AppState>,
+) -> Result<ssh::SshConfigWriteResult, String> {
+    let result = ssh::delete_ssh_config_host(alias.clone())?;
+    if result.changed {
+        state
+            .hosts
+            .lock()
+            .expect("hosts mutex poisoned")
+            .retain(|host| !host.host_alias.eq_ignore_ascii_case(alias.trim()));
+    }
+    Ok(result)
 }
 
 #[tauri::command]
 fn list_hosts(app: AppHandle, state: State<'_, AppState>) -> Vec<Host> {
-    let _ = merge_discovered_hosts(&state);
     let profiles = profile_apply_profiles_snapshot(&app, &state);
     reconcile_hosts_with_profile_links(&state, &profiles);
     state.hosts.lock().expect("hosts mutex poisoned").clone()

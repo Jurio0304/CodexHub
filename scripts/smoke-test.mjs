@@ -146,6 +146,7 @@ for (const [content, phrase] of requiredText) {
 }
 
 const rustLib = read("src-tauri/src/lib.rs");
+const sshRs = read("src-tauri/src/ssh.rs");
 for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
   if (!rustLib.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
 }
@@ -196,7 +197,12 @@ for (const command of [
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
 }
+const listHostsMatch = rustLib.match(/fn list_hosts[\s\S]*?\n}\r?\n\r?\n#\[tauri::command\]\r?\nfn refresh_discovered_hosts/);
+if (!listHostsMatch) fail("could not locate list_hosts function boundary");
+if (listHostsMatch[0].includes("merge_discovered_hosts")) fail("list_hosts must not auto-import local SSH config");
 for (const asyncCommand of [
+  "async fn get_ssh_status",
+  "async fn list_ssh_config_hosts",
   "async fn ssh_check",
   "async fn remote_probe_codex",
   "async fn remote_manage_codex",
@@ -235,6 +241,12 @@ for (const token of [
 for (const token of ["LatestCodexVersion", "parse_npm_latest_metadata", "latest_codex_cache_is_fresh", "CODEX_LATEST_REFRESH_HOUR", "https://registry.npmjs.org/@openai/codex", "codex-latest.json"]) {
   if (!rustLib.includes(token)) fail(`missing latest Codex version backend token: ${token}`);
 }
+for (const token of ["setup_guide_dismissed", "#[serde(default)]"]) {
+  if (!rustLib.includes(token)) fail(`missing setup guide settings backend token: ${token}`);
+}
+for (const token of ["CREATE_NO_WINDOW", "process_command", "creation_flags(CREATE_NO_WINDOW)"]) {
+  if (!sshRs.includes(token)) fail(`missing hidden Windows child-process token: ${token}`);
+}
 for (const token of ["parse_cc_switch_sqlite_profiles", "provider_endpoints", "cc-switch.db", "currentProviderCodex", "credential_stored: false"]) {
   if (!rustLib.includes(token)) fail(`missing cc-switch adapter token: ${token}`);
 }
@@ -266,6 +278,41 @@ for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "
 }
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
   if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
+}
+for (const token of [
+  "SetupGuideModal",
+  "setupGuideOpen",
+  "setupGuideBusy",
+  "setupGuideStep",
+  "handleSetupGuideLanguageNext",
+  "handleImportLocalSshConfig",
+  "setupGuideDismissed",
+  "🧭 Setup Guide",
+  "🧭 配置向导",
+  "Choose Language",
+  "Step 1: Please choose your preferred language.",
+  "第1步：请选择偏好语言",
+  "Next",
+  "Nothing here yet...",
+  '<div className="matrixEmptyIcon" aria-hidden="true">🖥️</div>',
+  "Detecting local config...",
+  "正在检测本地配置...",
+  "Import local config",
+  "导入本地配置",
+  "未检测到本地存在可用的SSH配置，可使用CodexHub手动添加",
+  "Detect local config",
+  "检测本地配置",
+  "EmptyListState",
+  'hosts: "🖥️"',
+  'profiles: "🧾"',
+  'skills: "🧩"',
+  'tasks: "✅"',
+  "emptyLists",
+  "emptyListState",
+  "copy.emptyLists.hosts",
+  "onOpenSetupGuide"
+]) {
+  if (!app.includes(token)) fail(`missing setup guide or empty-state token: ${token}`);
 }
 for (const token of ['new URL("../figs/app-logo.png", import.meta.url).href', '<img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />']) {
   if (!app.includes(token)) fail(`missing app logo UI token: ${token}`);
@@ -673,6 +720,9 @@ const settings = read("src/settings.ts");
 for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
   if (!settings.includes(fontPreset)) fail(`missing font preset: ${fontPreset}`);
 }
+for (const token of ["setupGuideDismissed", "setupGuideDismissed: false"]) {
+  if (!settings.includes(token)) fail(`missing setup guide settings token: ${token}`);
+}
 for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Optimized", "Cross Platform"]) {
   if (settings.includes(oldFontPreset)) fail(`old font preset should not remain: ${oldFontPreset}`);
 }
@@ -683,6 +733,12 @@ for (const token of ["--font-ui", "--font-mono", "font-family: var(--font-ui)", 
 }
 for (const token of ["navIcon", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
   if (!styles.includes(token)) fail(`missing dashboard home polish style token: ${token}`);
+}
+for (const token of ["setupGuideModal", "setupGuideLanguage", "setupGuideLanguageOption", "setupGuideHostList", "setupGuideHostHeader", "setupGuideActions", "emptyListState", "emptyListIcon", "emptyListActions"]) {
+  if (!styles.includes(token)) fail(`missing setup guide or empty-state style token: ${token}`);
+}
+for (const token of ["matrixEmptyIcon::before", "matrixEmptyIcon::after", "matrixEmptyIcon span"]) {
+  if (styles.includes(token)) fail(`matrix empty state should use emoji instead of CSS line icon: ${token}`);
 }
 for (const token of ["calloutPanel", "hostCardActions", "tagRow", "skillLine", "taskList", "taskItem", "brandSubtle"]) {
   if (styles.includes(token)) fail(`dashboard home polish should remove old style token: ${token}`);

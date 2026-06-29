@@ -4,6 +4,7 @@ export type FontPreset = "english" | "zh-cn";
 export type AppSettings = {
   theme: ThemeChoice;
   fontPreset: FontPreset;
+  setupGuideDismissed: boolean;
 };
 
 type FontPresetDefinition = {
@@ -16,7 +17,8 @@ export const settingsStorageKey = "codexhub.settings.v1";
 
 export const defaultSettings: AppSettings = {
   theme: "system",
-  fontPreset: "english"
+  fontPreset: "english",
+  setupGuideDismissed: false
 };
 
 const uiFont = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif';
@@ -47,7 +49,8 @@ export function normalizeSettings(value: unknown): AppSettings {
   const candidate = value as Partial<AppSettings>;
   return {
     theme: themeValues.includes(candidate.theme as ThemeChoice) ? (candidate.theme as ThemeChoice) : defaultSettings.theme,
-    fontPreset: normalizeFontPreset(candidate.fontPreset)
+    fontPreset: normalizeFontPreset(candidate.fontPreset),
+    setupGuideDismissed: candidate.setupGuideDismissed === true
   };
 }
 

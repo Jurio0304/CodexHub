@@ -11,6 +11,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use russh::client;
 use russh::keys::ssh_key;
 use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
@@ -21,6 +24,8 @@ const MANAGED_END_PREFIX: &str = "# <<< CodexHub managed host:";
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTHORIZED_KEYS_INSTALL_SCRIPT: &str = "umask 077; mkdir -p \"$HOME/.ssh\" && touch \"$HOME/.ssh/authorized_keys\" && IFS= read -r key && if grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" 2>/dev/null; then printf 'authorized_keys already contains key\\n'; else printf '%s\\n' \"$key\" >> \"$HOME/.ssh/authorized_keys\" && printf 'authorized_keys updated\\n'; fi";
 const AUTHORIZED_KEYS_PERMISSIONS_SCRIPT: &str = "chmod 700 \"$HOME/.ssh\" && chmod 600 \"$HOME/.ssh/authorized_keys\" && printf 'permissions set\\n'";
 
@@ -112,6 +117,20 @@ impl SshCommandOutput {
     }
 }
 
+fn process_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    configure_process_window(&mut command);
+    command
+}
+
+#[cfg(windows)]
+fn configure_process_window(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_process_window(_command: &mut Command) {}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasswordBootstrapStep {
     PasswordLogin,
@@ -198,7 +217,7 @@ pub fn generate_ed25519_key() -> Result<SshKeyGenerationResult, String> {
         "codexhub@{}",
         env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
     );
-    let output = Command::new("ssh-keygen")
+    let output = process_command("ssh-keygen")
         .arg("-t")
         .arg("ed25519")
         .arg("-f")
@@ -1121,7 +1140,7 @@ where
     F: FnMut(ProcessStreamEvent),
 {
     let start = Instant::now();
-    let mut child = Command::new(program)
+    let mut child = process_command(program)
         .args(args)
         .envs(envs.iter().map(|(key, value)| (*key, value)))
         .stdin(if stdin_input.is_empty() {
@@ -1310,7 +1329,7 @@ fn run_process_with_timeout_input_env(
     envs: &[(&str, String)],
 ) -> Result<SshCommandOutput, String> {
     let start = Instant::now();
-    let mut child = Command::new(program)
+    let mut child = process_command(program)
         .args(args)
         .envs(envs.iter().map(|(key, value)| (*key, value)))
         .stdin(if stdin_input.is_empty() {
@@ -1492,7 +1511,7 @@ fn key_info(key_type: &str, private_path: &Path, public_path: &Path) -> SshKeyIn
 fn command_available(command: &str) -> bool {
     #[cfg(windows)]
     {
-        Command::new("where")
+        process_command("where")
             .arg(command)
             .output()
             .map(|output| output.status.success())
@@ -1501,7 +1520,7 @@ fn command_available(command: &str) -> bool {
 
     #[cfg(not(windows))]
     {
-        Command::new("sh")
+        process_command("sh")
             .arg("-c")
             .arg(format!("command -v {command}"))
             .output()
@@ -1560,7 +1579,7 @@ fn generate_keypair_at(private_path: &Path) -> Result<(), String> {
         "codexhub@{}",
         env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
     );
-    let output = Command::new("ssh-keygen")
+    let output = process_command("ssh-keygen")
         .arg("-t")
         .arg("ed25519")
         .arg("-f")
@@ -1585,7 +1604,7 @@ fn derive_public_key(private_path: &Path, public_path: &Path) -> Result<(), Stri
             "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
         );
     }
-    let output = Command::new("ssh-keygen")
+    let output = process_command("ssh-keygen")
         .arg("-y")
         .arg("-f")
         .arg(private_path)

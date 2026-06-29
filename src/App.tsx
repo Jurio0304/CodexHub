@@ -43,6 +43,7 @@ type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "sett
 type Locale = "en" | "zh";
 type HostBusyAction = "test" | "bootstrap" | RemoteCodexAction;
 type BadgeTone = "green" | "yellow" | "red" | "blue" | "gray";
+type SetupGuideStep = "language" | "ssh";
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   hostAlias: string;
@@ -133,6 +134,33 @@ const uiCopy = {
       noHostsBody: "Add the first SSH target to populate the server matrix.",
       noSkillPacks: "No skill packs"
     },
+    setupGuide: {
+      title: "🧭 Setup Guide",
+      languageTitle: "Choose Language",
+      languageBody: "Step 1: Please choose your preferred language.",
+      languageEnglish: "English",
+      languageChinese: "Simplified Chinese",
+      next: "Next",
+      bodyWithHosts: (count: number) => `${count} local SSH Host entr${count === 1 ? "y" : "ies"} detected. Importing refreshes CodexHub only.`,
+      bodyEmpty: "No usable local SSH config was detected. You can add hosts manually in CodexHub.",
+      detectedPath: (path: string) => `Detected from ${path}`,
+      importLocalConfig: "Import local config",
+      skip: "Skip",
+      close: "Close guide",
+      detecting: "Detecting local config...",
+      importing: "Importing...",
+      source: "Source",
+      moreHosts: (count: number) => `+${count} more`,
+      imported: (count: number) => `${count} local SSH Host entr${count === 1 ? "y" : "ies"} imported into CodexHub.`
+    },
+    emptyLists: {
+      hosts: "Nothing here yet...",
+      profiles: "Nothing here yet...",
+      profileHosts: "Nothing here yet...",
+      skills: "Nothing here yet...",
+      skillHosts: "Nothing here yet...",
+      tasks: "Nothing here yet..."
+    },
     hosts: {
       sshManager: "SSH config manager",
       addServerTitle: "Add server",
@@ -167,6 +195,7 @@ const uiCopy = {
       detectedSshHosts: "SSH Hosts",
       detectedSshHostsBody: "CodexHub lists local SSH config HostAlias entries for unified management.",
       refreshDetected: "Test all",
+      detectLocalConfig: "Detect local config",
       testingAll: "Testing all...",
       testedAll: "All hosts tested.",
       localSource: "Local",
@@ -513,6 +542,33 @@ const uiCopy = {
       noHostsBody: "添加第一个 SSH 目标后会填充服务器矩阵。",
       noSkillPacks: "无技能包"
     },
+    setupGuide: {
+      title: "🧭 配置向导",
+      languageTitle: "选择语言",
+      languageBody: "第1步：请选择偏好语言",
+      languageEnglish: "英文",
+      languageChinese: "简体中文",
+      next: "下一步",
+      bodyWithHosts: (count: number) => `检测到 ${count} 个本地 SSH Host。导入只刷新 CodexHub，不改写 SSH config。`,
+      bodyEmpty: "未检测到本地存在可用的SSH配置，可使用CodexHub手动添加",
+      detectedPath: (path: string) => `检测位置：${path}`,
+      importLocalConfig: "导入本地配置",
+      skip: "跳过",
+      close: "关闭向导",
+      detecting: "正在检测本地配置...",
+      importing: "导入中...",
+      source: "来源",
+      moreHosts: (count: number) => `还有 ${count} 个`,
+      imported: (count: number) => `已导入 ${count} 个本地 SSH Host 到 CodexHub。`
+    },
+    emptyLists: {
+      hosts: "这里空空如也...",
+      profiles: "这里空空如也...",
+      profileHosts: "这里空空如也...",
+      skills: "这里空空如也...",
+      skillHosts: "这里空空如也...",
+      tasks: "这里空空如也..."
+    },
     hosts: {
       sshManager: "SSH 连接管理",
       addServerTitle: "添加服务器",
@@ -547,6 +603,7 @@ const uiCopy = {
       detectedSshHosts: "SSH Hosts",
       detectedSshHostsBody: "CodexHub 列出本地 SSH config 中的 HostAlias，用于统一管理。",
       refreshDetected: "一键测试",
+      detectLocalConfig: "检测本地配置",
       testingAll: "测试中...",
       testedAll: "一键测试完成。",
       localSource: "本地",
@@ -824,6 +881,11 @@ const uiCopy = {
 
 type UICopy = (typeof uiCopy)[Locale];
 
+function visibleSshConfigHostsForHosts(configHosts: SshConfigHost[], appHosts: Host[]) {
+  const aliases = new Set(appHosts.map((host) => host.hostAlias.toLowerCase()));
+  return configHosts.filter((host) => aliases.has(host.alias.toLowerCase()));
+}
+
 function App() {
   const [activeSection, setActiveSection] = useState<SectionId>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(() => loadLocalSettings());
@@ -840,20 +902,62 @@ function App() {
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
   const [hostModalOpen, setHostModalOpen] = useState(false);
   const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false);
+  const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("language");
+  const [setupGuideSshConfigHosts, setSetupGuideSshConfigHosts] = useState<SshConfigHost[]>([]);
+  const [setupGuideBusy, setSetupGuideBusy] = useState(false);
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
 
   const refreshSshState = async () => {
-    const [nextSshStatus, nextSshConfigHosts, nextHosts] = await Promise.all([
+    const [nextSshStatus, allSshConfigHosts, nextHosts] = await Promise.all([
+      api.getSshStatus(),
+      api.listSshConfigHosts(),
+      api.listHosts()
+    ]);
+    const nextSshConfigHosts = visibleSshConfigHostsForHosts(allSshConfigHosts, nextHosts);
+    setSshStatus(nextSshStatus);
+    setSshConfigHosts(nextSshConfigHosts);
+    setHosts(nextHosts);
+    return {
+      sshStatus: nextSshStatus,
+      sshConfigHosts: nextSshConfigHosts,
+      hosts: nextHosts
+    };
+  };
+
+  const refreshSshDetectionState = async () => {
+    const [nextSshStatus, detectedSshConfigHosts] = await Promise.all([
+      api.getSshStatus(),
+      api.listSshConfigHosts()
+    ]);
+    setSshStatus(nextSshStatus);
+    setSetupGuideSshConfigHosts(detectedSshConfigHosts);
+    return {
+      sshStatus: nextSshStatus,
+      sshConfigHosts: detectedSshConfigHosts
+    };
+  };
+
+  const importLocalSshConfig = async () => {
+    const [nextSshStatus, detectedSshConfigHosts, nextHosts] = await Promise.all([
       api.getSshStatus(),
       api.listSshConfigHosts(),
       api.refreshDiscoveredHosts()
     ]);
+    const nextSshConfigHosts = visibleSshConfigHostsForHosts(detectedSshConfigHosts, nextHosts);
     setSshStatus(nextSshStatus);
+    setSetupGuideSshConfigHosts(detectedSshConfigHosts);
     setSshConfigHosts(nextSshConfigHosts);
     setHosts(nextHosts);
+    return {
+      sshStatus: nextSshStatus,
+      sshConfigHosts: nextSshConfigHosts,
+      detectedSshConfigHosts,
+      hosts: nextHosts
+    };
   };
 
   const refreshLatestCodex = async (force = false) => {
@@ -871,11 +975,9 @@ function App() {
       api.listHosts(),
       api.listProfiles(),
       api.listSkillPacks(),
-      api.listTasks(),
-      api.getSshStatus(),
-      api.listSshConfigHosts()
+      api.listTasks()
     ])
-      .then(([nextSettings, nextHealth, nextHosts, nextProfiles, nextSkillPacks, nextTasks, nextSshStatus, nextSshConfigHosts]) => {
+      .then(([nextSettings, nextHealth, nextHosts, nextProfiles, nextSkillPacks, nextTasks]) => {
         if (!mounted) return;
         setSettings(nextSettings);
         setHealth(nextHealth);
@@ -883,8 +985,11 @@ function App() {
         setProfiles(nextProfiles);
         setSkillPacks(nextSkillPacks);
         setTasks(nextTasks);
-        setSshStatus(nextSshStatus);
-        setSshConfigHosts(nextSshConfigHosts);
+        setSetupGuideStep("language");
+        setSetupGuideOpen(!nextSettings.setupGuideDismissed);
+        if (nextSettings.setupGuideDismissed || nextHosts.length > 0) {
+          void refreshSshState();
+        }
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -1461,6 +1566,47 @@ function App() {
     void api.saveSettings(nextSettings).then(setSettings);
   };
 
+  const handleDismissSetupGuide = () => {
+    setSetupGuideOpen(false);
+    persistSettings({ ...settings, setupGuideDismissed: true });
+  };
+
+  const handleSetupGuideLanguageNext = async (fontPreset: FontPreset) => {
+    persistSettings({ ...settings, fontPreset });
+    setSetupGuideStep("ssh");
+    setSetupGuideBusy(true);
+    try {
+      await waitForNextFrame();
+      await refreshSshDetectionState();
+    } finally {
+      setSetupGuideBusy(false);
+    }
+  };
+
+  const handleOpenSetupGuide = async () => {
+    setSetupGuideBusy(true);
+    try {
+      setSetupGuideStep("ssh");
+      setSetupGuideOpen(true);
+      await waitForNextFrame();
+      await refreshSshDetectionState();
+    } finally {
+      setSetupGuideBusy(false);
+    }
+  };
+
+  const handleImportLocalSshConfig = async () => {
+    setSetupGuideBusy(true);
+    try {
+      const refreshed = await importLocalSshConfig();
+      setSetupGuideOpen(false);
+      persistSettings({ ...settings, setupGuideDismissed: true });
+      setNotice(copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
+    } finally {
+      setSetupGuideBusy(false);
+    }
+  };
+
   const renderContent = () => {
     switch (activeSection) {
       case "dashboard":
@@ -1500,6 +1646,7 @@ function App() {
             onGenerateEd25519Key={handleGenerateEd25519Key}
             onManageCodex={handleRemoteCodexAction}
             onOpenAddHost={handleAddHost}
+            onOpenSetupGuide={handleOpenSetupGuide}
             onTestAllSshHosts={handleTestAllSshHosts}
             onTestHost={handleTestHost}
           />
@@ -1554,7 +1701,9 @@ function App() {
             onCopyPublicKey={handleCopyPublicKey}
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
             onGenerateEd25519Key={handleGenerateEd25519Key}
-            onRefreshSsh={refreshSshState}
+            onRefreshSsh={async () => {
+              await refreshSshState();
+            }}
             onThemeChange={(theme) => persistSettings({ ...settings, theme })}
           />
         );
@@ -1615,6 +1764,180 @@ function App() {
           }}
         />
       ) : null}
+      {setupGuideOpen ? (
+        <SetupGuideModal
+          busy={setupGuideBusy}
+          copy={copy}
+          currentFontPreset={settings.fontPreset}
+          step={setupGuideStep}
+          sshConfigHosts={setupGuideSshConfigHosts}
+          sshStatus={sshStatus}
+          onClose={handleDismissSetupGuide}
+          onImport={handleImportLocalSshConfig}
+          onLanguageNext={handleSetupGuideLanguageNext}
+          onSkip={handleDismissSetupGuide}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function SetupGuideModal({
+  busy,
+  copy,
+  currentFontPreset,
+  step,
+  sshConfigHosts,
+  sshStatus,
+  onClose,
+  onImport,
+  onLanguageNext,
+  onSkip
+}: {
+  busy: boolean;
+  copy: UICopy;
+  currentFontPreset: FontPreset;
+  step: SetupGuideStep;
+  sshConfigHosts: SshConfigHost[];
+  sshStatus: SshStatus | null;
+  onClose: () => void;
+  onImport: () => Promise<void>;
+  onLanguageNext: (fontPreset: FontPreset) => Promise<void>;
+  onSkip: () => void;
+}) {
+  const [languageDraft, setLanguageDraft] = useState<FontPreset>(currentFontPreset);
+  const visibleHosts = sshConfigHosts.slice(0, 8);
+  const hiddenHostCount = Math.max(0, sshConfigHosts.length - visibleHosts.length);
+  const hasLocalHosts = sshConfigHosts.length > 0;
+  const detectionPending = step === "ssh" && busy && !hasLocalHosts;
+  const configPath = sshStatus?.configPath ?? "%USERPROFILE%\\.ssh\\config";
+  const languageCopy = uiCopy[languageDraft === "zh-cn" ? "zh" : "en"];
+
+  useEffect(() => {
+    setLanguageDraft(currentFontPreset);
+  }, [currentFontPreset]);
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="setupGuideModal" role="dialog" aria-modal="true" aria-labelledby="setup-guide-title">
+        {step === "language" ? (
+          <>
+            <div className="setupGuideHero">
+              <h2 id="setup-guide-title">{languageCopy.setupGuide.title}</h2>
+              <p>{languageCopy.setupGuide.languageBody}</p>
+            </div>
+
+            <div className="setupGuideLanguage" role="radiogroup" aria-label={languageCopy.setupGuide.languageTitle}>
+              <button
+                className="setupGuideLanguageOption"
+                data-selected={languageDraft === "english"}
+                role="radio"
+                aria-checked={languageDraft === "english"}
+                type="button"
+                onClick={() => setLanguageDraft("english")}
+              >
+                <strong>{languageCopy.setupGuide.languageEnglish}</strong>
+                <span>English</span>
+              </button>
+              <button
+                className="setupGuideLanguageOption"
+                data-selected={languageDraft === "zh-cn"}
+                role="radio"
+                aria-checked={languageDraft === "zh-cn"}
+                type="button"
+                onClick={() => setLanguageDraft("zh-cn")}
+              >
+                <strong>{languageCopy.setupGuide.languageChinese}</strong>
+                <span>简体中文</span>
+              </button>
+            </div>
+
+            <div className="modalActions setupGuideActions" data-has-hosts="true">
+              <button className="primaryButton" disabled={busy} type="button" onClick={() => void onLanguageNext(languageDraft)}>
+                {languageCopy.setupGuide.next}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="setupGuideHero">
+              <h2 id="setup-guide-title">{copy.setupGuide.title}</h2>
+              <p>{detectionPending ? copy.setupGuide.detecting : hasLocalHosts ? copy.setupGuide.bodyWithHosts(sshConfigHosts.length) : copy.setupGuide.bodyEmpty}</p>
+              <code>{copy.setupGuide.detectedPath(configPath)}</code>
+            </div>
+
+            {hasLocalHosts ? (
+              <div className="setupGuideHostList" role="table" aria-label={copy.hosts.detectedSshHosts}>
+                <div className="setupGuideHostRow setupGuideHostHeader" role="row">
+                  <span role="columnheader">{copy.hosts.alias}</span>
+                  <span role="columnheader">{copy.hosts.hostName}</span>
+                  <span role="columnheader">{copy.hosts.user}</span>
+                  <span role="columnheader">{copy.setupGuide.source}</span>
+                </div>
+                {visibleHosts.map((host) => (
+                  <div className="setupGuideHostRow" key={`${host.source}-${host.alias}`} role="row">
+                    <strong role="cell">{host.alias}</strong>
+                    <span role="cell">{host.hostName || host.alias}</span>
+                    <span role="cell">{host.user || copy.hosts.unknown}</span>
+                    <span role="cell"><Badge tone={host.managed ? "blue" : "gray"}>{sshHostSourceLabel(copy, host)}</Badge></span>
+                  </div>
+                ))}
+                {hiddenHostCount > 0 ? <p className="setupGuideMore">{copy.setupGuide.moreHosts(hiddenHostCount)}</p> : null}
+              </div>
+            ) : detectionPending ? (
+              <EmptyListState copy={copy} message={copy.setupGuide.detecting} variant="hosts" />
+            ) : (
+              <EmptyListState copy={copy} message={copy.emptyLists.hosts} variant="hosts" />
+            )}
+
+            <div className="modalActions setupGuideActions" data-has-hosts={hasLocalHosts}>
+              {hasLocalHosts ? (
+                <button className="secondaryButton" disabled={busy} type="button" onClick={onSkip}>
+                  {copy.setupGuide.skip}
+                </button>
+              ) : null}
+              {hasLocalHosts ? (
+                <button className="primaryButton" disabled={busy} type="button" onClick={() => void onImport()}>
+                  {busy ? copy.setupGuide.importing : copy.setupGuide.importLocalConfig}
+                </button>
+              ) : (
+                <button className="primaryButton" disabled={busy} type="button" onClick={onClose}>
+                  {copy.setupGuide.close}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function EmptyListState({
+  action,
+  copy,
+  message,
+  variant
+}: {
+  action?: ReactNode;
+  copy: UICopy;
+  message: string;
+  variant: "hosts" | "profiles" | "skills" | "tasks";
+}) {
+  const icon = {
+    hosts: "🖥️",
+    profiles: "🧾",
+    skills: "🧩",
+    tasks: "✅"
+  }[variant];
+
+  return (
+    <div className="emptyState emptyListState" data-variant={variant}>
+      <div className="emptyListIcon" aria-hidden="true">
+        {icon}
+      </div>
+      <p>{message || copy.emptyLists.hosts}</p>
+      {action ? <div className="emptyListActions">{action}</div> : null}
     </div>
   );
 }
@@ -1841,9 +2164,7 @@ function ServerMatrix({
 
       {hosts.length === 0 ? (
         <div className="emptyState matrixEmptyState">
-          <div className="matrixEmptyIcon" aria-hidden="true">
-            <span />
-          </div>
+          <div className="matrixEmptyIcon" aria-hidden="true">🖥️</div>
           <h3>{copy.dashboard.noHosts}</h3>
           <p>{copy.dashboard.noHostsBody}</p>
           <button className="primaryButton" type="button" onClick={onAddServer}>{copy.common.addServer}</button>
@@ -1916,6 +2237,7 @@ function HostsView({
   onGenerateEd25519Key,
   onManageCodex,
   onOpenAddHost,
+  onOpenSetupGuide,
   onTestAllSshHosts,
   onTestHost
 }: {
@@ -1933,6 +2255,7 @@ function HostsView({
   onGenerateEd25519Key: () => Promise<void>;
   onManageCodex: (id: string, action: RemoteCodexAction) => void;
   onOpenAddHost: () => void;
+  onOpenSetupGuide: () => Promise<void>;
   onTestAllSshHosts: () => Promise<void>;
   onTestHost: (id: string) => void;
 }) {
@@ -2004,11 +2327,12 @@ function HostsView({
         </div>
 
         {sshConfigHosts.length === 0 ? (
-          <div className="emptyState">
-            <div className="emptyIcon" aria-hidden="true" />
-            <h3>{copy.hosts.noManagedHosts}</h3>
-            <p>{copy.hosts.noManagedHostsBody}</p>
-          </div>
+          <EmptyListState
+            action={<button className="primaryButton" type="button" onClick={() => void onOpenSetupGuide()}>{copy.hosts.detectLocalConfig}</button>}
+            copy={copy}
+            message={copy.emptyLists.hosts}
+            variant="hosts"
+          />
         ) : (
           <div className="tableWrap">
             <table className="sshHostsTable">
@@ -2626,62 +2950,66 @@ function ProfilesView({
           </div>
         ) : null}
 
-        <div className="tableWrap">
-          <table className="profilesTable profileTable">
-            <thead>
-              <tr>
-                <th>{copy.profiles.name}</th>
-                <th>{copy.profiles.model}</th>
-                <th>{copy.profiles.provider}</th>
-                <th>{copy.profiles.apiKey}</th>
-                <th>{copy.profiles.hosts}</th>
-                <th>{copy.profiles.actions}</th>
-                <th>{copy.profiles.applyColumn}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {profiles.map((profile) => (
-                <tr
-                  className="selectableRow"
-                  data-selected={selectedProfile?.id === profile.id}
-                  key={profile.id}
-                  onClick={() => setSelectedProfileId(profile.id)}
-                >
-                  <td><strong>{profile.name}</strong></td>
-                  <td>{profile.model}</td>
-                  <td>{profile.provider}</td>
-                  <td><ProfileStorageBadge copy={copy} profile={profile} /></td>
-                  <td>{appliedHostCountByProfileId.get(profile.id) ?? 0}</td>
-                  <td>
-                    <div className="profileRowActions" onClick={(event) => event.stopPropagation()}>
-                      <button className="miniButton" type="button" onClick={() => {
-                        setEditingProfileId(profile.id);
-                        setProfileEditorOpen(true);
-                      }}>{copy.profiles.edit}</button>
-                      <button className="miniButton" disabled={busy === "duplicate"} type="button" onClick={() => void handleDuplicate(profile)}>{copy.profiles.duplicate}</button>
-                      <button className="miniButton" disabled={busy === "export"} type="button" onClick={() => void handleExport(profile)}>{copy.profiles.export}</button>
-                      <button className="miniButton danger" disabled={busy === "delete"} type="button" onClick={() => void handleDelete(profile)}>{copy.profiles.delete}</button>
-                    </div>
-                  </td>
-                  <td>
-                    <button
-                      className="miniButton"
-                      disabled={hosts.length === 0 || busy === "apply"}
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelectedProfileId(profile.id);
-                        setHostPickerProfileId(profile.id);
-                      }}
-                    >
-                      {copy.profiles.selectHosts}
-                    </button>
-                  </td>
+        {profiles.length === 0 ? (
+          <EmptyListState copy={copy} message={copy.emptyLists.profiles} variant="profiles" />
+        ) : (
+          <div className="tableWrap">
+            <table className="profilesTable profileTable">
+              <thead>
+                <tr>
+                  <th>{copy.profiles.name}</th>
+                  <th>{copy.profiles.model}</th>
+                  <th>{copy.profiles.provider}</th>
+                  <th>{copy.profiles.apiKey}</th>
+                  <th>{copy.profiles.hosts}</th>
+                  <th>{copy.profiles.actions}</th>
+                  <th>{copy.profiles.applyColumn}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {profiles.map((profile) => (
+                  <tr
+                    className="selectableRow"
+                    data-selected={selectedProfile?.id === profile.id}
+                    key={profile.id}
+                    onClick={() => setSelectedProfileId(profile.id)}
+                  >
+                    <td><strong>{profile.name}</strong></td>
+                    <td>{profile.model}</td>
+                    <td>{profile.provider}</td>
+                    <td><ProfileStorageBadge copy={copy} profile={profile} /></td>
+                    <td>{appliedHostCountByProfileId.get(profile.id) ?? 0}</td>
+                    <td>
+                      <div className="profileRowActions" onClick={(event) => event.stopPropagation()}>
+                        <button className="miniButton" type="button" onClick={() => {
+                          setEditingProfileId(profile.id);
+                          setProfileEditorOpen(true);
+                        }}>{copy.profiles.edit}</button>
+                        <button className="miniButton" disabled={busy === "duplicate"} type="button" onClick={() => void handleDuplicate(profile)}>{copy.profiles.duplicate}</button>
+                        <button className="miniButton" disabled={busy === "export"} type="button" onClick={() => void handleExport(profile)}>{copy.profiles.export}</button>
+                        <button className="miniButton danger" disabled={busy === "delete"} type="button" onClick={() => void handleDelete(profile)}>{copy.profiles.delete}</button>
+                      </div>
+                    </td>
+                    <td>
+                      <button
+                        className="miniButton"
+                        disabled={hosts.length === 0 || busy === "apply"}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedProfileId(profile.id);
+                          setHostPickerProfileId(profile.id);
+                        }}
+                      >
+                        {copy.profiles.selectHosts}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="panel spanWide profileApplyPanel">
@@ -2696,7 +3024,7 @@ function ProfilesView({
         </div>
 
         {hosts.length === 0 ? (
-          <p className="mutedText">{copy.profiles.noHostTargets}</p>
+          <EmptyListState copy={copy} message={copy.emptyLists.profileHosts} variant="hosts" />
         ) : (
           <div className="tableWrap">
             <table className="sshHostsTable profileApplyTable">
@@ -3366,11 +3694,7 @@ function SkillsView({
         </div>
 
         {skillPacks.length === 0 ? (
-          <div className="emptyState">
-            <div className="emptyIcon" aria-hidden="true" />
-            <h3>{copy.skills.noSkills}</h3>
-            <p>{copy.skills.noSkillsBody}</p>
-          </div>
+          <EmptyListState copy={copy} message={copy.emptyLists.skills} variant="skills" />
         ) : (
           <div className="tableWrap">
             <table className="skillsTable">
@@ -3498,15 +3822,19 @@ function SkillsView({
             {copy.skills.selectAllHosts}
           </button>
         </div>
-        <div className="skillHostList">
-          {hosts.map((host) => (
-            <button className="profileHostSelectRow" data-selected={selectedHostAliases.includes(host.hostAlias)} key={host.id} type="button" onClick={() => toggleHost(host.hostAlias)}>
-              <input checked={selectedHostAliases.includes(host.hostAlias)} readOnly type="checkbox" />
-              <strong>{host.name}<small>{host.hostAlias}</small></strong>
-              <Badge tone={host.status === "online" ? "green" : "gray"}>{host.status}</Badge>
-            </button>
-          ))}
-        </div>
+        {hosts.length === 0 ? (
+          <EmptyListState copy={copy} message={copy.emptyLists.skillHosts} variant="hosts" />
+        ) : (
+          <div className="skillHostList">
+            {hosts.map((host) => (
+              <button className="profileHostSelectRow" data-selected={selectedHostAliases.includes(host.hostAlias)} key={host.id} type="button" onClick={() => toggleHost(host.hostAlias)}>
+                <input checked={selectedHostAliases.includes(host.hostAlias)} readOnly type="checkbox" />
+                <strong>{host.name}<small>{host.hostAlias}</small></strong>
+                <Badge tone={host.status === "online" ? "green" : "gray"}>{host.status}</Badge>
+              </button>
+            ))}
+          </div>
+        )}
 
         {preview ? (
           <dl className="settingsList skillPreview">
@@ -3596,30 +3924,34 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
             <p>{copy.tasks.body}</p>
           </div>
         </div>
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{copy.tasks.action}</th>
-                <th>{copy.tasks.host}</th>
-                <th>{copy.tasks.status}</th>
-                <th>{copy.tasks.started}</th>
-                <th>{copy.tasks.summary}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => (
-                <tr className="selectableRow" data-selected={selectedTask?.id === task.id} key={task.id} onClick={() => setSelectedTaskId(task.id)}>
-                  <td><strong>{localizeTaskAction(task.action, copy)}</strong></td>
-                  <td>{task.hostName}</td>
-                  <td><TaskStatusBadge copy={copy} status={task.status} /></td>
-                  <td>{task.startedAt}</td>
-                  <td>{task.summary}</td>
+        {tasks.length === 0 ? (
+          <EmptyListState copy={copy} message={copy.emptyLists.tasks} variant="tasks" />
+        ) : (
+          <div className="tableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{copy.tasks.action}</th>
+                  <th>{copy.tasks.host}</th>
+                  <th>{copy.tasks.status}</th>
+                  <th>{copy.tasks.started}</th>
+                  <th>{copy.tasks.summary}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {tasks.map((task) => (
+                  <tr className="selectableRow" data-selected={selectedTask?.id === task.id} key={task.id} onClick={() => setSelectedTaskId(task.id)}>
+                    <td><strong>{localizeTaskAction(task.action, copy)}</strong></td>
+                    <td>{task.hostName}</td>
+                    <td><TaskStatusBadge copy={copy} status={task.status} /></td>
+                    <td>{task.startedAt}</td>
+                    <td>{task.summary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="panel logPanel">
@@ -3630,7 +3962,7 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
           </div>
         </div>
         <div className="logList">
-          {selectedTask?.logs.map((log) => (
+          {selectedTask ? selectedTask.logs.map((log) => (
             <details className="logLine" data-level={log.level} key={log.id}>
               <summary>
                 <span>{log.timestamp}</span>
@@ -3666,7 +3998,7 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
                 </div>
               </div>
             </details>
-          )) ?? <p className="mutedText">{copy.tasks.noLogs}</p>}
+          )) : <EmptyListState copy={copy} message={copy.emptyLists.tasks} variant="tasks" />}
         </div>
       </section>
     </div>
