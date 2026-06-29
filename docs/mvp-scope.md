@@ -36,7 +36,7 @@ Build a Windows desktop app that helps a user manage Codex App SSH multi-server 
 - Automatic Codex App SSH host registration through undocumented interfaces.
 - Forced Codex App SSH reconnect through undocumented interfaces.
 - Full terminal emulator or browser-based SSH console.
-- Multi-user team server, RBAC, schedules, bulk Codex install/update execution, and fleet automation.
+- Multi-user team server, RBAC, schedules, unattended fleet automation, and broad bulk Codex install/update orchestration beyond the user-triggered outdated-host update action.
 - Storing private keys, passphrases, or tokens in plaintext.
 - Writing local credential-store key names or API key values into remote Codex config.
 - Default overwrite of user SSH config, Codex config, shell config, or remote dotfiles.

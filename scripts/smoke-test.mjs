@@ -276,7 +276,7 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "服务器矩阵", "Font", "SSH Hosts", "Host IP", "Codex版本", "Test all", "一键测试", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
+for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "服务器矩阵", "Font", "SSH Hosts", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
@@ -591,6 +591,9 @@ for (const token of [
 }
 if (!app.includes('onManageCodex(sshHost.alias, "install")') || !app.includes('onManageCodex(sshHost.alias, "update")')) fail("SSH Hosts table should expose remote Codex install/update actions");
 if (!app.includes('installCodex: "安装"') || !app.includes('updateCodex: "更新"')) fail("SSH Hosts Codex buttons should use short install/update labels");
+for (const token of ["onUpdateOutdatedCodexHosts", "handleUpdateOutdatedCodexHosts", "Promise.allSettled", "outdatedCodexAliases", "copy.hosts.updateOutdatedCodex"]) {
+  if (!app.includes(token)) fail(`missing one-click outdated Codex update token: ${token}`);
+}
 if (!app.includes('className="sshHostsTable"') || !app.includes("sshHostsActionsCol") || !app.includes("sshHostsCodexCol")) fail("SSH Hosts table should use the compact responsive table layout");
 if (app.includes('<td className="tableActions')) fail("SSH Hosts action cells must remain table cells; put flex on an inner button group");
 if (!app.includes('className="tableActions sshHostsActionGroup"')) fail("SSH Hosts action buttons should be wrapped in an inner flex group");
@@ -609,6 +612,15 @@ if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay 
 if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
 if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");
 if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
+for (const token of ["TaskLogModal", "taskLogModal", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs"]) {
+  if (!app.includes(token)) fail(`missing task-history log modal token: ${token}`);
+}
+for (const token of ["logPanel", "publicKeyBox", "commandGrid", "commands.map((command)"]) {
+  if (app.includes(token)) fail(`Tasks/Settings simplification should remove old token: ${token}`);
+}
+for (const token of ["copyPublicKeyButton", "data-success={publicKeyCopied}", "copy.settings.copyPublicKeySuccess", "onCopyPublicKey: (publicKey: string) => Promise<boolean>"]) {
+  if (!app.includes(token)) fail(`missing simplified SSH settings copy token: ${token}`);
+}
 
 const api = read("src/api.ts");
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
@@ -731,7 +743,7 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
-for (const token of ["--font-ui", "--font-mono", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
+for (const token of ["--font-ui", "--font-mono", "--app-content-max: 1220px", "--content-max: var(--app-content-max)", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
 }
 for (const token of ["navIcon", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
@@ -788,5 +800,8 @@ if (!codexLogRowsStyle.includes("border: 1px solid var(--border)") || !codexLogR
 const codexLogCodeStyle = styles.match(/\.codexOperationLogRow code\s*\{[^}]*\}/)?.[0] ?? "";
 if (!codexLogCodeStyle.includes("overflow-wrap: anywhere") || !codexLogCodeStyle.includes("white-space: pre-wrap")) fail("Codex operation log detail should wrap long output");
 if (codexLogCodeStyle.includes("text-overflow") || codexLogCodeStyle.includes("white-space: nowrap")) fail("Codex operation log detail should not be ellipsized or forced onto one line");
+for (const token of ["taskLogModal", "taskLogModalMeta", "taskDetailsCol", "taskTableWrap", "tasksTable", "copyPublicKeyButton", 'data-success="true"', "max-width: var(--app-content-max)"]) {
+  if (!styles.includes(token)) fail(`missing simplified UI style token: ${token}`);
+}
 
 console.log("SMOKE PASS: CodexHub docs and Tauri skeleton are present.");

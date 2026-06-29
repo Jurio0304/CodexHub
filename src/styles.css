@@ -22,6 +22,8 @@
   --yellow: #a66200;
   --red: #d92d20;
   --gray: #687083;
+  --app-content-max: 1220px;
+  --content-max: var(--app-content-max);
   --radius-lg: 24px;
   --radius-md: 18px;
   --radius-sm: 12px;
@@ -256,7 +258,7 @@ dd {
   justify-content: space-between;
   gap: 24px;
   margin: 0 auto 22px;
-  max-width: 1220px;
+  max-width: var(--app-content-max);
 }
 
 .eyebrow {
@@ -304,10 +306,20 @@ dd {
 .settingsGrid,
 .tasksGrid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
   gap: 16px;
-  max-width: 1220px;
+  width: 100%;
+  max-width: var(--app-content-max);
   margin: 0 auto;
+  min-width: 0;
+}
+
+.pageGrid {
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+}
+
+.settingsGrid,
+.tasksGrid {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .summaryStrip,
@@ -320,7 +332,7 @@ dd {
 
 .cardGrid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  max-width: 1220px;
+  max-width: var(--app-content-max);
   margin: 0 auto;
 }
 
@@ -329,7 +341,7 @@ dd {
   gap: 16px;
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
-  max-width: 1220px;
+  max-width: var(--app-content-max);
   margin: 0 auto;
   min-width: 0;
 }
@@ -941,7 +953,7 @@ tr:last-child td {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr);
   gap: 16px;
   width: 100%;
-  max-width: 1220px;
+  max-width: var(--app-content-max);
   margin: 0 auto;
   min-width: 0;
 }
@@ -1096,11 +1108,63 @@ tr:last-child td {
 }
 
 .tasksGrid .spanWide {
-  grid-column: auto;
+  grid-column: 1 / -1;
 }
 
-.logPanel {
+.taskTableWrap {
+  overflow-x: hidden;
+}
+
+.tasksTable {
   min-width: 0;
+  table-layout: fixed;
+}
+
+.tasksTable th,
+.tasksTable td {
+  padding: 11px 9px;
+  line-height: 1.28;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.tasksTable th {
+  letter-spacing: 0.04em;
+}
+
+.tasksTable th:nth-child(1),
+.tasksTable td:nth-child(1) {
+  width: 17%;
+}
+
+.tasksTable th:nth-child(2),
+.tasksTable td:nth-child(2) {
+  width: 15%;
+}
+
+.tasksTable th:nth-child(3),
+.tasksTable td:nth-child(3) {
+  width: 14%;
+}
+
+.tasksTable th:nth-child(4),
+.tasksTable td:nth-child(4) {
+  width: 15%;
+}
+
+.tasksTable th:nth-child(5),
+.tasksTable td:nth-child(5) {
+  width: auto;
+}
+
+.tasksTable .badge {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.taskDetailsCol {
+  width: 86px;
+  text-align: right;
 }
 
 .logList {
@@ -1194,6 +1258,75 @@ tr:last-child td {
   background: var(--surface-muted);
 }
 
+.taskLogModal {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+}
+
+.taskLogModalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-right: 44px;
+}
+
+.taskLogModalHeader h2 {
+  margin: 0;
+  font-size: 1.24rem;
+  letter-spacing: 0;
+}
+
+.taskLogModalHeader p {
+  margin-top: 6px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.taskLogModalMeta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.taskLogModalMeta div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: var(--surface-muted);
+}
+
+.taskLogModalMeta span {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.taskLogModalMeta strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.taskLogModalList {
+  max-height: min(430px, 48vh);
+  overflow: auto;
+}
+
 .detailGrid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1221,9 +1354,8 @@ tr:last-child td {
   word-break: break-word;
 }
 
-.settingsGrid .panel:first-child,
-.settingsGrid .panel:nth-child(2) {
-  min-height: 220px;
+.settingsGrid .panel {
+  min-height: 0;
 }
 
 .settingsRows {
@@ -1372,6 +1504,25 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .tasksTable th,
+  .tasksTable td {
+    padding: 9px 5px;
+    font-size: 0.78rem;
+  }
+
+  .tasksTable th {
+    font-size: 0.64rem;
+  }
+
+  .tasksTable .miniButton {
+    padding: 4px 5px;
+    font-size: 0.72rem;
+  }
+
+  .taskDetailsCol {
+    width: 64px;
+  }
+
   .sshHostsTable th,
   .sshHostsTable td {
     padding: 9px 6px;
@@ -1507,6 +1658,27 @@ tr:last-child td {
     flex-direction: column;
   }
 
+  .tasksTable th,
+  .tasksTable td {
+    padding: 7px 4px;
+    font-size: 0.72rem;
+  }
+
+  .tasksTable th {
+    font-size: 0.58rem;
+    letter-spacing: 0;
+  }
+
+  .tasksTable .miniButton {
+    padding: 3px 4px;
+    font-size: 0.68rem;
+    white-space: normal;
+  }
+
+  .taskDetailsCol {
+    width: 58px;
+  }
+
   .sshHostsTable th,
   .sshHostsTable td {
     padding: 8px 4px;
@@ -1548,8 +1720,21 @@ tr:last-child td {
 .hostsGrid {
   display: grid;
   gap: 16px;
-  max-width: 1220px;
+  width: 100%;
+  max-width: var(--app-content-max);
   margin: 0 auto;
+  min-width: 0;
+}
+
+.topBar,
+.pageGrid,
+.settingsGrid,
+.tasksGrid,
+.profilesStack,
+.skillsStack,
+.hostsGrid {
+  width: min(100%, var(--app-content-max));
+  max-width: var(--app-content-max);
 }
 
 .sshForm {
@@ -2410,32 +2595,23 @@ button:disabled {
 
 .keyStatusCard {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 16px;
   background: var(--surface-solid);
 }
 
-.publicKeyBox {
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 14px;
-  background: var(--surface-solid);
+.keyStatusBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.publicKeyBox pre {
-  max-height: 180px;
-  overflow: auto;
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 12px;
-  color: var(--text-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: var(--surface-muted);
+.copyPublicKeyButton[data-success="true"] {
+  border-color: color-mix(in srgb, var(--green) 52%, var(--border));
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, var(--surface-solid));
 }
 
 td code {

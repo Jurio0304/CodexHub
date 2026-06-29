@@ -16,6 +16,7 @@ import type {
   ProfilePatch,
   CcSwitchDetection,
   RemoteCodexAction,
+  RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
   RemoteSkillBatchInstallResult,
   RemoteSkillDeleteResult,
@@ -198,6 +199,10 @@ const uiCopy = {
       detectLocalConfig: "Detect local config",
       testingAll: "Testing all...",
       testedAll: "All hosts tested.",
+      updateOutdatedCodex: "Update outdated",
+      updatingOutdatedCodex: "Updating...",
+      updatedOutdatedCodex: (success: number, total: number) => `Updated ${success}/${total} outdated host(s).`,
+      noOutdatedCodex: "No outdated Codex hosts.",
       localSource: "Local",
       source: "Source",
       bootstrapping: "Bootstrapping...",
@@ -388,6 +393,8 @@ const uiCopy = {
       status: "Status",
       started: "Started",
       summary: "Summary",
+      details: "Details",
+      logs: "Logs",
       taskLog: "TaskLog",
       noTask: "No task",
       noLogs: "No logs yet.",
@@ -434,6 +441,7 @@ const uiCopy = {
       readyToCopy: "Ready to copy",
       noPublicKey: "No public key detected",
       copyPublicKey: "Copy Public Key",
+      copyPublicKeySuccess: "Copied!",
       publicKeyEmpty: "Generate or add an SSH public key to show it here.",
       commandReservations: "Command reservations",
       commandSurface: "Command surface",
@@ -606,6 +614,10 @@ const uiCopy = {
       detectLocalConfig: "检测本地配置",
       testingAll: "测试中...",
       testedAll: "一键测试完成。",
+      updateOutdatedCodex: "一键更新",
+      updatingOutdatedCodex: "更新中...",
+      updatedOutdatedCodex: (success: number, total: number) => `已更新 ${success}/${total} 台版本落后的主机。`,
+      noOutdatedCodex: "没有版本落后的 Codex 主机。",
       localSource: "本地",
       source: "来源",
       bootstrapping: "连接中...",
@@ -796,6 +808,8 @@ const uiCopy = {
       status: "状态",
       started: "开始时间",
       summary: "摘要",
+      details: "详情",
+      logs: "日志",
       taskLog: "任务日志",
       noTask: "无任务",
       noLogs: "暂无日志。",
@@ -842,6 +856,7 @@ const uiCopy = {
       readyToCopy: "可复制",
       noPublicKey: "未检测到公钥",
       copyPublicKey: "复制公钥",
+      copyPublicKeySuccess: "复制成功！",
       publicKeyEmpty: "生成或添加 SSH 公钥后会显示在这里。",
       commandReservations: "命令预留",
       commandSurface: "命令接口",
@@ -984,7 +999,7 @@ function App() {
         setHosts(nextHosts);
         setProfiles(nextProfiles);
         setSkillPacks(nextSkillPacks);
-        setTasks(nextTasks);
+        setTasks(normalizeTaskRunsForUi(nextTasks));
         setSetupGuideStep("language");
         setSetupGuideOpen(!nextSettings.setupGuideDismissed);
         if (nextSettings.setupGuideDismissed || nextHosts.length > 0) {
@@ -1070,7 +1085,7 @@ function App() {
 
     try {
       const result = await api.connectSshHost(draft, password, requestId, onProgress);
-      setTasks((current) => [result.task, ...current]);
+      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
       setNotice(result.message);
       if (!result.ok) {
         if (result.writeResult.action === "rolled_back") {
@@ -1136,8 +1151,10 @@ function App() {
     try {
       await navigator.clipboard.writeText(publicKey);
       setNotice(copy.notices.publicKeyCopied);
+      return true;
     } catch {
       setNotice(copy.notices.copyFailed);
+      return false;
     }
   };
 
@@ -1175,7 +1192,7 @@ function App() {
     const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
     setHosts(refreshedHosts);
     setProfiles(refreshedProfiles);
-    setTasks((current) => [result.task, ...current]);
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
     setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
     setHostBusy((current) => {
       const next = { ...current };
@@ -1210,7 +1227,7 @@ function App() {
             : host
         )
       );
-      setTasks((current) => [result.task, ...current]);
+      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
       setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
       if (!result.ok) throw new Error(result.message);
       return result.message;
@@ -1221,6 +1238,27 @@ function App() {
         return next;
       });
     }
+  };
+
+  const applyRemoteCodexResult = (result: RemoteCodexMaintenanceResult, action: RemoteCodexAction) => {
+    const resolvedVersion = result.afterVersion ?? result.beforeVersion;
+    const nextVersion = resolvedVersion ?? "not installed";
+    const sshCheckFailed = result.message.toLowerCase().includes("ssh check failed");
+    setHosts((current) =>
+      current.map((host) =>
+        host.hostAlias === result.hostAlias
+          ? {
+              ...host,
+              status: sshCheckFailed ? "offline" : "online",
+              codexInstalled: Boolean(resolvedVersion),
+              codexVersion: nextVersion,
+              pathHasLocalBin: action === "check-version" ? host.pathHasLocalBin : result.ok || result.pathChanged ? true : host.pathHasLocalBin,
+              lastSeen: sshCheckFailed ? host.lastSeen : copy.common.justNow
+            }
+          : host
+      )
+    );
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
   };
 
   const handleRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
@@ -1253,24 +1291,7 @@ function App() {
           };
         });
       });
-      const resolvedVersion = result.afterVersion ?? result.beforeVersion;
-      const nextVersion = resolvedVersion ?? "not installed";
-      const sshCheckFailed = result.message.toLowerCase().includes("ssh check failed");
-      setHosts((current) =>
-        current.map((host) =>
-          host.hostAlias === result.hostAlias
-            ? {
-                ...host,
-                status: sshCheckFailed ? "offline" : "online",
-                codexInstalled: Boolean(resolvedVersion),
-                codexVersion: nextVersion,
-                pathHasLocalBin: action === "check-version" ? host.pathHasLocalBin : result.ok || result.pathChanged ? true : host.pathHasLocalBin,
-                lastSeen: sshCheckFailed ? host.lastSeen : copy.common.justNow
-              }
-            : host
-        )
-      );
-      setTasks((current) => [result.task, ...current]);
+      applyRemoteCodexResult(result, action);
       setNotice(`${hostName}: ${result.message}`);
       void refreshLatestCodex(true);
       if (showProgressModal) {
@@ -1304,6 +1325,40 @@ function App() {
       setHostBusy((current) => {
         const next = { ...current };
         delete next[hostAlias];
+        return next;
+      });
+    }
+  };
+
+  const handleUpdateOutdatedCodexHosts = async (aliases: string[]) => {
+    const uniqueAliases = Array.from(new Set(aliases.filter(Boolean)));
+    if (uniqueAliases.length === 0) {
+      setNotice(copy.hosts.noOutdatedCodex);
+      return;
+    }
+    setHostBusy((current) => {
+      const next = { ...current };
+      for (const alias of uniqueAliases) next[alias] = "update";
+      return next;
+    });
+    setHosts((current) => current.map((host) => (uniqueAliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host)));
+    await waitForNextFrame();
+
+    try {
+      const results = await Promise.allSettled(uniqueAliases.map((alias) => api.remoteManageCodex(alias, "update", 120000)));
+      const fulfilled = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+      const rejectedAliases = results.flatMap((result, index) => (result.status === "rejected" ? [uniqueAliases[index]] : []));
+      for (const result of fulfilled) applyRemoteCodexResult(result, "update");
+      if (rejectedAliases.length > 0) {
+        setHosts((current) => current.map((host) => (rejectedAliases.includes(host.hostAlias) ? { ...host, status: "offline" } : host)));
+      }
+      const successCount = fulfilled.filter((result) => result.ok).length;
+      setNotice(copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length));
+      void refreshLatestCodex(true);
+    } finally {
+      setHostBusy((current) => {
+        const next = { ...current };
+        for (const alias of uniqueAliases) delete next[alias];
         return next;
       });
     }
@@ -1386,7 +1441,7 @@ function App() {
 
   const handleListRemoteSkills = async (hostAlias: string) => {
     const result = await api.listRemoteSkills(hostAlias);
-    setTasks((current) => [result.task, ...current]);
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
     setHosts((current) =>
       current.map((host) =>
         host.hostAlias === result.hostAlias
@@ -1411,7 +1466,7 @@ function App() {
     projectPath?: string
   ) => {
     const result = await api.previewRemoteSkillInstall(hostAlias, skillId, scope, projectPath);
-    setTasks((current) => [result.task, ...current]);
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
     setNotice(result.message);
     return result;
   };
@@ -1424,7 +1479,7 @@ function App() {
     conflictPolicy: SkillConflictPolicy
   ) => {
     const result = await api.installRemoteSkillBatch(hostAliases, skillId, scope, projectPath, conflictPolicy);
-    setTasks((current) => [...result.tasks, ...current]);
+    setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
     setHosts((current) =>
       current.map((host) =>
         hostAliases.includes(host.hostAlias)
@@ -1450,7 +1505,7 @@ function App() {
     confirmName: string
   ) => {
     const result = await api.deleteRemoteSkill(hostAlias, skillName, scope, projectPath, confirmName);
-    setTasks((current) => [result.task, ...current]);
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
     setNotice(result.message);
     return result;
   };
@@ -1473,7 +1528,7 @@ function App() {
 
   const handleApplyProfile = async (profileId: string, hostIds: string[]) => {
     const result = await api.applyProfile(profileId, hostIds);
-    if (result.tasks.length > 0) setTasks((current) => [...result.tasks, ...current]);
+    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
     const profileName =
       result.profiles.find((profile) => profile.id === profileId)?.name ??
       profiles.find((profile) => profile.id === profileId)?.name ??
@@ -1649,6 +1704,7 @@ function App() {
             onOpenSetupGuide={handleOpenSetupGuide}
             onTestAllSshHosts={handleTestAllSshHosts}
             onTestHost={handleTestHost}
+            onUpdateOutdatedCodexHosts={handleUpdateOutdatedCodexHosts}
           />
         );
       case "profiles":
@@ -1694,7 +1750,6 @@ function App() {
         return (
           <SettingsView
             copy={copy}
-            health={health}
             settings={settings}
             sshBusy={sshBusy}
             sshStatus={sshStatus}
@@ -2239,7 +2294,8 @@ function HostsView({
   onOpenAddHost,
   onOpenSetupGuide,
   onTestAllSshHosts,
-  onTestHost
+  onTestHost,
+  onUpdateOutdatedCodexHosts
 }: {
   addHostOpen: boolean;
   copy: UICopy;
@@ -2258,6 +2314,7 @@ function HostsView({
   onOpenSetupGuide: () => Promise<void>;
   onTestAllSshHosts: () => Promise<void>;
   onTestHost: (id: string) => void;
+  onUpdateOutdatedCodexHosts: (aliases: string[]) => Promise<void>;
 }) {
   const identityFile = sshStatus?.ed25519.privateExists ? sshStatus.ed25519.privatePath : "";
   const hostByAlias = useMemo(
@@ -2270,6 +2327,11 @@ function HostsView({
     selectedHostAlias ? hostByAlias.get(selectedHostAlias.toLowerCase()) ?? hosts.find((host) => host.hostAlias === selectedHostAlias) ?? null : hosts[0] ?? null;
   const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
   const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
+  const outdatedCodexAliases = sshConfigHosts.flatMap((sshHost) => {
+    const host = hostByAlias.get(sshHost.alias.toLowerCase()) ?? null;
+    return host && isHostCodexTested(host) && host.codexInstalled && isCodexVersionBehind(host.codexVersion, latestCodexVersion?.version) ? [sshHost.alias] : [];
+  });
+  const updatingOutdated = sshConfigHosts.some((host) => hostBusy[host.alias] === "update");
 
   useEffect(() => {
     if (!selectedHostAlias && sshConfigHosts[0]) {
@@ -2321,9 +2383,14 @@ function HostsView({
           <div>
             <h2>{copy.hosts.detectedSshHosts}</h2>
           </div>
-          <button className="secondaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
-            {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
-          </button>
+          <div className="topActions">
+            <button className="secondaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
+              {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
+            </button>
+            <button className="primaryButton" disabled={outdatedCodexAliases.length === 0 || anyHostBusy} type="button" onClick={() => void onUpdateOutdatedCodexHosts(outdatedCodexAliases)}>
+              {updatingOutdated ? copy.hosts.updatingOutdatedCodex : copy.hosts.updateOutdatedCodex}
+            </button>
+          </div>
         </div>
 
         {sshConfigHosts.length === 0 ? (
@@ -3907,28 +3974,32 @@ function SkillsView({
 }
 
 function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(tasks[0]?.id ?? null);
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const selectedTask = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) ?? null : null;
 
   useEffect(() => {
-    if (!selectedTaskId && tasks[0]) setSelectedTaskId(tasks[0].id);
+    const timer = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) setSelectedTaskId(null);
   }, [selectedTaskId, tasks]);
 
   return (
     <div className="tasksGrid">
       <section className="panel spanWide">
-        <div className="panelHeader">
+        <div className="panelHeader compact">
           <div>
-            <div className="eyebrow">{copy.tasks.runs}</div>
             <h2>{copy.tasks.taskHistory}</h2>
-            <p>{copy.tasks.body}</p>
           </div>
         </div>
         {tasks.length === 0 ? (
           <EmptyListState copy={copy} message={copy.emptyLists.tasks} variant="tasks" />
         ) : (
-          <div className="tableWrap">
-            <table>
+          <div className="tableWrap taskTableWrap">
+            <table className="tasksTable">
               <thead>
                 <tr>
                   <th>{copy.tasks.action}</th>
@@ -3936,16 +4007,20 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
                   <th>{copy.tasks.status}</th>
                   <th>{copy.tasks.started}</th>
                   <th>{copy.tasks.summary}</th>
+                  <th className="taskDetailsCol">{copy.tasks.details}</th>
                 </tr>
               </thead>
               <tbody>
                 {tasks.map((task) => (
-                  <tr className="selectableRow" data-selected={selectedTask?.id === task.id} key={task.id} onClick={() => setSelectedTaskId(task.id)}>
+                  <tr key={task.id}>
                     <td><strong>{localizeTaskAction(task.action, copy)}</strong></td>
                     <td>{task.hostName}</td>
                     <td><TaskStatusBadge copy={copy} status={task.status} /></td>
-                    <td>{task.startedAt}</td>
+                    <td>{formatTaskTimestamp(task, copy, nowTick)}</td>
                     <td>{task.summary}</td>
+                    <td className="taskDetailsCol">
+                      <button className="miniButton" type="button" onClick={() => setSelectedTaskId(task.id)}>{copy.tasks.logs}</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -3953,16 +4028,37 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
           </div>
         )}
       </section>
+      {selectedTask ? <TaskLogModal copy={copy} now={nowTick} task={selectedTask} onClose={() => setSelectedTaskId(null)} /> : null}
+    </div>
+  );
+}
 
-      <section className="panel logPanel">
-        <div className="panelHeader compact">
+function TaskLogModal({ copy, now, task, onClose }: { copy: UICopy; now: number; task: TaskRun; onClose: () => void }) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal" role="dialog" aria-modal="true" aria-labelledby="task-log-modal-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.codexOperation.close}>
+          ×
+        </button>
+        <div className="taskLogModalHeader">
           <div>
-            <div className="eyebrow">{copy.tasks.taskLog}</div>
-            <h2>{selectedTask?.id ?? copy.tasks.noTask}</h2>
+            <h2 id="task-log-modal-title">{localizeTaskAction(task.action, copy)}</h2>
+            <p>{task.summary}</p>
+          </div>
+          <TaskStatusBadge copy={copy} status={task.status} />
+        </div>
+        <div className="taskLogModalMeta">
+          <div>
+            <span>{copy.tasks.host}</span>
+            <strong>{task.hostName}</strong>
+          </div>
+          <div>
+            <span>{copy.tasks.started}</span>
+            <strong>{formatTaskTimestamp(task, copy, now)}</strong>
           </div>
         </div>
-        <div className="logList">
-          {selectedTask ? selectedTask.logs.map((log) => (
+        <div className="logList taskLogModalList">
+          {task.logs.length > 0 ? task.logs.map((log) => (
             <details className="logLine" data-level={log.level} key={log.id}>
               <summary>
                 <span>{log.timestamp}</span>
@@ -3998,7 +4094,7 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
                 </div>
               </div>
             </details>
-          )) : <EmptyListState copy={copy} message={copy.emptyLists.tasks} variant="tasks" />}
+          )) : <p className="mutedText">{copy.tasks.noLogs}</p>}
         </div>
       </section>
     </div>
@@ -4007,7 +4103,6 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
 
 function SettingsView({
   copy,
-  health,
   settings,
   sshBusy,
   sshStatus,
@@ -4018,57 +4113,34 @@ function SettingsView({
   onThemeChange
 }: {
   copy: UICopy;
-  health: Health;
   settings: AppSettings;
   sshBusy: boolean;
   sshStatus: SshStatus | null;
-  onCopyPublicKey: (publicKey: string) => Promise<void>;
+  onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
   onGenerateEd25519Key: () => Promise<void>;
   onRefreshSsh: () => Promise<void>;
   onThemeChange: (theme: ThemeChoice) => void;
 }) {
-  const commands = [
-    "get_ssh_status",
-    "generate_ed25519_key",
-    "list_ssh_config_hosts",
-    "upsert_ssh_config_host",
-    "delete_ssh_config_host",
-    "list_hosts",
-    "refresh_discovered_hosts",
-    "add_host",
-    "update_host",
-    "delete_host",
-    "test_ssh_connection",
-    "ssh_check",
-    "bootstrap_ssh_host",
-    "bootstrap_existing_ssh_host",
-    "remote_probe_codex",
-    "remote_manage_codex",
-    "list_profiles",
-    "create_profile",
-    "update_profile",
-    "delete_profile",
-    "duplicate_profile",
-    "import_profiles",
-    "export_profiles",
-    "set_profile_api_key",
-    "delete_profile_api_key",
-    "preview_profile_apply",
-    "apply_profile",
-    "detect_cc_switch_profiles",
-    "import_cc_switch_profiles",
-    "list_tasks"
-  ];
   const publicKey = sshStatus?.ed25519.publicKey ?? sshStatus?.rsa.publicKey ?? "";
   const canGenerateEd25519 = Boolean(sshStatus?.sshKeygenAvailable && !sshStatus.ed25519.privateExists && !sshStatus.ed25519.publicExists);
+  const [publicKeyCopied, setPublicKeyCopied] = useState(false);
+
+  useEffect(() => {
+    setPublicKeyCopied(false);
+  }, [publicKey]);
+
+  const handleCopyPublicKey = async () => {
+    if (!publicKey) return;
+    const copied = await onCopyPublicKey(publicKey);
+    setPublicKeyCopied(copied);
+  };
 
   return (
     <div className="settingsGrid">
-      <section className="panel">
+      <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
-            <div className="eyebrow">{copy.settings.appearance}</div>
             <h2>{copy.settings.appearance}</h2>
           </div>
         </div>
@@ -4097,41 +4169,16 @@ function SettingsView({
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
-            <div className="eyebrow">{copy.settings.runtime}</div>
-            <h2>{copy.settings.backend}</h2>
-          </div>
-          <Badge tone={health.mode === "tauri" ? "green" : "gray"}>
-            {health.mode === "tauri" ? copy.settings.available : copy.settings.desktopBackendRequired}
-          </Badge>
-        </div>
-        <dl className="settingsList">
-          <div>
-            <dt>{copy.settings.app}</dt>
-            <dd>{health.app}</dd>
-          </div>
-          <div>
-            <dt>{copy.settings.remoteWrapper}</dt>
-            <dd>{health.remoteWrapperRequired ? copy.common.required : copy.common.notRequired}</dd>
-          </div>
-          <div>
-            <dt>{copy.settings.sshConfig}</dt>
-            <dd>{sshStatus?.configPath ?? copy.settings.desktopBackendRequired}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="panel spanWide">
-        <div className="panelHeader">
-          <div>
-            <div className="eyebrow">{copy.settings.localSsh}</div>
-            <h2>{copy.settings.sshKeyStatus}</h2>
-            <p>{copy.settings.sshKeyBody}</p>
+            <h2>{copy.settings.localSsh}</h2>
           </div>
           <div className="topActions">
             <button className="secondaryButton" type="button" onClick={() => void onRefreshSsh()}>{copy.settings.refresh}</button>
+            <button className="secondaryButton copyPublicKeyButton" data-success={publicKeyCopied} disabled={!publicKey} type="button" onClick={() => void handleCopyPublicKey()}>
+              {publicKeyCopied ? copy.settings.copyPublicKeySuccess : copy.settings.copyPublicKey}
+            </button>
             <button className="primaryButton" disabled={!canGenerateEd25519 || sshBusy} type="button" onClick={() => void onGenerateEd25519Key()}>
               {sshBusy ? copy.settings.generating : copy.settings.generateEd25519}
             </button>
@@ -4141,31 +4188,6 @@ function SettingsView({
         <div className="keyStatusGrid">
           <KeyStatusCard copy={copy} keyInfo={sshStatus?.ed25519} title="Ed25519" />
           <KeyStatusCard copy={copy} keyInfo={sshStatus?.rsa} title="RSA" />
-        </div>
-
-        <div className="publicKeyBox">
-          <div className="panelHeader compact">
-            <div>
-              <div className="eyebrow">{copy.settings.publicKey}</div>
-              <h2>{publicKey ? copy.settings.readyToCopy : copy.settings.noPublicKey}</h2>
-            </div>
-            <button className="secondaryButton" disabled={!publicKey} type="button" onClick={() => void onCopyPublicKey(publicKey)}>
-              {copy.settings.copyPublicKey}
-            </button>
-          </div>
-          <pre>{publicKey || copy.settings.publicKeyEmpty}</pre>
-        </div>
-      </section>
-
-      <section className="panel spanWide">
-        <div className="panelHeader compact">
-          <div>
-            <div className="eyebrow">{copy.settings.commandReservations}</div>
-            <h2>{copy.settings.commandSurface}</h2>
-          </div>
-        </div>
-        <div className="commandGrid">
-          {commands.map((command) => <code key={command}>{command}</code>)}
         </div>
       </section>
     </div>
@@ -4179,20 +4201,9 @@ function KeyStatusCard({ copy, keyInfo, title }: { copy: UICopy; keyInfo: SshKey
         <h3>{title}</h3>
         <Badge tone={keyInfo?.privateExists ? "green" : "gray"}>{keyInfo?.privateExists ? copy.settings.privateFound : copy.settings.missing}</Badge>
       </div>
-      <dl className="settingsList">
-        <div>
-          <dt>{copy.settings.privatePath}</dt>
-          <dd>{keyInfo?.privatePath ?? copy.settings.unknown}</dd>
-        </div>
-        <div>
-          <dt>{copy.settings.publicPath}</dt>
-          <dd>{keyInfo?.publicPath ?? copy.settings.unknown}</dd>
-        </div>
-        <div>
-          <dt>{copy.settings.publicKey}</dt>
-          <dd>{keyInfo?.publicExists ? copy.settings.available : copy.settings.missing}</dd>
-        </div>
-      </dl>
+      <div className="keyStatusBadges">
+        <Badge tone={keyInfo?.publicExists ? "green" : "gray"}>{keyInfo?.publicExists ? copy.settings.publicKey : copy.settings.noPublicKey}</Badge>
+      </div>
     </article>
   );
 }
@@ -4262,6 +4273,19 @@ function ProfileStorageBadge({ copy, profile }: { copy: UICopy; profile: Profile
   );
 }
 
+function normalizeTaskRunsForUi(tasks: TaskRun[]) {
+  const receivedAt = new Date().toISOString();
+  return tasks.map((task) => normalizeTaskRunForUi(task, receivedAt));
+}
+
+function normalizeTaskRunForUi(task: TaskRun, receivedAt = new Date().toISOString()): TaskRun {
+  if (taskTimestampMillis(task)) return task;
+  const startedAt = isNowTimeLabel(task.startedAt) ? receivedAt : task.startedAt;
+  const endedAt = task.endedAt && isNowTimeLabel(task.endedAt) ? receivedAt : task.endedAt;
+  const logs = task.logs.map((log) => (isNowTimeLabel(log.timestamp) ? { ...log, timestamp: receivedAt } : log));
+  return { ...task, startedAt, endedAt, logs };
+}
+
 function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus }) {
   const tone: BadgeTone = status === "success" ? "green" : status === "failed" ? "red" : status === "running" ? "yellow" : "gray";
   return <Badge tone={tone}>{copy.status.task[status]}</Badge>;
@@ -4270,6 +4294,53 @@ function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus })
 function localizeTaskAction(action: string, copy: UICopy) {
   const labels = copy.tasks.actionLabels as Record<string, string>;
   return labels[action] ?? action;
+}
+
+function formatTaskTimestamp(task: TaskRun, copy: UICopy, now = Date.now()) {
+  const timestamp = taskTimestampMillis(task);
+  if (!timestamp) return task.startedAt || "-";
+  const date = new Date(timestamp);
+  const deltaMs = Math.max(0, now - timestamp);
+  const zh = copy.navItems[0].label === "主页";
+  if (deltaMs < 60_000) return zh ? "刚刚" : "just now";
+  if (deltaMs < 60 * 60_000) {
+    const minutes = Math.max(1, Math.floor(deltaMs / 60_000));
+    return zh ? `${minutes} 分钟前` : `${minutes}m ago`;
+  }
+  const sameYear = new Date(now).getFullYear() === date.getFullYear();
+  return new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(sameYear ? {} : { year: "numeric" })
+  }).format(date);
+}
+
+function taskTimestampMillis(task: TaskRun) {
+  const direct = parseTaskTimeValue(task.startedAt);
+  if (direct) return direct;
+  if (isNowTimeLabel(task.startedAt)) {
+    return parseTaskIdTimestamp(task.id) ?? parseTaskTimeValue(task.logs[0]?.timestamp);
+  }
+  return parseTaskTimeValue(task.logs[0]?.timestamp);
+}
+
+function parseTaskTimeValue(value: string | undefined) {
+  const normalized = value?.trim();
+  if (!normalized || isNowTimeLabel(normalized)) return null;
+  if (/^\d{12,}$/.test(normalized)) return Number(normalized);
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isNowTimeLabel(value: string | undefined) {
+  return value?.trim().toLowerCase() === "now";
+}
+
+function parseTaskIdTimestamp(id: string) {
+  const match = id.match(/(\d{12,})$/);
+  return match ? Number(match[1]) : null;
 }
 
 function hostCodexStatus(

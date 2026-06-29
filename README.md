@@ -16,7 +16,7 @@ MVP direction:
 Window 6 adds Skills management on top of SSH host discovery, OpenSSH checks, remote system probes, single-host remote Codex CLI maintenance, and Profile/API config management:
 
 - macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
-- Dashboard server matrix with host-level Check Version, Install Codex, and Update Codex quick actions; batch install/update is a UI placeholder only.
+- Dashboard server matrix with host-level Check Version, Install Codex, and Update Codex quick actions; Hosts can also run a user-triggered one-click update for detected Codex installs that are behind the latest known version.
 - Light/dark mode support with native-feeling cards, tables, and status badges.
 - Settings / Appearance includes a three-button theme control plus English / 简体中文 global font and language presets.
 - Settings / Local SSH detects Ed25519 and RSA keys, can generate a non-overwriting Ed25519 key, and shows/copies public keys only.
