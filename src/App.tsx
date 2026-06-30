@@ -73,32 +73,32 @@ const uiCopy = {
     ] satisfies Array<{ id: SectionId; label: string; icon: string }>,
     sections: {
       dashboard: {
-        title: "Home",
+        title: "🏠 Home",
         eyebrow: "Home",
         body: "Mock SSH inventory, profile status, and recent operations for the first CodexHub desktop shell."
       },
       hosts: {
-        title: "Host inventory",
+        title: "🖥️ Hosts",
         eyebrow: "Server inventory",
         body: "Add CodexHub-managed SSH config blocks without disturbing user-owned SSH settings."
       },
       profiles: {
-        title: "Profiles",
+        title: "🧾 Profiles",
         eyebrow: "Codex configuration",
         body: "Draft managed profile presets for remote ~/.codex/config.toml files."
       },
       skills: {
-        title: "Skills",
+        title: "🧩 Skills",
         eyebrow: "Skill packs",
         body: "Review skill bundles that will sync to remote ~/.codex/skills/ directories."
       },
       tasks: {
-        title: "Tasks",
+        title: "✅ Tasks",
         eyebrow: "Task runs",
         body: "Track mock backend commands, generated logs, and pending host operations."
       },
       settings: {
-        title: "Settings",
+        title: "⚙️ Settings",
         eyebrow: "Preferences",
         body: "Adjust the shell theme, inspect local SSH key status, and copy public keys."
       }
@@ -129,10 +129,10 @@ const uiCopy = {
       applied: "Applied",
       enabled: "Enabled",
       success: "Success",
-      serverMatrix: "Server Matrix",
+      serverMatrix: "Host Matrix",
       system: "System",
       noHosts: "No hosts yet",
-      noHostsBody: "Add the first SSH target to populate the server matrix.",
+      noHostsBody: "Add the first SSH target to populate the host matrix.",
       noSkillPacks: "No skill packs"
     },
     setupGuide: {
@@ -193,7 +193,7 @@ const uiCopy = {
       newHost: "New Host",
       noManagedHosts: "No SSH hosts",
       noManagedHostsBody: "Click Add Server in the Hosts header to connect and create the first SSH config entry.",
-      detectedSshHosts: "SSH Hosts",
+      detectedSshHosts: "Host list",
       detectedSshHostsBody: "CodexHub lists local SSH config HostAlias entries for unified management.",
       refreshDetected: "Test all",
       detectLocalConfig: "Detect local config",
@@ -214,7 +214,7 @@ const uiCopy = {
       updateCodex: "Update",
       updatingCodex: "Updating...",
       details: "Host details",
-      detailsTitle: (alias: string) => `Host: ${alias}`,
+      detailsTitle: (alias: string) => `🖥️ Host · ${alias}`,
       detailsBody: "Connection status and remote Codex readiness from the latest test.",
       sshStatus: "SSH status",
       arch: "Arch",
@@ -247,7 +247,7 @@ const uiCopy = {
       latency: "Test latency"
     },
     profiles: {
-      library: "Profile library",
+      library: "Local config",
       editor: "Editor",
       edit: "Edit",
       preview: "Preview",
@@ -449,7 +449,7 @@ const uiCopy = {
       remoteWrapper: "Remote wrapper",
       sshConfig: "SSH config",
       desktopBackendRequired: "desktop backend required",
-      localSsh: "Local SSH",
+      localSsh: "Local keys",
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
       refresh: "Refresh",
@@ -506,32 +506,32 @@ const uiCopy = {
     ] satisfies Array<{ id: SectionId; label: string; icon: string }>,
     sections: {
       dashboard: {
-        title: "主页",
+        title: "🏠 主页",
         eyebrow: "主页",
         body: "用于 CodexHub 桌面壳的 SSH 清单、配置状态和最近操作。"
       },
       hosts: {
-        title: "主机清单",
+        title: "🖥️ 主机",
         eyebrow: "服务器清单",
         body: "添加 CodexHub 管理的 SSH config 块，不影响用户已有 SSH 设置。"
       },
       profiles: {
-        title: "配置",
+        title: "🧾 配置",
         eyebrow: "Codex 配置",
         body: "为远端 ~/.codex/config.toml 草拟受管理的配置预设。"
       },
       skills: {
-        title: "技能",
+        title: "🧩 技能",
         eyebrow: "技能包",
         body: "查看未来会同步到远程 ~/.codex/skills/ 目录的技能包。"
       },
       tasks: {
-        title: "任务",
+        title: "✅ 任务",
         eyebrow: "任务运行",
         body: "跟踪后端命令、生成日志和待处理主机操作。"
       },
       settings: {
-        title: "设置",
+        title: "⚙️ 设置",
         eyebrow: "偏好设置",
         body: "调整界面主题，查看本地 SSH 密钥状态，并复制公钥。"
       }
@@ -562,10 +562,10 @@ const uiCopy = {
       applied: "应用",
       enabled: "启用",
       success: "成功",
-      serverMatrix: "服务器矩阵",
+      serverMatrix: "主机矩阵",
       system: "系统",
       noHosts: "还没有主机",
-      noHostsBody: "添加第一个 SSH 目标后会填充服务器矩阵。",
+      noHostsBody: "添加第一个 SSH 目标后会填充主机矩阵。",
       noSkillPacks: "无技能包"
     },
     setupGuide: {
@@ -626,7 +626,7 @@ const uiCopy = {
       newHost: "新建 Host",
       noManagedHosts: "没有 SSH Hosts",
       noManagedHostsBody: "点击主机页右上角“添加服务器”，连接成功后会创建第一个 SSH 配置项。",
-      detectedSshHosts: "SSH Hosts",
+      detectedSshHosts: "主机列表",
       detectedSshHostsBody: "CodexHub 列出本地 SSH config 中的 HostAlias，用于统一管理。",
       refreshDetected: "一键测试",
       detectLocalConfig: "检测本地配置",
@@ -647,7 +647,7 @@ const uiCopy = {
       updateCodex: "更新",
       updatingCodex: "更新中...",
       details: "主机详情",
-      detailsTitle: (alias: string) => `主机：${alias}`,
+      detailsTitle: (alias: string) => `🖥️ 主机 · ${alias}`,
       detailsBody: "展示最近一次测试得到的连接状态与远端 Codex 就绪度。",
       sshStatus: "SSH 状态",
       arch: "架构",
@@ -680,7 +680,7 @@ const uiCopy = {
       latency: "测试延迟"
     },
     profiles: {
-      library: "配置库",
+      library: "本地配置",
       editor: "编辑器",
       edit: "编辑",
       preview: "预览",
@@ -882,7 +882,7 @@ const uiCopy = {
       remoteWrapper: "远程包装器",
       sshConfig: "SSH 配置",
       desktopBackendRequired: "需要桌面后端",
-      localSsh: "本地 SSH",
+      localSsh: "本地密钥",
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
       refresh: "刷新",
@@ -1109,7 +1109,6 @@ function App() {
   const successfulTaskCount = tasks.filter((task) => task.status === "success").length;
 
   const profileById = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
-  const skillPackById = useMemo(() => new Map(skillPacks.map((pack) => [pack.id, pack])), [skillPacks]);
 
   const handleAddHost = () => {
     setActiveSection("hosts");
@@ -1726,7 +1725,6 @@ function App() {
             tasks={tasks}
             successfulTaskCount={successfulTaskCount}
             profileById={profileById}
-            skillPackById={skillPackById}
             onAddServer={handleAddHost}
             onTestAllSshHosts={handleTestAllSshHosts}
           />
@@ -1737,6 +1735,7 @@ function App() {
             copy={copy}
             hosts={hosts}
             hostBusy={hostBusy}
+            inventoryStatus={skillInventoryStatus}
             latestCodexVersion={latestCodexVersion}
             sshConfigHosts={sshConfigHosts}
             sshStatus={sshStatus}
@@ -2087,7 +2086,7 @@ function CodexOperationModal({
         </button>
         <div className="codexOperationHeader">
           <div>
-            <h2 id="codex-operation-modal-title">{actionLabel}</h2>
+            <h2 id="codex-operation-modal-title">🛠️ {actionLabel}</h2>
           </div>
           <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
         </div>
@@ -2162,7 +2161,6 @@ function DashboardView({
   profiles,
   profileById,
   sshConfigHosts,
-  skillPackById,
   skillPacks,
   tasks,
   successfulTaskCount,
@@ -2179,7 +2177,6 @@ function DashboardView({
   profiles: Profile[];
   profileById: Map<string, Profile>;
   sshConfigHosts: SshConfigHost[];
-  skillPackById: Map<string, SkillPack>;
   skillPacks: SkillPack[];
   tasks: TaskRun[];
   successfulTaskCount: number;
@@ -2203,7 +2200,6 @@ function DashboardView({
         latestCodexVersion={latestCodexVersion}
         profileById={profileById}
         sshConfigHosts={sshConfigHosts}
-        skillPackById={skillPackById}
         onAddServer={onAddServer}
         onTestAllSshHosts={onTestAllSshHosts}
       />
@@ -2244,7 +2240,6 @@ function ServerMatrix({
   latestCodexVersion,
   profileById,
   sshConfigHosts,
-  skillPackById,
   onAddServer,
   onTestAllSshHosts
 }: {
@@ -2255,13 +2250,13 @@ function ServerMatrix({
   latestCodexVersion: LatestCodexVersion | null;
   profileById: Map<string, Profile>;
   sshConfigHosts: SshConfigHost[];
-  skillPackById: Map<string, SkillPack>;
   onAddServer: () => void;
   onTestAllSshHosts: () => Promise<void>;
 }) {
   const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
   const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
   const hostInventoryByAlias = new Map(inventoryStatus.hostInventories.map((inventory) => [inventory.hostAlias.toLowerCase(), inventory]));
+  const skillCounts = hosts.map((host) => dashboardHostSkillCount(host, hostInventoryByAlias.get(host.hostAlias.toLowerCase())));
 
   return (
     <section className="panel spanWide">
@@ -2285,17 +2280,9 @@ function ServerMatrix({
             const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
             const systemLabel = hostSystemLabel(host, copy);
             const inventory = hostInventoryByAlias.get(host.hostAlias.toLowerCase());
-            const installedNames = inventory?.ok ? installedSkillNames(inventory.skills) : [];
-            const legacySkillPackLabel = host.skillPackIds.length > 0
-              ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ")
-              : "";
-            const skillCountLabel = typeof host.skillsCount === "number" && host.skillsCount > 0
-              ? `${copy.hosts.skillsCount}: ${host.skillsCount}`
-              : "";
-            const skillPackLabel = installedNames.length > 0
-              ? installedNames.join(", ")
-              : legacySkillPackLabel || skillCountLabel || copy.dashboard.noSkillPacks;
-            const skillPackTone = installedNames.length > 0 || legacySkillPackLabel || skillCountLabel ? "blue" : "gray";
+            const skillCount = dashboardHostSkillCount(host, inventory);
+            const skillCountLabel = typeof skillCount === "number" ? String(skillCount) : copy.hosts.unknown;
+            const skillCountBadgeTone = dashboardSkillCountTone(skillCount, skillCounts);
             return (
             <article className="hostCard" key={host.id}>
               <div className="hostHeader">
@@ -2329,7 +2316,7 @@ function ServerMatrix({
                 </div>
                 <div>
                   <dt>{copy.hosts.skills}</dt>
-                  <dd><Badge tone={skillPackTone}>{skillPackLabel}</Badge></dd>
+                  <dd><Badge tone={skillCountBadgeTone}>{skillCountLabel}</Badge></dd>
                 </div>
               </dl>
             </article>
@@ -2346,6 +2333,7 @@ function HostsView({
   copy,
   hostBusy,
   hosts,
+  inventoryStatus,
   latestCodexVersion,
   sshBusy,
   sshConfigHosts,
@@ -2365,6 +2353,7 @@ function HostsView({
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
+  inventoryStatus: SkillInventoryStatus;
   latestCodexVersion: LatestCodexVersion | null;
   sshBusy: boolean;
   sshConfigHosts: SshConfigHost[];
@@ -2527,7 +2516,7 @@ function HostsView({
         )}
       </section>
 
-      <HostDetailsPanel copy={copy} host={selectedHost} hosts={hosts} latestCodexVersion={latestCodexVersion} />
+      <HostDetailsPanel copy={copy} host={selectedHost} hosts={hosts} inventoryStatus={inventoryStatus} latestCodexVersion={latestCodexVersion} />
     </div>
   );
 }
@@ -2635,7 +2624,7 @@ function SshHostModal({
       <div className="sshHostModal" role="dialog" aria-modal="true" aria-labelledby="ssh-host-modal-title">
         <button className="modalCloseButton" type="button" onClick={closeModal} aria-label="Close">×</button>
         <div className="modalHero">
-          <h2 id="ssh-host-modal-title">{editing ? copy.hosts.edit : copy.hosts.addCodexHubHost}</h2>
+          <h2 id="ssh-host-modal-title">🖥️ {editing ? copy.hosts.edit : copy.hosts.addCodexHubHost}</h2>
         </div>
 
         <form className="modalForm" onSubmit={handleSubmit}>
@@ -2760,15 +2749,20 @@ function HostDetailsPanel({
   copy,
   host,
   hosts,
+  inventoryStatus,
   latestCodexVersion
 }: {
   copy: UICopy;
   host: Host | null;
   hosts: Host[];
+  inventoryStatus: SkillInventoryStatus;
   latestCodexVersion: LatestCodexVersion | null;
 }) {
   const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
   const codexInstalledStatus = hostCodexInstalledStatus(copy, host);
+  const hostInventoryByAlias = new Map(inventoryStatus.hostInventories.map((inventory) => [inventory.hostAlias.toLowerCase(), inventory]));
+  const skillCounts = hosts.map((item) => dashboardHostSkillCount(item, hostInventoryByAlias.get(item.hostAlias.toLowerCase())));
+  const currentSkillCount = host ? dashboardHostSkillCount(host, hostInventoryByAlias.get(host.hostAlias.toLowerCase())) : null;
 
   return (
     <section className="panel spanWide">
@@ -2818,7 +2812,7 @@ function HostDetailsPanel({
         </div>
         <div>
           <dt>{copy.hosts.skillsCount}</dt>
-          <dd><HostDetailValueBadge label={typeof host?.skillsCount === "number" ? String(host.skillsCount) : copy.hosts.unknown} tone={skillCountTone(host?.skillsCount)} /></dd>
+          <dd><HostDetailValueBadge label={typeof currentSkillCount === "number" ? String(currentSkillCount) : copy.hosts.unknown} tone={dashboardSkillCountTone(currentSkillCount, skillCounts)} /></dd>
         </div>
       </dl>
     </section>
@@ -3305,7 +3299,7 @@ function ProfileHostSelectModal({
       <div className="sshHostModal profileHostSelectModal ProfileHostSelectModal" role="dialog" aria-modal="true" aria-labelledby="profile-host-select-title">
         <button className="modalCloseButton" disabled={busy === "apply"} type="button" onClick={onClose} aria-label="Close">&times;</button>
         <div className="modalHero">
-          <h2 id="profile-host-select-title">{copy.profiles.selectHosts}</h2>
+          <h2 id="profile-host-select-title">🖥️ {copy.profiles.selectHosts}</h2>
         </div>
 
         <div className="profileHostSelectList">
@@ -3398,7 +3392,7 @@ function ProfileEditModal({
       <div className="sshHostModal profileEditModal ProfileEditModal" role="dialog" aria-modal="true" aria-labelledby="profile-edit-modal-title">
         <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">×</button>
         <div className="modalHero">
-          <h2 id="profile-edit-modal-title">{profile ? copy.profiles.editor : copy.profiles.newProfile}</h2>
+          <h2 id="profile-edit-modal-title">🧾 {profile ? copy.profiles.editor : copy.profiles.newProfile}</h2>
         </div>
 
         <form className="modalForm profileModalForm" onSubmit={handleSubmit}>
@@ -3575,7 +3569,7 @@ function ProfileApplyPreviewModal({
       <div className="sshHostModal profileApplyPreviewModal ProfileApplyPreviewModal" role="dialog" aria-modal="true" aria-labelledby="profile-apply-preview-modal-title">
         <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">×</button>
         <div className="modalHero">
-          <h2 id="profile-apply-preview-modal-title">{copy.profiles.preview}</h2>
+          <h2 id="profile-apply-preview-modal-title">👁️ {copy.profiles.preview}</h2>
         </div>
 
         <div className="profilePreviewGrid">
@@ -4116,7 +4110,7 @@ function SkillFirstScanModal({
         </button>
         <div className="taskLogModalHeader">
           <div>
-            <h2 id="skill-first-scan-title">{copy.skills.firstScanTitle}</h2>
+            <h2 id="skill-first-scan-title">🔎 {copy.skills.firstScanTitle}</h2>
             <p>{copy.skills.firstScanBody}</p>
           </div>
         </div>
@@ -4161,7 +4155,7 @@ function SkillDownloadModal({
         </button>
         <div className="taskLogModalHeader">
           <div>
-            <h2 id="skill-download-title">{copy.skills.downloadTitle}</h2>
+            <h2 id="skill-download-title">⬇️ {copy.skills.downloadTitle}</h2>
           </div>
         </div>
         <form className="skillDownloadForm" onSubmit={handleSubmit}>
@@ -4237,7 +4231,7 @@ function SkillPreviewModal({
         </button>
         <div className="taskLogModalHeader">
           <div>
-            <h2 id="skill-preview-title">{skill.name}</h2>
+            <h2 id="skill-preview-title">🧩 {skill.name}</h2>
           </div>
           <div className="skillPreviewBadge">
             <Badge tone={skill.sourceType === "github" ? "blue" : "gray"}>
@@ -4331,7 +4325,7 @@ function SkillTargetsModal({
         </button>
         <div className="taskLogModalHeader">
           <div>
-            <h2 id="skill-targets-title">{`${actionLabel}: ${skill.name}`}</h2>
+            <h2 id="skill-targets-title">{`🧩 ${actionLabel}: ${skill.name}`}</h2>
             <p>{hint}</p>
           </div>
         </div>
@@ -4397,7 +4391,7 @@ function SkillDeleteModal({
         </button>
         <div className="taskLogModalHeader">
           <div>
-            <h2 id="skill-delete-title">{`${copy.skills.deleteTitle}: ${skill.name}`}</h2>
+            <h2 id="skill-delete-title">{`🗑️ ${copy.skills.deleteTitle}: ${skill.name}`}</h2>
             <p>{copy.skills.deleteBody}</p>
           </div>
         </div>
@@ -4486,7 +4480,7 @@ function TaskLogModal({ copy, now, task, onClose }: { copy: UICopy; now: number;
         </button>
         <div className="taskLogModalHeader">
           <div>
-            <h2 id="task-log-modal-title">{localizeTaskAction(task.action, copy)}</h2>
+            <h2 id="task-log-modal-title">📋 {localizeTaskAction(task.action, copy)}</h2>
             <p>{task.summary}</p>
           </div>
           <TaskStatusBadge copy={copy} status={task.status} />
@@ -4938,14 +4932,30 @@ function latencyTone(value: number | null | undefined, hosts: Host[]): BadgeTone
   return "yellow";
 }
 
-function booleanTone(value: boolean | null | undefined): BadgeTone {
-  return value ? "green" : "gray";
+function dashboardHostSkillCount(
+  host: Host,
+  inventory: SkillInventoryStatus["hostInventories"][number] | undefined
+): number | null {
+  if (inventory?.ok) return installedSkillNames(inventory.skills).length;
+  return typeof host.skillsCount === "number" ? host.skillsCount : null;
 }
 
-function skillCountTone(value: number | null | undefined): BadgeTone {
-  if (typeof value !== "number" || value <= 0) return "gray";
-  if (value >= 10) return "green";
-  return "blue";
+function dashboardSkillCountTone(value: number | null | undefined, counts: Array<number | null>): BadgeTone {
+  if (typeof value !== "number") return "gray";
+  const values = counts.filter((count): count is number => typeof count === "number");
+  if (values.length === 0) return "gray";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (max <= 0) return "gray";
+  if (values.length <= 1 || min === max) return "green";
+  const relative = (value - min) / (max - min);
+  if (relative <= 0.34) return "red";
+  if (relative >= 0.67) return "green";
+  return "yellow";
+}
+
+function booleanTone(value: boolean | null | undefined): BadgeTone {
+  return value ? "green" : "gray";
 }
 
 function archTone(value: string | null | undefined, copy: UICopy): BadgeTone {

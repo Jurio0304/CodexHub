@@ -315,7 +315,7 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "Settings", "Server Matrix", "服务器矩阵", "Font", "SSH Hosts", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
+for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "Local keys", "本地密钥", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
@@ -360,7 +360,7 @@ for (const token of ['new URL("../figs/app-logo.png", import.meta.url).href', '<
   if (!app.includes(token)) fail(`missing app logo UI token: ${token}`);
 }
 for (const token of ["copy.hosts.source", "copy.dashboard.system", "copy.hosts.codex", "copy.hosts.configExists", "copy.hosts.latency", "copy.hosts.skills"]) {
-  if (!app.includes(token)) fail(`missing Server Matrix field token: ${token}`);
+  if (!app.includes(token)) fail(`missing Host Matrix field token: ${token}`);
 }
 for (const token of [
   '@tauri-apps/plugin-dialog',
@@ -499,8 +499,8 @@ for (const token of [
   if (!app.includes(token)) fail(`missing Profiles UI/API token: ${token}`);
 }
 for (const token of [
-  'library: "Profile library"',
-  'library: "配置库"',
+  'library: "Local config"',
+  'library: "本地配置"',
   'hosts: "Hosts"',
   'hosts: "主机"',
   '"Apply configuration"',
@@ -592,7 +592,8 @@ for (const token of [
   "latencyTone",
   "booleanTone",
   "hostCodexInstalledStatus",
-  "skillCountTone",
+  "dashboardHostSkillCount",
+  "dashboardSkillCountTone",
   "archTone",
   "hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion)",
   "<HostApiConfigBadge copy={copy} host={host}"
