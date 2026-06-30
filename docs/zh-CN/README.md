@@ -38,7 +38,7 @@ CodexHub 是一个 Windows 优先的桌面控制台，用来安全管理 Codex A
 - 远端 Codex 配置使用 `env_key` / `apiKeyEnvVar` 引用远端环境变量。
 - 本地 credential store 中的 API key 不会写入远端 config、metadata 或 task log。
 
-更多说明见：[安全策略](../../SECURITY.md)、[公开范围](../public-scope.md)、[已知限制](../known-limitations.md)。
+更多说明见：[安全策略](../../SECURITY.md)、[已知限制](../known-limitations.md)。
 
 ## 运行要求
 
@@ -100,53 +100,3 @@ pnpm build:tauri
 ```
 
 如果系统 PATH 没有 `node`，先把 Codex bundled Node/pnpm 路径放到 PATH 前面。
-
-## 打包
-
-v1 默认发布 portable zip：
-
-```powershell
-pnpm release:portable
-```
-
-该命令会构建 Tauri exe，生成 `release-artifacts/CodexHub-v0.1.0-windows-x64-portable.zip` 和 SHA256 校验文件。发布物应上传到 GitHub Releases，不提交进源码仓库。
-
-检查二进制启动：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-release-exe.ps1
-```
-
-可选 installer：
-
-```powershell
-pnpm build:installer:nsis
-pnpm build:installer:msi
-```
-
-MSI 需要 WiX；如果网络限制导致 Tauri 下载 WiX 超时，请优先使用 portable 包或提前安装/缓存 WiX。
-
-## 公开仓库边界
-
-不要提交：
-
-- `.exe`、`.msi`、`.zip` 或 installer 输出。
-- `release-artifacts/`、`dist/`、`src-tauri/target/`、`node_modules/`。
-- `hosts.json`、`profiles.json`、`tasks.json`、settings、skill inventory 等本地状态。
-- SSH config、known hosts、私钥、passphrase、API token、`.env*`、SQLite 数据库或本机导出。
-
-发布前运行：
-
-```powershell
-pnpm audit:public
-```
-
-## v1 路线
-
-- 保持直接 SSH/SFTP 管理路径稳定。
-- GitHub 公开仓库只保存源码。
-- GitHub Releases 附加 portable Windows build。
-- 后续再加入签名 installer。
-- 增强远端备份恢复 UX。
-- 增加不同 skill path 的 host capability 检测。
-- 远端 wrapper 只作为未来可选增强，不作为 MVP 依赖。

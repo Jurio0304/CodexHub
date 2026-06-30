@@ -40,7 +40,7 @@ CodexHub is designed to be conservative by default:
 * Remote Codex config uses `env\_key` / `apiKeyEnvVar`; local credential-store values are not written to remote hosts.
 * Mutating remote operations use previews, backups, explicit apply actions, and task-log evidence.
 
-More detail: [Security policy](SECURITY.md), [public scope](docs/public-scope.md), and [known limitations](docs/known-limitations.md).
+More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-limitations.md).
 
 ## Requirements
 
@@ -144,31 +144,6 @@ pnpm build:tauri
 
 When the system `node` is not on `PATH`, prepend the bundled Codex runtime Node/pnpm paths before running the same commands.
 
-## Packaging
-
-Portable Windows package for v1:
-
-```powershell
-pnpm release:portable
-```
-
-This builds the Tauri executable without installer bundling, stages `release-artifacts/CodexHub-v0.1.0-windows-x64-portable`, creates a zip, and writes `release-artifacts/SHA256SUMS.txt`.
-
-Check the compiled executable:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\check-release-exe.ps1
-```
-
-Installer commands are available but optional:
-
-```powershell
-pnpm build:installer:nsis
-pnpm build:installer:msi
-```
-
-MSI packaging requires WiX. If Tauri tries to download WiX and the network times out, use the portable package or install/cache WiX first.
-
 ## Release Checklist
 
 Run the automated release checks:
@@ -188,39 +163,15 @@ git diff --check
 
 Then follow the live SSH checklist in [docs/release-checklist.md](docs/release-checklist.md). Live SSH acceptance requires a real host supplied by the user; mock and static checks do not prove a specific remote machine.
 
-## Public Repository Scope
-
-This repository is source-only. Do not commit:
-
-* Built `.exe`, `.msi`, `.zip`, or installer output.
-* `release-artifacts/`, `dist/`, `src-tauri/target/`, or `node\_modules/`.
-* Local app state such as `hosts.json`, `profiles.json`, `tasks.json`, settings, or skill inventory files.
-* SSH config, known hosts, private keys, passphrases, API tokens, `.env\*`, SQLite databases, or local machine exports.
-
-Use `pnpm audit:public` before publishing.
-
-GitHub Releases should host binaries; Git history should remain source-only.
-
 ## Known Limitations
 
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
-* Linux remotes are the v1 target; Windows remotes are not in scope.
+* Linux remotes are the current target; Windows remotes are not in scope.
 * Full install/update depends on remote shell, `scp`, `tar`, and network or local-upload fallback behavior.
 * Skill path support follows `\~/.codex/skills` and `\~/.codex/superpowers/skills`; project-level path drift remains a later capability.
-* MSI bundling depends on WiX and can fail in restricted networks.
 
 See [docs/known-limitations.md](docs/known-limitations.md).
-
-## v1 Roadmap
-
-* Keep the direct SSH/SFTP architecture as the stable MVP path.
-* Publish a source-only GitHub repository.
-* Attach portable Windows builds to GitHub Releases.
-* Add signed installers after release infrastructure is stable.
-* Add richer restore UX for remote backups.
-* Add optional host capability checks for alternate skill paths.
-* Consider a remote wrapper only as an opt-in future enhancement.
 
 ## License
 
