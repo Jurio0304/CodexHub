@@ -41,34 +41,34 @@ flowchart LR
 
 Tauri command surface:
 
-- `app_health()`: smoke-test command exposed by the skeleton.
-- `list_ssh_hosts()`: parse safe managed and unmanaged `%USERPROFILE%\.ssh\config` aliases without modifying user-owned blocks.
-- `generate_ssh_host_block(input)`: produce an idempotent suggested host block.
-- `append_ssh_host_block_with_backup(input)`: optional explicit write path with timestamped backup.
-- `refresh_discovered_hosts()`: merge read-only local SSH aliases into the in-memory host inventory.
-- `ssh_check(host_alias)`: run `ssh <HostAlias> echo ok` through system OpenSSH with timeout and redacted logs on the backend blocking worker pool.
-- `bootstrap_ssh_host(draft, password, request_id)`: use a one-time password through the Rust SSH client to log in, install the local public key, set `~/.ssh` permissions, emit four-step progress events, write only a CodexHub-managed SSH config block, then verify `ssh <HostAlias> echo ok` with system OpenSSH.
-- `bootstrap_existing_ssh_host(host_alias, password)`: run the same key setup for a host already discovered in SSH config without changing unmanaged blocks.
-- `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and `~/.codex/skills` on the backend blocking worker pool.
-- `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command on the backend blocking worker pool, returning before/after version, Codex path, install method, PATH repair metadata, backup path, and full task log.
-- `create_profile(profile)`, `update_profile(profile)`, `delete_profile(profile_id)`, `duplicate_profile(profile_id)`: manage local structured profile templates.
-- `import_profiles(payload)`, `export_profiles(profile_ids)`: move profile definitions in and out without secret values.
-- `set_profile_api_key(profile_id, api_key)` and `delete_profile_api_key(profile_id)`: optionally store a local API key value in the OS credential store. Profile JSON keeps only `credentialStored` state, and the stored credential never leaves the local machine.
-- `detect_cc_switch_profiles()` and `import_cc_switch_profiles()`: import compatible local profile definitions without importing credential values.
-- `render_profile_config(profile_id)`: render TOML from structured profile state.
+- `app_health()`: smoke-test command exposed by the desktop backend.
+- `get_settings()` / `save_settings(settings)`: persist local appearance and setup-guide state.
+- `get_ssh_status()`: inspect Windows OpenSSH state and public-key availability without reading private key contents.
+- `generate_ed25519_key()`: generate a non-overwriting local Ed25519 keypair.
+- `list_ssh_config_hosts()`: parse safe managed and unmanaged `%USERPROFILE%\.ssh\config` aliases without modifying user-owned blocks.
+- `upsert_ssh_config_host(draft)` / `delete_ssh_config_host(alias)`: write or remove only scoped CodexHub-managed/local target blocks with backups and task evidence.
+- `list_hosts()`, `refresh_discovered_hosts()`, `add_host()`, `update_host()`, `delete_host()`: manage CodexHub's durable host inventory while keeping discovery read-only.
+- `test_ssh_connection(host_id)` / `ssh_check(host_alias)`: run `ssh <HostAlias> echo ok` through system OpenSSH with timeout and redacted logs.
+- `bootstrap_ssh_host(draft, password, request_id)`: use a one-time password through the Rust SSH client to install the local public key, set permissions, write a managed SSH config block, and verify key login.
+- `bootstrap_existing_ssh_host(host_alias, password)`: run the same key setup for a discovered host without changing unmanaged blocks.
+- `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and skills on the backend worker pool.
+- `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command.
+- `refresh_latest_codex_version()`: refresh/cache the latest known Codex CLI version.
+- `list_profiles()`, `create_profile()`, `update_profile()`, `delete_profile()`, `duplicate_profile()`, `import_profiles()`: manage local structured profile templates without exporting secret values.
+- `set_profile_api_key(profile_id, api_key)`, `get_profile_api_key(profile_id)`, `delete_profile_api_key(profile_id)`: optionally store or retrieve a local credential-store value while profile JSON keeps only credential state.
+- `detect_cc_switch_profiles()` / `import_cc_switch_profiles()`: import compatible local profile definitions without persisting credential values in profile JSON.
 - `preview_profile_apply(profile_id, host_ids)`: render TOML and summarize per-host remote config actions before mutation.
-- `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, and record redacted task logs for a single host or selected-host batch.
+- `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, refresh host/profile state, and record redacted task logs.
 - `list_local_skills()` / `list_skill_packs()`: read persisted local managed skills.
 - `import_local_skill(path)`: validate `SKILL.md` at the selected directory or immediate child directories, then copy valid skills into CodexHub-managed storage.
 - `update_library_skill_about(skill_id, about)`: persist a user-edited library About/details field for preview.
-- `get_skill_inventory_status()`: read whether the first host skill inventory scan has completed and return the remembered host skill lists.
-- `detect_installed_skills(include_hosts, timeout_ms)`: scan `%CODEX_HOME%\skills` or `%USERPROFILE%\.codex\skills`; on first scan it can also list every configured host's `~/.codex/skills`.
-- `download_github_skill(repo_url, timeout_ms)`: accept direct `https://github.com/<owner>/<repo>` / `.git` repository URLs and `tree/<branch>/<skill-path>` subdirectory URLs, shallow clone, and import valid skills; preview details default to the `SKILL.md` frontmatter `description`.
-- `get_skill_targets(skill_id, timeout_ms)`: check the local Codex skills root and configured hosts, returning installable/uninstallable targets for the library table.
-- `install_skill_targets(skill_id, targets, timeout_ms)`: install the managed copy to the selected local or host Codex skills root.
-- `uninstall_skill_targets(skill_id, targets, timeout_ms)`: move local installs into a local CodexHub backup folder and use the remote backup-delete flow for host installs.
+- `get_skill_inventory_status()`: read whether the first host skill inventory scan has completed and return remembered local/host skill lists.
+- `detect_installed_skills(include_hosts, timeout_ms)`: scan local Codex skill roots and, when requested, configured host skill roots.
+- `download_github_skill(repo_url, timeout_ms)`: accept direct GitHub repository URLs and `tree/<branch>/<skill-path>` subdirectory URLs, shallow clone, validate, and import valid skills.
+- `get_skill_targets(skill_id, timeout_ms)`: use cached inventory to return installable/uninstallable targets for the library table.
+- `install_skill_targets(skill_id, targets, timeout_ms)` / `uninstall_skill_targets(skill_id, targets, timeout_ms)`: install or backup-remove the managed copy on selected local or host targets.
 - `delete_library_skill(skill_id, uninstall_first, timeout_ms)`: remove the CodexHub library record and managed copy, optionally uninstalling known targets first.
-- `remote_restore_backup(server_id, backup_id)`: restore a known CodexHub backup.
+- `list_tasks()`: return the in-memory redacted task log for the current app session.
 
 ## Local Data Model
 

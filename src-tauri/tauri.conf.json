@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CodexHub",
   "version": "0.1.0",
-  "identifier": "dev.codexhub.app",
+  "identifier": "dev.codexhub.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
     "devUrl": "http://127.0.0.1:1420",
@@ -26,7 +26,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",

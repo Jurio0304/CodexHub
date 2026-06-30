@@ -1,159 +1,227 @@
 # CodexHub
 
-CodexHub is a Windows-first desktop control plane for managing Codex App SSH multi-server workflows.
+CodexHub is a Windows-first desktop control plane for Codex App SSH workflows. It helps one user prepare Linux SSH hosts, install or update the remote Codex CLI, apply Codex configuration profiles, sync skills, and keep an auditable task log without writing to Codex App private state.
 
-MVP direction:
+Chinese documentation: [简体中文 README](docs/zh-CN/README.md)
 
-- Tauri 2 desktop app.
-- React + TypeScript + Vite frontend.
-- Rust backend through Tauri commands.
-- Direct SSH/SFTP management of remote `~/.codex/config.toml` and `~/.codex/skills/`.
-- No mandatory remote Codex wrapper in MVP.
-- No writes to private Codex App state.
+## Screenshots
 
-## Current Status
+【Screenshot placeholder: Dashboard host matrix with SSH, Codex, profile, skill, and task status.】
 
-Window 6 adds Skills management on top of SSH host discovery, OpenSSH checks, remote system probes, single-host remote Codex CLI maintenance, and Profile/API config management:
+【Screenshot placeholder: Add Server flow showing one-time password bootstrap and managed SSH config write.】
 
-- macOS-style sidebar navigation for Dashboard, Hosts, Profiles, Skills, Tasks, and Settings.
-- Dashboard server matrix with host-level Check Version, Install Codex, and Update Codex quick actions; Hosts can also run a user-triggered one-click update for detected Codex installs that are behind the latest known version.
-- Light/dark mode support with native-feeling cards, tables, and status badges.
-- Settings / Appearance includes a three-button theme control plus English / 简体中文 global font and language presets.
-- Settings / Local SSH detects Ed25519 and RSA keys, can generate a non-overwriting Ed25519 key, and shows/copies public keys only.
-- Hosts auto-detect safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode and import them into the in-memory inventory.
-- Hosts can still add, update, and delete only CodexHub-managed blocks in `%USERPROFILE%\.ssh\config` with timestamped backups; unmanaged user blocks are never modified or overwritten.
-- Real desktop commands can run `ssh <HostAlias> echo ok` with timeout control and probe remote Linux hosts for OS, arch, shell, PATH, Codex CLI, config presence, and skills count.
-- Profiles / 配置 now manages local Codex profiles with create, update, delete, import, and export flows, plus a compact host-apply surface for single-host or selected-host batch apply.
-- API keys are env-var-first: profiles render remote config with `env_key` / `apiKeyEnvVar` references, and a remembered local credential-store key is optional local metadata only.
-- Stored local credential keys are never written to remote hosts. Remote `~/.codex/config.toml` writes contain the environment variable reference, not the local credential key or API key value.
-- Profile apply reads and diffs the remote config, creates a timestamped backup when needed, writes the rendered config, records `applied-profile.json` metadata, and emits redacted Tasks logs.
-- Profiles / 配置 still keeps the all-host Codex readiness list for single-host `codex --version` checks plus user-directory install/update flows. Host pages remain focused on connection details and diagnostics. The remote command remains the real `codex`; CodexHub does not install a wrapper.
-- Remote Codex install/update creates `~/.local/bin`, repairs shell PATH through an idempotent CodexHub-managed block in `~/.bashrc` or `~/.zshrc` with backup-before-write, runs the official standalone installer first, falls back to a npmmirror native package install, can locally download and `scp` that native package when the remote network is blocked, then falls back to npm with `--prefix "$HOME/.local"`.
-- Probe and Codex maintenance commands run through the backend blocking worker pool so the desktop window stays responsive; install/update opens a compact progress modal backed by `remote-codex-progress` events with streaming stdout/stderr lines and heartbeat messages.
-- Skills / Skills now imports local skill directories, scans immediate child folders for `SKILL.md`, persists managed copies under the app config directory, searches GitHub repositories, and clones selected repositories with `git clone --depth 1` before validation.
-- Remote skill install packages the managed local skill as `.tgz`, uploads it to `/tmp`, validates `SKILL.md` on the remote host, installs to user `~/.codex/skills/<skill-name>` or project `<project>/.codex/skills/<skill-name>`, and supports explicit `backup`, `skip`, and `overwrite` conflict policies.
-- Remote skill view lists `~/.codex/skills`, checks each child for `SKILL.md`, updates host skill counts, and records task-log evidence.
-- Remote skill delete requires typed confirmation and moves the target to a timestamped backup directory instead of hard-deleting it.
-- Task logs now capture each SSH/probe/install/profile/skill command with redacted stdout/stderr, exit code, duration, and timeout state.
+【Screenshot placeholder: Profiles page with preview/apply controls and redacted task logs.】
 
-## Prerequisites For Full Desktop Dev
+【Screenshot placeholder: Skills page with local library, detected targets, and install/uninstall actions.】
 
-Install these on Windows before running the full Tauri app:
+## What CodexHub Does
 
-1. Node.js 20+ and pnpm.
-2. Rust stable MSVC toolchain.
-3. Microsoft WebView2 runtime.
-4. Windows OpenSSH client (`ssh.exe`, `scp.exe`, `sftp.exe`).
-5. SSH access to each Linux remote host where Codex App will run. CodexHub can install or update the remote Codex CLI without root:
+* Reads local Windows OpenSSH status and public keys.
+* Generates a non-overwriting Ed25519 key when no suitable key exists.
+* Imports safe aliases from `%USERPROFILE%\\.ssh\\config` in read-only mode.
+* Adds, updates, or deletes only CodexHub-managed SSH config blocks with timestamped backups.
+* Tests SSH with `ssh <HostAlias> echo ok`.
+* Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, `\~/.codex/config.toml`, and skill counts.
+* Installs or updates the real remote `codex` command in the remote user's home directory.
+* Manages local profile templates and applies rendered TOML to remote `\~/.codex/config.toml` with preview, diff-aware no-op behavior, backup, and redacted logs.
+* Imports local or GitHub skill directories containing `SKILL.md`, detects local/remote installs, and installs or uninstalls skills through explicit target selection.
+* Shows task history with redacted stdout/stderr, command status, duration, and failure evidence.
+* Guides the user to Codex App `Settings > Codex > Connections` after CodexHub verifies an SSH alias.
 
-```bash
-ssh <HostAlias> echo ok
-```
+## Safety Boundaries
 
-## Install
+CodexHub is designed to be conservative by default:
 
-```bash
+* It never stores SSH private keys, passphrases, one-time passwords, or OpenAI API keys in plaintext app files.
+* It returns and copies public key text only.
+* It does not edit unmanaged SSH config blocks.
+* It writes only marked blocks between `# >>> CodexHub managed host: <alias>` and `# <<< CodexHub managed host: <alias>`.
+* It does not write Codex App private files, databases, sockets, caches, or undocumented state.
+* Remote Codex config uses `env\_key` / `apiKeyEnvVar`; local credential-store values are not written to remote hosts.
+* Mutating remote operations use previews, backups, explicit apply actions, and task-log evidence.
+
+More detail: [Security policy](SECURITY.md), [public scope](docs/public-scope.md), and [known limitations](docs/known-limitations.md).
+
+## Requirements
+
+For the full Windows desktop app:
+
+1. Windows 10/11.
+2. Microsoft WebView2 Runtime.
+3. Windows OpenSSH client: `ssh.exe`, `scp.exe`, and `ssh-keygen.exe`.
+4. Node.js 20+ and pnpm for development builds.
+5. Rust stable MSVC toolchain for Tauri builds.
+6. SSH access to Linux remote hosts where Codex App will run.
+
+Mock mode only needs Node.js.
+
+## Install From Source
+
+```powershell
 pnpm install
 ```
 
-## Run The Tauri App
+## Run
 
-```bash
+Full desktop app:
+
+```powershell
 pnpm dev
 ```
 
-This runs Vite and starts the Tauri desktop window. Equivalent commands:
+Web-only Vite UI:
 
-```bash
-pnpm tauri dev
-npm run dev
-npm run tauri -- dev
-```
-
-The desktop app currently exposes these Rust commands:
-
-- `get_ssh_status`
-- `generate_ed25519_key`
-- `list_ssh_config_hosts`
-- `upsert_ssh_config_host`
-- `delete_ssh_config_host`
-- `list_hosts`
-- `refresh_discovered_hosts`
-- `add_host`
-- `update_host`
-- `delete_host`
-- `test_ssh_connection`
-- `ssh_check`
-- `bootstrap_ssh_host`
-- `bootstrap_existing_ssh_host`
-- `remote_probe_codex`
-- `remote_manage_codex`
-- `list_profiles`
-- `create_profile`
-- `update_profile`
-- `delete_profile`
-- `duplicate_profile`
-- `import_profiles`
-- `export_profiles`
-- `set_profile_api_key`
-- `delete_profile_api_key`
-- `preview_profile_apply`
-- `apply_profile`
-- `detect_cc_switch_profiles`
-- `import_cc_switch_profiles`
-- `list_local_skills`
-- `import_local_skill`
-- `update_library_skill_about`
-- `get_skill_inventory_status`
-- `detect_installed_skills`
-- `download_github_skill`
-- `get_skill_targets`
-- `install_skill_targets`
-- `uninstall_skill_targets`
-- `delete_library_skill`
-- `list_tasks`
-
-The Skills page is a single local skill library. It uses Tauri dialog directory selection for local imports, accepts GitHub repository URLs and `tree/<branch>/<skill-path>` skill subdirectory URLs for download/import, detects installed local and host skills under `~/.codex/skills` and `~/.codex/superpowers/skills`, and keeps web/mock fallbacks for UI development. The Skills page Refresh action reloads local cache state without remote probing. `list_skill_packs` remains as a compatibility alias for `list_local_skills`.
-
-The SSH key and SSH config commands are real Windows local filesystem operations. They never read private key contents; public key text is the only key material returned to the UI. New CodexHub-managed hosts use a one-time password connection flow: log in to the remote host, install the local public key into `~/.ssh/authorized_keys`, set SSH permissions, write only a managed SSH config block, and verify with `ssh <HostAlias> echo ok`. The password is not stored or written to task logs.
-
-## Settings Persistence
-
-Appearance settings are applied immediately. In the desktop app, `get_settings` and `save_settings` persist the selected theme and English / 简体中文 font-language preset to the Tauri app config directory. In web-only mode, the same values fall back to `localStorage` under `codexhub.settings.v1`; this fallback can be migrated to a shared backend settings store later.
-
-## Web-Only Dev
-
-```bash
+```powershell
 pnpm dev:web
 ```
 
-## Mock Mode
+Dependency-light mock server:
 
-Use this when the full Tauri/Rust toolchain is not installed yet:
-
-```bash
+```powershell
 pnpm dev:mock
 ```
 
-Then open the URL printed by the script.
+## Quick Start
 
-## Smoke Test
+1. Open CodexHub.
+2. In Settings, check Local SSH.
+3. Generate an Ed25519 key only if one does not already exist.
+4. Add a server with host, user, port, and identity file.
+5. Use one-time password setup when the remote does not already accept your key.
+6. Confirm CodexHub wrote only its managed SSH block.
+7. Test the connection.
+8. Probe the remote host.
+9. Install or update the remote Codex CLI.
+10. Create a profile and preview/apply it to the host.
+11. Import a skill and install it to local or remote targets.
+12. Open Tasks to inspect redacted logs.
+13. In Codex App, go to `Settings > Codex > Connections` and add or enable the verified SSH alias.
 
-The smoke test validates the docs and skeleton without requiring downloaded npm dependencies or Rust compilation:
+## User Tutorial
 
-```bash
+### Add A Host
+
+* Use Hosts > Add Server for a new CodexHub-managed alias.
+* Existing aliases can be imported from local SSH config without rewriting unmanaged blocks.
+* New managed hosts are written only after password login, public-key install, permission repair, and key-login verification succeed.
+* First-time host keys use OpenSSH `StrictHostKeyChecking=accept-new`; changed host keys still fail.
+
+### Install Or Update Codex
+
+* Use Profiles or Dashboard actions to run `check-version`, `install`, or `update`.
+* The remote command remains `codex`; CodexHub does not install a wrapper.
+* Installs target `$HOME/.local/bin` and `$HOME/.codex`.
+* PATH repair is an idempotent CodexHub-managed block in `.bashrc` or `.zshrc`.
+* Official installer is tried first; mirror and local-upload fallbacks are logged.
+
+### Apply A Profile
+
+* Profiles render to TOML.
+* API keys are configured as environment variable references.
+* Preview before applying.
+* If the remote config already matches, CodexHub reports no changes and does not create a backup.
+* If the file changes, CodexHub creates a timestamped backup and records the result in Tasks.
+
+### Install Skills
+
+* Import a local folder with `SKILL.md`, or import a GitHub repository/subdirectory URL.
+* CodexHub stores a managed local copy in the app config directory.
+* Target checks use cached inventory, so run detection before installing to a new host.
+* Uninstall moves local and remote skill directories to backups instead of hard-deleting them.
+
+## Developer Setup
+
+Common commands:
+
+```powershell
 pnpm smoke
+pnpm smoke:mock
+pnpm typecheck
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm build:web
+pnpm build:tauri
 ```
 
-If pnpm is not available yet, run the dependency-light smoke test directly:
+When the system `node` is not on `PATH`, prepend the bundled Codex runtime Node/pnpm paths before running the same commands.
 
-```bash
-node scripts/smoke-test.mjs
+## Packaging
+
+Portable Windows package for v1:
+
+```powershell
+pnpm release:portable
 ```
 
-## Documentation
+This builds the Tauri executable without installer bundling, stages `release-artifacts/CodexHub-v0.1.0-windows-x64-portable`, creates a zip, and writes `release-artifacts/SHA256SUMS.txt`.
 
-- `docs/research.md` - public research notes and source links.
-- `docs/architecture.md` - MVP architecture and write-safety model.
-- `docs/mvp-scope.md` - what is in/out of the first version.
-- `docs/known-limitations.md` - current integration limitations and fallbacks.
+Check the compiled executable:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\check-release-exe.ps1
+```
+
+Installer commands are available but optional:
+
+```powershell
+pnpm build:installer:nsis
+pnpm build:installer:msi
+```
+
+MSI packaging requires WiX. If Tauri tries to download WiX and the network times out, use the portable package or install/cache WiX first.
+
+## Release Checklist
+
+Run the automated release checks:
+
+```powershell
+pnpm smoke
+pnpm smoke:mock
+pnpm typecheck
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm build:web
+pnpm build:tauri
+pnpm audit:public
+pnpm release:portable
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\check-release-exe.ps1
+git diff --check
+```
+
+Then follow the live SSH checklist in [docs/release-checklist.md](docs/release-checklist.md). Live SSH acceptance requires a real host supplied by the user; mock and static checks do not prove a specific remote machine.
+
+## Public Repository Scope
+
+This repository is source-only. Do not commit:
+
+* Built `.exe`, `.msi`, `.zip`, or installer output.
+* `release-artifacts/`, `dist/`, `src-tauri/target/`, or `node\_modules/`.
+* Local app state such as `hosts.json`, `profiles.json`, `tasks.json`, settings, or skill inventory files.
+* SSH config, known hosts, private keys, passphrases, API tokens, `.env\*`, SQLite databases, or local machine exports.
+
+Use `pnpm audit:public` before publishing.
+
+GitHub Releases should host binaries; Git history should remain source-only.
+
+## Known Limitations
+
+* CodexHub does not automatically register SSH hosts inside Codex App.
+* CodexHub does not force Codex App to reconnect.
+* Linux remotes are the v1 target; Windows remotes are not in scope.
+* Full install/update depends on remote shell, `scp`, `tar`, and network or local-upload fallback behavior.
+* Skill path support follows `\~/.codex/skills` and `\~/.codex/superpowers/skills`; project-level path drift remains a later capability.
+* MSI bundling depends on WiX and can fail in restricted networks.
+
+See [docs/known-limitations.md](docs/known-limitations.md).
+
+## v1 Roadmap
+
+* Keep the direct SSH/SFTP architecture as the stable MVP path.
+* Publish a source-only GitHub repository.
+* Attach portable Windows builds to GitHub Releases.
+* Add signed installers after release infrastructure is stable.
+* Add richer restore UX for remote backups.
+* Add optional host capability checks for alternate skill paths.
+* Consider a remote wrapper only as an opt-in future enhancement.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

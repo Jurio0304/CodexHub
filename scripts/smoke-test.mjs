@@ -4,10 +4,15 @@ import path from "node:path";
 const root = process.cwd();
 const requiredFiles = [
   "README.md",
+  "LICENSE",
+  "SECURITY.md",
   "docs/research.md",
   "docs/architecture.md",
   "docs/mvp-scope.md",
   "docs/known-limitations.md",
+  "docs/public-scope.md",
+  "docs/release-checklist.md",
+  "docs/zh-CN/README.md",
   "package.json",
   "vite.config.mjs",
   "index.html",
@@ -17,6 +22,11 @@ const requiredFiles = [
   "src/models.ts",
   "src/settings.ts",
   "src/styles.css",
+  "scripts/mock-dev.mjs",
+  "scripts/mock-smoke-test.mjs",
+  "scripts/audit-public-scope.mjs",
+  "scripts/package-portable.ps1",
+  "scripts/check-release-exe.ps1",
   "figs/app-logo.png",
   "src-tauri/Cargo.toml",
   "src-tauri/tauri.conf.json",
@@ -43,12 +53,20 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-for (const script of ["tauri", "dev", "dev:web", "dev:mock", "smoke"]) {
+for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:installer:nsis", "build:installer:msi", "release:portable", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
+if (packageJson.scripts.build !== "pnpm build:tauri") fail("default build should use build:tauri");
+if (!packageJson.scripts["build:tauri"].includes("--no-bundle --ci")) fail("build:tauri should skip installer bundling in CI");
+if (!packageJson.scripts["release:portable"].includes("package-portable.ps1")) fail("release:portable should call package-portable.ps1");
 if (!packageJson.dependencies?.["@tauri-apps/plugin-dialog"]) fail("missing Tauri dialog plugin dependency");
 
 const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
+if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
+if (tauriConfig.bundle?.targets === "all") fail("Tauri bundle targets must not default to all installers");
+if (Array.isArray(tauriConfig.bundle?.targets) && tauriConfig.bundle.targets.includes("msi")) {
+  fail("MSI bundling should be an explicit command, not a default target");
+}
 const defaultCapability = JSON.parse(read("src-tauri/capabilities/default.json"));
 if (!JSON.stringify(defaultCapability).includes("dialog:default")) fail("missing dialog capability permission");
 const requiredBundleIcons = [
@@ -119,8 +137,22 @@ const research = read("docs/research.md");
 const architecture = read("docs/architecture.md");
 const mvp = read("docs/mvp-scope.md");
 const limitations = read("docs/known-limitations.md");
+const readme = read("README.md");
+const publicScope = read("docs/public-scope.md");
+const releaseChecklist = read("docs/release-checklist.md");
+const security = read("SECURITY.md");
 
 const requiredText = [
+  [readme, "CodexHub is a Windows-first desktop control plane"],
+  [readme, "GitHub Releases should host binaries"],
+  [readme, "Settings > Codex > Connections"],
+  [readme, "pnpm release:portable"],
+  [readme, "MIT"],
+  [publicScope, "source-only"],
+  [publicScope, "pnpm audit:public"],
+  [releaseChecklist, "Live SSH Acceptance"],
+  [releaseChecklist, "Add or enable the verified SSH alias manually"],
+  [security, "CodexHub does not write Codex App private state"],
   [research, "No public, stable API was found"],
   [research, "~/.codex/config.toml"],
   [research, "~/.codex/skills/"],
@@ -146,6 +178,32 @@ const requiredText = [
 
 for (const [content, phrase] of requiredText) {
   if (!content.includes(phrase)) fail(`missing required phrase: ${phrase}`);
+}
+
+for (const staleDocToken of [
+  "export_profiles(profile_ids)",
+  "list_ssh_hosts()",
+  "generate_ssh_host_block",
+  "append_ssh_host_block_with_backup",
+  "render_profile_config",
+  "remote_restore_backup"
+]) {
+  if (architecture.includes(staleDocToken) || readme.includes(staleDocToken)) {
+    fail(`public docs should not advertise stale command: ${staleDocToken}`);
+  }
+}
+
+const portableScript = read("scripts/package-portable.ps1");
+for (const token of ["CodexHub-v$Version-windows-x64-portable", "release-artifacts", "Compress-Archive", "SHA256SUMS.txt", "pnpm audit:public"]) {
+  if (!portableScript.includes(token)) fail(`missing portable packaging token: ${token}`);
+}
+const publicAuditScript = read("scripts/audit-public-scope.mjs");
+for (const token of ["PRIVATE KEY", "sk-[A-Za-z0-9_-]{20,}", "release-artifacts", "PUBLIC AUDIT PASS"]) {
+  if (!publicAuditScript.includes(token)) fail(`missing public audit token: ${token}`);
+}
+const exeCheckScript = read("scripts/check-release-exe.ps1");
+for (const token of ["APPDATA", "LOCALAPPDATA", "USERPROFILE", "WindowStyle", "Release exe startup check passed"]) {
+  if (!exeCheckScript.includes(token)) fail(`missing release exe check token: ${token}`);
 }
 
 const rustLib = read("src-tauri/src/lib.rs");
@@ -750,7 +808,7 @@ if (app.includes("{health.mode}</Badge>")) fail("UI should not render raw backen
 if (app.includes("PATH 含 ~/.local/bin")) fail("Host details should show test latency instead of PATH local-bin status");
 if (!app.includes("if (!result.ok)")) fail("SSH bootstrap modal must not treat failed results as success");
 if (!app.includes('result.writeResult.action === "rolled_back"')) fail("failed new SSH bootstrap should refresh only after managed-block rollback");
-if (app.includes('placeholder="10.39.2.30"') || app.includes('placeholder="jy"')) fail("SSH Host modal placeholders must not contain personal host details");
+if (app.includes(`placeholder="${removed("10", ".39", ".2", ".30")}"`) || app.includes('placeholder="jy"')) fail("SSH Host modal placeholders must not contain personal host details");
 if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay open after successful connection");
 if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
 if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");

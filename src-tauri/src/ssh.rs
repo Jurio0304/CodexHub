@@ -1697,10 +1697,10 @@ fn write_config_with_backup(
 fn normalize_draft(draft: SshHostDraft) -> Result<SshHostDraft, String> {
     Ok(SshHostDraft {
         alias: validate_ssh_alias(&draft.alias)?,
-        host_name: normalize_required("HostName", &draft.host_name)?,
+        host_name: normalize_config_value("HostName", &draft.host_name)?,
         port: normalize_port(draft.port)?,
-        user: normalize_required("User", &draft.user)?,
-        identity_file: normalize_required("IdentityFile", &draft.identity_file)?,
+        user: normalize_config_value("User", &draft.user)?,
+        identity_file: normalize_config_value("IdentityFile", &draft.identity_file)?,
     })
 }
 
@@ -1721,6 +1721,15 @@ fn normalize_required(label: &str, value: &str) -> Result<String, String> {
         Err(format!("{label} is required."))
     } else {
         Ok(value.into())
+    }
+}
+
+fn normalize_config_value(label: &str, value: &str) -> Result<String, String> {
+    let value = normalize_required(label, value)?;
+    if value.contains('\r') || value.contains('\n') {
+        Err(format!("{label} cannot contain line breaks."))
+    } else {
+        Ok(value)
     }
 }
 
@@ -1885,7 +1894,8 @@ fn push_local_host_block(
 }
 
 fn upsert_managed_host_block(content: &str, draft: &SshHostDraft) -> Result<String, String> {
-    let rendered = render_managed_block(draft);
+    let newline = detect_newline(content);
+    let rendered = render_managed_block_with_newline(draft, newline);
     if let Some(block) = find_managed_host_block(content, &draft.alias)? {
         let lines = split_lines_inclusive(content);
         let mut next = String::new();
@@ -1894,7 +1904,7 @@ fn upsert_managed_host_block(content: &str, draft: &SshHostDraft) -> Result<Stri
         next.push_str(&lines[block.range.end..].concat());
         Ok(next)
     } else {
-        Ok(append_managed_block(content, &rendered))
+        Ok(append_managed_block(content, &rendered, newline))
     }
 }
 
@@ -2115,6 +2125,8 @@ fn rewrite_local_host_block(
     aliases: &[String],
     draft: Option<&SshHostDraft>,
 ) -> String {
+    let block_content = block_lines.concat();
+    let newline = detect_newline(&block_content);
     let mut next_lines = Vec::new();
     let mut host_line_index = None;
 
@@ -2129,7 +2141,7 @@ fn rewrite_local_host_block(
         match directive {
             Some((keyword, _)) if keyword.eq_ignore_ascii_case("Host") => {
                 host_line_index = Some(next_lines.len());
-                next_lines.push(format!("Host {}\n", aliases.join(" ")));
+                next_lines.push(format!("Host {}{newline}", aliases.join(" ")));
             }
             Some((keyword, _))
                 if draft.is_some()
@@ -2144,12 +2156,12 @@ fn rewrite_local_host_block(
     if let Some(draft) = draft {
         let insert_index = host_line_index.map_or(0, |index| index + 1);
         let mut directives = vec![
-            format!("    HostName {}\n", draft.host_name),
-            format!("    Port {}\n", draft.port),
-            format!("    User {}\n", draft.user),
+            format!("    HostName {}{newline}", draft.host_name),
+            format!("    Port {}{newline}", draft.port),
+            format!("    User {}{newline}", draft.user),
         ];
         if !draft.identity_file.trim().is_empty() {
-            directives.push(format!("    IdentityFile {}\n", draft.identity_file));
+            directives.push(format!("    IdentityFile {}{newline}", draft.identity_file));
         }
         for (offset, line) in directives.into_iter().enumerate() {
             next_lines.insert(insert_index + offset, line);
@@ -2159,27 +2171,28 @@ fn rewrite_local_host_block(
     next_lines.concat()
 }
 
-fn render_managed_block(draft: &SshHostDraft) -> String {
+fn render_managed_block_with_newline(draft: &SshHostDraft, newline: &str) -> String {
     format!(
-        "{MANAGED_START_PREFIX} {alias}\nHost {alias}\n    HostName {host_name}\n    Port {port}\n    User {user}\n    IdentityFile {identity_file}\n{MANAGED_END_PREFIX} {alias}\n",
+        "{MANAGED_START_PREFIX} {alias}{newline}Host {alias}{newline}    HostName {host_name}{newline}    Port {port}{newline}    User {user}{newline}    IdentityFile {identity_file}{newline}{MANAGED_END_PREFIX} {alias}{newline}",
         alias = draft.alias,
         host_name = draft.host_name,
         port = draft.port,
         user = draft.user,
-        identity_file = draft.identity_file
+        identity_file = draft.identity_file,
+        newline = newline
     )
 }
 
-fn append_managed_block(content: &str, block: &str) -> String {
+fn append_managed_block(content: &str, block: &str, newline: &str) -> String {
     if content.is_empty() {
         return block.into();
     }
 
     let mut next = content.to_string();
     if !next.ends_with('\n') {
-        next.push('\n');
+        next.push_str(newline);
     }
-    next.push('\n');
+    next.push_str(newline);
     next.push_str(block);
     next
 }
@@ -2190,6 +2203,14 @@ fn split_lines_inclusive(content: &str) -> Vec<String> {
 
 fn trim_line(line: &str) -> &str {
     line.trim_end_matches(['\r', '\n'])
+}
+
+fn detect_newline(content: &str) -> &str {
+    if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
 }
 
 fn split_directive(line: &str) -> Option<(&str, &str)> {
@@ -2292,6 +2313,16 @@ mod tests {
     }
 
     #[test]
+    fn upsert_managed_block_preserves_crlf_and_comments() {
+        let content = "# user comment\r\nHost github.com\r\n    User git\r\n";
+        let next = upsert_managed_host_block(content, &draft("lab")).expect("upsert");
+
+        assert!(next.starts_with("# user comment\r\nHost github.com\r\n"));
+        assert!(next.contains("# >>> CodexHub managed host: lab\r\nHost lab\r\n"));
+        assert!(!next.contains("# >>> CodexHub managed host: lab\nHost lab\n"));
+    }
+
+    #[test]
     fn update_managed_block_in_place() {
         let first = upsert_managed_host_block("Host github.com\n    User git\n", &draft("lab"))
             .expect("first");
@@ -2340,6 +2371,21 @@ mod tests {
     }
 
     #[test]
+    fn update_local_block_preserves_crlf_comments_and_spacing() {
+        let content =
+            "Host lab\r\n    # keep this comment\r\n    HostName old.example\r\n    User old\r\n";
+        let mut changed = draft("lab");
+        changed.host_name = "new.example".into();
+
+        let next = upsert_local_host_block(content, &changed).expect("update local");
+
+        assert!(next.contains("    # keep this comment\r\n"));
+        assert!(next.contains("    HostName new.example\r\n"));
+        assert!(next.contains("    IdentityFile C:\\Users\\PC\\.ssh\\id_ed25519\r\n"));
+        assert!(!next.contains("old.example"));
+    }
+
+    #[test]
     fn delete_only_managed_block() {
         let content = "Host github.com\n    User git\n\n";
         let with_managed = upsert_managed_host_block(content, &draft("lab")).expect("add");
@@ -2383,6 +2429,27 @@ mod tests {
     }
 
     #[test]
+    fn ssh_config_values_reject_line_break_injection() {
+        let mut bad_host = draft("lab");
+        bad_host.host_name = "example.com\nProxyCommand powershell".into();
+        assert!(normalize_draft(bad_host)
+            .expect_err("hostname injection")
+            .contains("HostName cannot contain line breaks"));
+
+        let mut bad_user = draft("lab");
+        bad_user.user = "codex\r\nIdentityFile C:\\temp\\other".into();
+        assert!(normalize_draft(bad_user)
+            .expect_err("user injection")
+            .contains("User cannot contain line breaks"));
+
+        let mut bad_identity = draft("lab");
+        bad_identity.identity_file = "C:\\keys\\id_ed25519\nProxyJump bad".into();
+        assert!(normalize_draft(bad_identity)
+            .expect_err("identity injection")
+            .contains("IdentityFile cannot contain line breaks"));
+    }
+
+    #[test]
     fn writer_backs_up_existing_config_before_mutation() {
         let root = env::temp_dir().join(format!("codexhub-ssh-test-{}", timestamp_millis()));
         fs::create_dir_all(&root).expect("create temp root");
@@ -2414,6 +2481,16 @@ mod tests {
         assert!(validate_ssh_alias("*.example.com").is_err());
         assert!(validate_ssh_alias("lab;rm").is_err());
         assert!(validate_ssh_alias("two words").is_err());
+    }
+
+    #[test]
+    fn windows_public_key_path_keeps_backslash_paths() {
+        let public = public_key_path_for(Path::new(r"C:\Users\Example User\.ssh\id_ed25519"));
+
+        assert_eq!(
+            public.to_string_lossy(),
+            r"C:\Users\Example User\.ssh\id_ed25519.pub"
+        );
     }
 
     #[test]

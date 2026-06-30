@@ -4,6 +4,8 @@ node_modules/
 
 # Build outputs
 dist/
+dist-release/
+release-artifacts/
 src-tauri/target/
 src-tauri/target_check_tmp/
 .toolchains/
@@ -12,6 +14,25 @@ src-tauri/target_check_tmp/
 *.log
 *.pid
 _tmp_*
+.env
+.env.*
+*.local.json
+*.local.toml
+hosts.json
+profiles.json
+tasks.json
+settings.json
+skill-inventory.json
+codex-latest.json
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+known_hosts*
+ssh_config*
 .DS_Store
 Thumbs.db
 

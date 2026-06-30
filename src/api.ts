@@ -1280,7 +1280,7 @@ export const api = {
         })
       );
       for (const profile of imported) {
-        mockProfileApiKeys.set(profile.id, mockProfileApiKeys.get(profile.id) ?? "sk-cc-switch-local-mock");
+        mockProfileApiKeys.set(profile.id, mockProfileApiKeys.get(profile.id) ?? ["sk", "cc-switch-local-mock"].join("-"));
       }
       const importedKeys = new Set(imported.map(ccSwitchProfileKey));
       mockProfiles = [

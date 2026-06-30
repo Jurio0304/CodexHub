@@ -5497,6 +5497,46 @@ mod tests {
         }
     }
 
+    fn test_host(alias: &str) -> Host {
+        Host {
+            id: format!("host-{alias}"),
+            name: format!("Host {alias}"),
+            host_alias: alias.into(),
+            source: "test".into(),
+            address: "127.0.0.1".into(),
+            port: 22,
+            username: "codex".into(),
+            auth_method: AuthMethod::SshKey,
+            status: HostStatus::Unknown,
+            os: String::new(),
+            arch: String::new(),
+            shell: String::new(),
+            path: None,
+            path_has_local_bin: None,
+            codex_installed: false,
+            codex_version: String::new(),
+            config_exists: None,
+            api_config_name: None,
+            api_config_source: None,
+            skills_exists: None,
+            skills_count: None,
+            profile_id: None,
+            skill_pack_ids: Vec::new(),
+            tags: Vec::new(),
+            last_seen: "never".into(),
+            latency_ms: None,
+        }
+    }
+
+    fn empty_state() -> AppState {
+        AppState {
+            hosts: Mutex::new(Vec::new()),
+            profiles: Mutex::new(Vec::new()),
+            skill_packs: Mutex::new(Vec::new()),
+            tasks: Mutex::new(Vec::new()),
+        }
+    }
+
     #[test]
     fn profile_render_uses_builtin_openai_provider_without_custom_provider_table() {
         let toml = render_profile_toml(&test_profile("openai")).expect("render profile");
@@ -5518,6 +5558,28 @@ mod tests {
         assert!(toml.contains("name = \"zhipu\""));
         assert!(toml.contains("base_url = \"https://models.example/v1\""));
         assert!(toml.contains("env_key = \"CODEXHUB_TEST_API_KEY\""));
+    }
+
+    #[test]
+    fn profile_render_preserves_release_safe_settings_without_secret_values() {
+        let mut profile = test_profile("openai");
+        profile.service_tier = Some("flex".into());
+        profile.approval_policy = "never".into();
+        profile.sandbox_mode = "workspace-write".into();
+        profile.extra_toml = "[history]\npersistence = \"save-all\"\n".into();
+
+        let toml = render_profile_toml(&profile).expect("render profile");
+
+        assert!(toml.contains("model_reasoning_effort = \"medium\""));
+        assert!(toml.contains("plan_mode_reasoning_effort = \"high\""));
+        assert!(toml.contains("service_tier = \"flex\""));
+        assert!(toml.contains("approval_policy = \"never\""));
+        assert!(toml.contains("sandbox_mode = \"workspace-write\""));
+        assert!(toml.contains("[history]"));
+        assert!(toml.contains("persistence = \"save-all\""));
+        assert!(!toml.contains("credentialStored"));
+        assert!(!toml.contains("api_key ="));
+        assert!(!toml.contains("sk-"));
     }
 
     #[test]
@@ -5556,6 +5618,90 @@ mod tests {
         assert!(!rendered.contains("sk-"));
         assert!(!exported.contains("sk-"));
         assert!(!exported.contains("apiKeyValue"));
+    }
+
+    #[test]
+    fn task_recorder_prepends_and_keeps_logs_redacted() {
+        let state = empty_state();
+        let fake_key = format!("{}{}", "sk-", "live12345678901234567890");
+        let output = ssh::SshCommandOutput {
+            command: "ssh lab echo ok".into(),
+            stdout: ssh::redact_sensitive(&format!("token={fake_key}\nok")),
+            stderr: ssh::redact_sensitive("password=super-secret-value"),
+            exit_code: Some(0),
+            duration_ms: 12,
+            timed_out: false,
+        };
+        let older = skill_task(
+            "task-old",
+            "local",
+            "Local machine",
+            "Install skill",
+            TaskStatus::Success,
+            "Installed skill.",
+            vec![command_log(
+                "task-old",
+                0,
+                TaskLogLevel::Info,
+                "install",
+                &output,
+            )],
+        );
+        let newer = skill_task(
+            "task-new",
+            "host-lab",
+            "Host lab",
+            "Apply profile",
+            TaskStatus::Failed,
+            "Profile apply failed.",
+            vec![basic_log(
+                "task-new",
+                0,
+                TaskLogLevel::Error,
+                "remote config rejected",
+            )],
+        );
+
+        record_task(&state, older);
+        record_task(&state, newer);
+        let tasks = state.tasks.lock().expect("tasks mutex poisoned").clone();
+        let serialized = serde_json::to_string(&tasks).expect("serialize tasks");
+
+        assert_eq!(tasks.iter().map(|task| task.id.as_str()).collect::<Vec<_>>(), vec![
+            "task-new",
+            "task-old"
+        ]);
+        assert_eq!(
+            serde_json::to_string(&tasks[0].status).expect("serialize status"),
+            "\"failed\""
+        );
+        assert!(serialized.contains("token=[redacted]"));
+        assert!(serialized.contains("password=[redacted]"));
+        assert!(!serialized.contains(&fake_key));
+        assert!(!serialized.contains("super-secret-value"));
+    }
+
+    #[test]
+    fn profile_and_local_skill_tasks_use_expected_public_shapes() {
+        let host = test_host("lab");
+        let profile_task = profile_apply_task(
+            "task-profile-1",
+            &host,
+            TaskStatus::Success,
+            "Applied profile.",
+            vec![basic_log("task-profile-1", 0, TaskLogLevel::Info, "done")],
+        );
+        let skill_task = local_skill_task("Install skill", "Installed local skill.", true);
+
+        assert_eq!(profile_task.action, "Apply profile");
+        assert_eq!(profile_task.host_id, "host-lab");
+        assert_eq!(
+            serde_json::to_string(&profile_task.status).expect("serialize profile status"),
+            "\"success\""
+        );
+        assert_eq!(skill_task.host_id, "local");
+        assert_eq!(skill_task.host_name, "Local machine");
+        assert_eq!(skill_task.action, "Install skill");
     }
 
     #[test]
@@ -5845,6 +5991,14 @@ mod tests {
         let fallback = parse_skill_metadata("# Instructions", Path::new("draft-helper"))
             .expect("fallback skill");
         assert_eq!(fallback.name, "draft-helper");
+        let description_only =
+            parse_skill_metadata("---\ndescription: Description only\n---\nBody", Path::new("helper"))
+                .expect("description-only skill");
+        assert_eq!(description_only.name, "helper");
+        assert_eq!(
+            description_only.description.as_deref(),
+            Some("Description only")
+        );
         assert!(parse_skill_metadata("", Path::new("empty")).is_err());
     }
 
@@ -5933,6 +6087,12 @@ mod tests {
         assert!(!is_allowed_github_repo_url(
             "https://github.com/owner/example/extra"
         ));
+        assert!(!is_allowed_github_repo_url(
+            "https://github.com/openai/skills/tree/main/../secret"
+        ));
+        assert!(!is_allowed_github_repo_url(
+            "https://github.com/openai/skills/tree/main/skills//bad"
+        ));
         let repo_url = parse_github_skill_url("https://github.com/owner/example-skill.git")
             .expect("parse repo url");
         assert_eq!(repo_url.owner, "owner");
@@ -5949,6 +6109,43 @@ mod tests {
             tree_url.skill_subpath.as_deref(),
             Some(Path::new("skills/.curated/winui-app"))
         );
+    }
+
+    #[test]
+    fn ensure_child_path_allows_children_and_rejects_siblings() {
+        let root = env::temp_dir().join(format!("codexhub-child-path-{}", timestamp_millis()));
+        let child = root.join("managed").join("example-skill");
+        let sibling = root
+            .parent()
+            .expect("temp root parent")
+            .join(format!("codexhub-sibling-{}", timestamp_millis()));
+        fs::create_dir_all(&child).expect("create child");
+        fs::create_dir_all(&sibling).expect("create sibling");
+
+        assert!(ensure_child_path(&root, &child).is_ok());
+        assert!(ensure_child_path(&root, &sibling).is_err());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&sibling);
+    }
+
+    #[test]
+    fn remote_project_skill_paths_require_absolute_or_home_roots() {
+        let (home_expr, home_display) =
+            remote_skill_root(&RemoteSkillScope::Project, Some("~/work/repo"))
+                .expect("home project path");
+        assert_eq!(home_expr, "$HOME/'work/repo'/.codex/skills");
+        assert_eq!(home_display, "~/work/repo/.codex/skills");
+
+        let (absolute_expr, absolute_display) =
+            remote_skill_root(&RemoteSkillScope::Project, Some("/srv/repo"))
+                .expect("absolute project path");
+        assert_eq!(absolute_expr, "'/srv/repo'/.codex/skills");
+        assert_eq!(absolute_display, "/srv/repo/.codex/skills");
+
+        assert!(remote_skill_root(&RemoteSkillScope::Project, Some("relative/repo")).is_err());
+        assert!(remote_skill_root(&RemoteSkillScope::Project, Some("~/")).is_err());
+        assert!(remote_skill_root(&RemoteSkillScope::Project, Some("/srv/repo\nbad")).is_err());
     }
 
     #[test]
