@@ -1,10 +1,42 @@
-# CodexHub
+<div align="center">
+  <img src="figs/app-logo.png" alt="CodexHub logo" width="104" height="104" />
 
-CodexHub is a Windows-first desktop control plane for Codex App SSH workflows. It helps one user prepare Linux SSH hosts, install or update the remote Codex CLI, apply Codex configuration profiles, sync skills, and keep an auditable task log without writing to Codex App private state.
+  <h1>CodexHub</h1>
 
-Chinese documentation: [简体中文 README](docs/zh-CN/README.md)
+  <p><strong>Windows desktop control plane for Codex App SSH workspaces.</strong></p>
+  <p>Prepare Linux hosts, install or update remote Codex, apply profiles, sync skills, and inspect redacted task logs without writing to Codex App private state.</p>
 
-## Screenshots
+  <p>
+    <a href="docs/zh-CN/README.md">简体中文</a>
+    ·
+    <a href="https://github.com/Jurio0304/CodexHub/releases/latest">Download</a>
+    ·
+    <a href="docs/known-limitations.md">Known Limitations</a>
+    ·
+    <a href="SECURITY.md">Security</a>
+  </p>
+
+  <p>
+    <img alt="Release" src="https://img.shields.io/github/v/release/Jurio0304/CodexHub?label=release" />
+    <img alt="License" src="https://img.shields.io/github/license/Jurio0304/CodexHub" />
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4" />
+    <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
+    <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
+    <img alt="Rust" src="https://img.shields.io/badge/Rust-MSVC-B7410E" />
+  </p>
+</div>
+
+## 🧭 At a Glance
+
+CodexHub is a small desktop hub for one practical workflow: make a Windows machine ready to work with Codex App across SSH-connected Linux hosts.
+
+* Manage local OpenSSH key state and CodexHub-owned SSH aliases.
+* Bootstrap new Linux hosts with a one-time password, then switch to key login.
+* Probe remote Codex, config, shell, PATH, and skill state before changing anything.
+* Preview and apply Codex profiles and skills with backups and redacted logs.
+* Hand the verified SSH alias back to Codex App through `Settings > Codex > Connections`.
+
+## 🖼️ Screenshots
 
 【Screenshot placeholder: Dashboard host matrix with SSH, Codex, profile, skill, and task status.】
 
@@ -14,21 +46,21 @@ Chinese documentation: [简体中文 README](docs/zh-CN/README.md)
 
 【Screenshot placeholder: Skills page with local library, detected targets, and install/uninstall actions.】
 
-## What CodexHub Does
+## ✨ Core Features
 
 * Reads local Windows OpenSSH status and public keys.
 * Generates a non-overwriting Ed25519 key when no suitable key exists.
-* Imports safe aliases from `%USERPROFILE%\\.ssh\\config` in read-only mode.
+* Imports safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode.
 * Adds, updates, or deletes only CodexHub-managed SSH config blocks with timestamped backups.
 * Tests SSH with `ssh <HostAlias> echo ok`.
-* Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, `\~/.codex/config.toml`, and skill counts.
+* Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, `~/.codex/config.toml`, and skill counts.
 * Installs or updates the real remote `codex` command in the remote user's home directory.
-* Manages local profile templates and applies rendered TOML to remote `\~/.codex/config.toml` with preview, diff-aware no-op behavior, backup, and redacted logs.
-* Imports local or GitHub skill directories containing `SKILL.md`, detects local/remote installs, and installs or uninstalls skills through explicit target selection.
+* Manages local profile templates and applies rendered TOML to remote `~/.codex/config.toml`.
+* Imports local or GitHub skill directories containing `SKILL.md`.
 * Shows task history with redacted stdout/stderr, command status, duration, and failure evidence.
-* Guides the user to Codex App `Settings > Codex > Connections` after CodexHub verifies an SSH alias.
+* Guides the user to Codex App after CodexHub verifies an SSH alias.
 
-## Safety Boundaries
+## 🔐 Safety Boundaries
 
 CodexHub is designed to be conservative by default:
 
@@ -37,39 +69,42 @@ CodexHub is designed to be conservative by default:
 * It does not edit unmanaged SSH config blocks.
 * It writes only marked blocks between `# >>> CodexHub managed host: <alias>` and `# <<< CodexHub managed host: <alias>`.
 * It does not write Codex App private files, databases, sockets, caches, or undocumented state.
-* Remote Codex config uses `env\_key` / `apiKeyEnvVar`; local credential-store values are not written to remote hosts.
+* Remote Codex config uses `env_key` / `apiKeyEnvVar`; local credential-store values are not written to remote hosts.
 * Mutating remote operations use previews, backups, explicit apply actions, and task-log evidence.
 
 More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-limitations.md).
 
-## Requirements
+## ✅ Requirements
 
 For the full Windows desktop app:
 
 1. Windows 10/11.
 2. Microsoft WebView2 Runtime.
 3. Windows OpenSSH client: `ssh.exe`, `scp.exe`, and `ssh-keygen.exe`.
-4. Node.js 20+ and pnpm for development builds.
-5. Rust stable MSVC toolchain for Tauri builds.
-6. SSH access to Linux remote hosts where Codex App will run.
+4. SSH access to Linux remote hosts where Codex App will run.
+
+For development from source:
+
+1. Node.js 20+ and pnpm.
+2. Rust stable MSVC toolchain.
 
 Mock mode only needs Node.js.
 
-## Install From Source
+## 🚀 Install
+
+For everyday use, download the latest Windows build from [GitHub Releases](https://github.com/Jurio0304/CodexHub/releases/latest).
+
+* Installer: download and run the Windows x64 setup `.exe`.
+* Portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
+
+For source development:
 
 ```powershell
 pnpm install
-```
-
-## Run
-
-Full desktop app:
-
-```powershell
 pnpm dev
 ```
 
-Web-only Vite UI:
+Web-only UI:
 
 ```powershell
 pnpm dev:web
@@ -81,32 +116,30 @@ Dependency-light mock server:
 pnpm dev:mock
 ```
 
-## Quick Start
+## ⚡ Quick Start
 
 1. Open CodexHub.
 2. In Settings, check Local SSH.
 3. Generate an Ed25519 key only if one does not already exist.
 4. Add a server with host, user, port, and identity file.
 5. Use one-time password setup when the remote does not already accept your key.
-6. Confirm CodexHub wrote only its managed SSH block.
-7. Test the connection.
-8. Probe the remote host.
-9. Install or update the remote Codex CLI.
-10. Create a profile and preview/apply it to the host.
-11. Import a skill and install it to local or remote targets.
-12. Open Tasks to inspect redacted logs.
-13. In Codex App, go to `Settings > Codex > Connections` and add or enable the verified SSH alias.
+6. Test the SSH alias and probe the remote host.
+7. Install or update remote Codex.
+8. Create a profile, preview it, then apply it to the host.
+9. Import a skill and install it to local or remote targets.
+10. Open Tasks to inspect redacted logs.
+11. In Codex App, go to `Settings > Codex > Connections` and add or enable the verified SSH alias.
 
-## User Tutorial
+## 📘 Guided Workflows
 
-### Add A Host
+### Add a Host
 
 * Use Hosts > Add Server for a new CodexHub-managed alias.
 * Existing aliases can be imported from local SSH config without rewriting unmanaged blocks.
 * New managed hosts are written only after password login, public-key install, permission repair, and key-login verification succeed.
 * First-time host keys use OpenSSH `StrictHostKeyChecking=accept-new`; changed host keys still fail.
 
-### Install Or Update Codex
+### Install or Update Codex
 
 * Use Profiles or Dashboard actions to run `check-version`, `install`, or `update`.
 * The remote command remains `codex`; CodexHub does not install a wrapper.
@@ -114,7 +147,7 @@ pnpm dev:mock
 * PATH repair is an idempotent CodexHub-managed block in `.bashrc` or `.zshrc`.
 * Official installer is tried first; mirror and local-upload fallbacks are logged.
 
-### Apply A Profile
+### Apply a Profile
 
 * Profiles render to TOML.
 * API keys are configured as environment variable references.
@@ -129,9 +162,9 @@ pnpm dev:mock
 * Target checks use cached inventory, so run detection before installing to a new host.
 * Uninstall moves local and remote skill directories to backups instead of hard-deleting them.
 
-## Developer Setup
+## 🛠️ Developer Setup
 
-Common commands:
+Common checks:
 
 ```powershell
 pnpm smoke
@@ -144,35 +177,16 @@ pnpm build:tauri
 
 When the system `node` is not on `PATH`, prepend the bundled Codex runtime Node/pnpm paths before running the same commands.
 
-## Release Checklist
-
-Run the automated release checks:
-
-```powershell
-pnpm smoke
-pnpm smoke:mock
-pnpm typecheck
-cargo test --manifest-path src-tauri/Cargo.toml
-pnpm build:web
-pnpm build:tauri
-pnpm audit:public
-pnpm release:portable
-powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\check-release-exe.ps1
-git diff --check
-```
-
-Then follow the live SSH checklist in [docs/release-checklist.md](docs/release-checklist.md). Live SSH acceptance requires a real host supplied by the user; mock and static checks do not prove a specific remote machine.
-
-## Known Limitations
+## ⚠️ Known Limitations
 
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.
 * Full install/update depends on remote shell, `scp`, `tar`, and network or local-upload fallback behavior.
-* Skill path support follows `\~/.codex/skills` and `\~/.codex/superpowers/skills`; project-level path drift remains a later capability.
+* Skill path support follows `~/.codex/skills` and `~/.codex/superpowers/skills`; project-level path drift remains a later capability.
 
 See [docs/known-limitations.md](docs/known-limitations.md).
 
-## License
+## 📄 License
 
 MIT. See [LICENSE](LICENSE).
