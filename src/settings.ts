@@ -1,9 +1,14 @@
-﻿export type ThemeChoice = "system" | "light" | "dark";
+import { getPlatform, isMacOS } from "./platform";
+import type { RuntimePlatform } from "./platform";
+
+export type ThemeChoice = "system" | "light" | "dark";
 export type FontPreset = "english" | "zh-cn";
+export type PlatformAppearance = "auto" | "windows" | "macos";
 
 export type AppSettings = {
   theme: ThemeChoice;
   fontPreset: FontPreset;
+  platformAppearance: PlatformAppearance;
   setupGuideDismissed: boolean;
 };
 
@@ -18,26 +23,30 @@ export const settingsStorageKey = "codexhub.settings.v1";
 export const defaultSettings: AppSettings = {
   theme: "system",
   fontPreset: "english",
+  platformAppearance: "auto",
   setupGuideDismissed: false
 };
 
-const uiFont = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif';
-const monoFont = '"Cascadia Mono", "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace';
+const windowsUiFont = '"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif';
+const windowsMonoFont = '"Cascadia Mono", "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace';
+const macosUiFont = 'system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Helvetica Neue", sans-serif';
+const macosMonoFont = '"SF Mono", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace';
 
 export const fontPresets: Record<FontPreset, FontPresetDefinition> = {
   english: {
     label: "English",
-    fontUi: uiFont,
-    fontMono: monoFont
+    fontUi: windowsUiFont,
+    fontMono: windowsMonoFont
   },
   "zh-cn": {
     label: "简体中文",
-    fontUi: uiFont,
-    fontMono: monoFont
+    fontUi: windowsUiFont,
+    fontMono: windowsMonoFont
   }
 };
 
 const themeValues: ThemeChoice[] = ["system", "light", "dark"];
+const platformAppearanceValues: PlatformAppearance[] = ["auto", "windows", "macos"];
 
 function normalizeFontPreset(value: unknown): FontPreset {
   return value === "zh-cn" ? "zh-cn" : "english";
@@ -50,6 +59,9 @@ export function normalizeSettings(value: unknown): AppSettings {
   return {
     theme: themeValues.includes(candidate.theme as ThemeChoice) ? (candidate.theme as ThemeChoice) : defaultSettings.theme,
     fontPreset: normalizeFontPreset(candidate.fontPreset),
+    platformAppearance: platformAppearanceValues.includes(candidate.platformAppearance as PlatformAppearance)
+      ? (candidate.platformAppearance as PlatformAppearance)
+      : defaultSettings.platformAppearance,
     setupGuideDismissed: candidate.setupGuideDismissed === true
   };
 }
@@ -81,16 +93,29 @@ export function applyThemeChoice(theme: ThemeChoice) {
   root.dataset.theme = theme;
 }
 
-export function applyFontPreset(fontPreset: FontPreset) {
-  const preset = fontPresets[fontPreset] ?? fontPresets.english;
+export function resolvePlatformAppearance(platformAppearance: PlatformAppearance): RuntimePlatform {
+  if (platformAppearance === "windows" || platformAppearance === "macos") return platformAppearance;
+  const platform = getPlatform();
+  return isMacOS(platform) ? "macos" : "windows";
+}
+
+export function applyPlatformAppearance(platformAppearance: PlatformAppearance) {
   const root = document.documentElement;
-  root.style.setProperty("--font-ui", preset.fontUi);
-  root.style.setProperty("--font-mono", preset.fontMono);
+  root.dataset.platform = resolvePlatformAppearance(platformAppearance);
+}
+
+export function applyFontPreset(fontPreset: FontPreset, platformAppearance: PlatformAppearance = "auto") {
+  const preset = fontPresets[fontPreset] ?? fontPresets.english;
+  const effectivePlatform = resolvePlatformAppearance(platformAppearance);
+  const root = document.documentElement;
+  root.style.setProperty("--font-ui", effectivePlatform === "macos" ? macosUiFont : preset.fontUi);
+  root.style.setProperty("--font-mono", effectivePlatform === "macos" ? macosMonoFont : preset.fontMono);
   root.setAttribute("lang", fontPreset === "zh-cn" ? "zh-CN" : "en");
 }
 
 export function applyAppSettings(settings: AppSettings) {
   const normalized = normalizeSettings(settings);
   applyThemeChoice(normalized.theme);
-  applyFontPreset(normalized.fontPreset);
+  applyPlatformAppearance(normalized.platformAppearance);
+  applyFontPreset(normalized.fontPreset, normalized.platformAppearance);
 }

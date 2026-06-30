@@ -1,3 +1,4 @@
+mod platform;
 mod ssh;
 
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone};
@@ -629,6 +630,17 @@ struct LatestCodexVersion {
     error: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalCodexStatus {
+    platform: platform::RuntimePlatform,
+    detected: bool,
+    path: Option<String>,
+    version: Option<String>,
+    search_paths: Vec<String>,
+    install_hint: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum RemoteCodexAction {
@@ -700,10 +712,20 @@ enum FontPreset {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum PlatformAppearance {
+    Auto,
+    Windows,
+    Macos,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     theme: ThemeChoice,
     font_preset: FontPreset,
+    #[serde(default = "default_platform_appearance")]
+    platform_appearance: PlatformAppearance,
     #[serde(default)]
     setup_guide_dismissed: bool,
 }
@@ -713,6 +735,7 @@ impl Default for AppSettings {
         Self {
             theme: ThemeChoice::System,
             font_preset: FontPreset::English,
+            platform_appearance: PlatformAppearance::Auto,
             setup_guide_dismissed: false,
         }
     }
@@ -1663,6 +1686,11 @@ async fn refresh_latest_codex_version(
         run_refresh_latest_codex_version(&app, force.unwrap_or(false), timeout_ms)
     })
     .await
+}
+
+#[tauri::command]
+async fn get_local_codex_status() -> Result<LocalCodexStatus, String> {
+    run_blocking_command("get_local_codex_status", run_get_local_codex_status).await
 }
 
 #[tauri::command]
@@ -3980,6 +4008,49 @@ fn run_refresh_latest_codex_version(
         }
     }
     latest
+}
+
+fn run_get_local_codex_status() -> LocalCodexStatus {
+    let platform = platform::get_platform();
+    let mut search_paths = platform::codex_binary_candidates_for_current_home()
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    search_paths.push(match platform {
+        platform::RuntimePlatform::Windows => "where codex".into(),
+        platform::RuntimePlatform::MacOS | platform::RuntimePlatform::Linux => {
+            "which codex".into()
+        }
+    });
+    let detected_path = platform::detect_codex_binary_path();
+    let version = detected_path
+        .as_ref()
+        .and_then(|path| platform::run_version_command(path));
+
+    LocalCodexStatus {
+        platform,
+        detected: detected_path.is_some(),
+        path: detected_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        version,
+        search_paths,
+        install_hint: local_codex_install_hint(platform),
+    }
+}
+
+fn local_codex_install_hint(platform: platform::RuntimePlatform) -> String {
+    match platform {
+        platform::RuntimePlatform::MacOS => {
+            "Install Codex CLI with the official OpenAI/Codex installer, then ensure /opt/homebrew/bin, /usr/local/bin, or ~/.local/bin is on PATH.".into()
+        }
+        platform::RuntimePlatform::Windows => {
+            "Install or update Codex CLI from the official OpenAI/Codex installer, then refresh this status.".into()
+        }
+        platform::RuntimePlatform::Linux => {
+            "Install Codex CLI with the official OpenAI/Codex installer or a supported package manager, then refresh this status.".into()
+        }
+    }
 }
 
 fn latest_codex_result_from_fetch(
@@ -6551,6 +6622,7 @@ pub fn run() {
             remote_probe_codex,
             remote_manage_codex,
             refresh_latest_codex_version,
+            get_local_codex_status,
             list_profiles,
             create_profile,
             update_profile,
@@ -10170,6 +10242,10 @@ fn date_label() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_platform_appearance() -> PlatformAppearance {
+    PlatformAppearance::Auto
 }
 
 fn home_dir() -> Option<PathBuf> {

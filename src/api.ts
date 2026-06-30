@@ -9,6 +9,7 @@ import type {
   HostDraft,
   HostPatch,
   LatestCodexVersion,
+  LocalCodexStatus,
   CcSwitchDetection,
   Profile,
   ProfileApiKeyResult,
@@ -39,6 +40,15 @@ import type {
   SshStatus,
   TaskRun
 } from "./models";
+import {
+  detectCodexBinaryPath,
+  getCodexBinaryCandidates,
+  getCodexSkillsPath,
+  getDefaultSshKeyPath,
+  getSshConfigPath,
+  getSshDir,
+  getPlatform
+} from "./platform";
 import type { AppSettings } from "./settings";
 import { loadLocalSettings, normalizeSettings, saveLocalSettings } from "./settings";
 
@@ -57,6 +67,21 @@ export const fallbackLatestCodexVersion: LatestCodexVersion = {
   error: null
 };
 
+export function fallbackLocalCodexStatus(): LocalCodexStatus {
+  const platform = getPlatform();
+  return {
+    platform,
+    detected: false,
+    path: null,
+    version: null,
+    searchPaths: getCodexBinaryCandidates({ platform }),
+    installHint:
+      platform === "macos"
+        ? "Install Codex CLI with the official OpenAI/Codex installer, then ensure /opt/homebrew/bin, /usr/local/bin, or ~/.local/bin is on PATH."
+        : `Expected Codex CLI near ${detectCodexBinaryPath({ platform })}; install it with the official OpenAI/Codex installer, then refresh.`
+  };
+}
+
 export const fallbackProfiles: Profile[] = [];
 
 export const fallbackSkillPacks: SkillPack[] = [];
@@ -69,28 +94,34 @@ const fallbackConnection: ConnectionTest = {
   message: "Mock SSH handshake completed."
 };
 
-export const fallbackSshStatus: SshStatus = {
-  sshDir: "%USERPROFILE%\\.ssh",
-  configPath: "%USERPROFILE%\\.ssh\\config",
-  sshKeygenAvailable: false,
-  preferredIdentityFile: "%USERPROFILE%\\.ssh\\id_ed25519",
-  ed25519: {
-    keyType: "ed25519",
-    privatePath: "%USERPROFILE%\\.ssh\\id_ed25519",
-    publicPath: "%USERPROFILE%\\.ssh\\id_ed25519.pub",
-    privateExists: false,
-    publicExists: false,
-    publicKey: null
-  },
-  rsa: {
-    keyType: "rsa",
-    privatePath: "%USERPROFILE%\\.ssh\\id_rsa",
-    publicPath: "%USERPROFILE%\\.ssh\\id_rsa.pub",
-    privateExists: false,
-    publicExists: false,
-    publicKey: null
-  }
-};
+export function fallbackSshStatus(): SshStatus {
+  const platform = getPlatform();
+  const sshDir = getSshDir({ platform });
+  const ed25519Path = getDefaultSshKeyPath({ platform });
+  const rsaPath = platform === "windows" ? `${sshDir}\\id_rsa` : `${sshDir}/id_rsa`;
+  return {
+    sshDir,
+    configPath: getSshConfigPath({ platform }),
+    sshKeygenAvailable: false,
+    preferredIdentityFile: ed25519Path,
+    ed25519: {
+      keyType: "ed25519",
+      privatePath: ed25519Path,
+      publicPath: `${ed25519Path}.pub`,
+      privateExists: false,
+      publicExists: false,
+      publicKey: null
+    },
+    rsa: {
+      keyType: "rsa",
+      privatePath: rsaPath,
+      publicPath: `${rsaPath}.pub`,
+      privateExists: false,
+      publicExists: false,
+      publicKey: null
+    }
+  };
+}
 
 export const fallbackSshConfigHosts: SshConfigHost[] = [];
 
@@ -128,10 +159,16 @@ let mockSkillPacks = clone(fallbackSkillPacks);
 let mockTasks = clone(fallbackTasks);
 let mockSkillInventoryStatus: SkillInventoryStatus = {
   firstHostScanCompleted: false,
-  localSkillRoot: "%USERPROFILE%\\.codex\\skills",
+  localSkillRoot: getCodexSkillsPath({ platform: getPlatform() }),
   localSkills: [],
   hostInventories: []
 };
+
+function localSkillPath(skillId: string) {
+  const platform = getPlatform();
+  const root = getCodexSkillsPath({ platform });
+  return platform === "windows" ? `${root}\\${skillId}` : `${root}/${skillId}`;
+}
 
 function mockTaskRun(hostId: string, hostName: string, action: string, summary: string, ok = true, command?: string): TaskRun {
   const taskId = `mock-task-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -527,7 +564,7 @@ function mockSshBootstrapHost(draft: SshHostDraft): SshBootstrapResult {
     writeResult: {
       changed: true,
       action: "added",
-      configPath: "%USERPROFILE%\\.ssh\\config",
+      configPath: fallbackSshStatus().configPath,
       backupPath: null,
       host: { ...draft, managed: true, source: "managed" },
       message: `Mock saved Host ${draft.alias}.`
@@ -808,7 +845,7 @@ function mockSkillTask(hostAlias: string, action: string, summary: string, ok = 
 }
 
 function mockDetectInstalledSkills(includeHosts: boolean): SkillDetectionResult {
-  const detected = mockSkillPacks[0] ?? mockImportSkill("%USERPROFILE%\\.codex\\skills\\example-skill").imported[0];
+  const detected = mockSkillPacks[0] ?? mockImportSkill(localSkillPath("example-skill")).imported[0];
   mockSkillPacks = mockSkillPacks.map((skill) =>
     skill.id === detected.id
       ? {
@@ -819,7 +856,7 @@ function mockDetectInstalledSkills(includeHosts: boolean): SkillDetectionResult 
               targetType: "local",
               label: "local",
               hostAlias: null,
-              path: `%USERPROFILE%\\.codex\\skills\\${skill.id}`,
+              path: localSkillPath(skill.id),
               detectedAt: nowStamp(),
               hasSkillMd: true
             }
@@ -834,7 +871,7 @@ function mockDetectInstalledSkills(includeHosts: boolean): SkillDetectionResult 
       .filter((skill) => skill.applications.some((application) => application.targetType === "local"))
       .map((skill) => ({
         name: skill.id,
-        path: `%USERPROFILE%\\.codex\\skills\\${skill.id}`,
+        path: localSkillPath(skill.id),
         hasSkillMd: true,
         status: "valid"
       }))
@@ -858,7 +895,7 @@ function mockGetSkillTargets(skillId: string): SkillTargetsResult {
         targetType: "local",
         label: "local",
         hostAlias: null,
-        path: `%USERPROFILE%\\.codex\\skills\\${skill?.id ?? skillId}`,
+        path: localSkillPath(skill?.id ?? skillId),
         installed: localInstalled,
         canInstall: !localInstalled,
         canUninstall: localInstalled,
@@ -892,7 +929,7 @@ function mockSkillTargetOperation(skillId: string, targets: SkillTargetRequest[]
         targetType: target.targetType,
         label: target.targetType === "local" ? "local" : target.hostAlias ?? "unknown",
         hostAlias: target.hostAlias ?? null,
-        path: target.targetType === "local" ? `%USERPROFILE%\\.codex\\skills\\${skill.id}` : `~/.codex/skills/${skill.id}`,
+        path: target.targetType === "local" ? localSkillPath(skill.id) : `~/.codex/skills/${skill.id}`,
         detectedAt: nowStamp(),
         hasSkillMd: true
       }));
@@ -924,7 +961,7 @@ function mockSkillTargetOperation(skillId: string, targets: SkillTargetRequest[]
             ...mockSkillInventoryStatus.localSkills.filter((item) => item.name !== skill.id),
             {
               name: skill.id,
-              path: `%USERPROFILE%\\.codex\\skills\\${skill.id}`,
+              path: localSkillPath(skill.id),
               hasSkillMd: true,
               status: "valid"
             }
@@ -1008,7 +1045,7 @@ export const api = {
       return nextSettings;
     });
   },
-  getSshStatus: () => safeInvoke<SshStatus>("get_ssh_status", undefined, () => clone(fallbackSshStatus)),
+  getSshStatus: () => safeInvoke<SshStatus>("get_ssh_status", undefined, () => fallbackSshStatus()),
   generateEd25519Key: () => requiredInvoke<SshKeyGenerationResult>("generate_ed25519_key"),
   listSshConfigHosts: () => safeInvoke<SshConfigHost[]>("list_ssh_config_hosts", undefined, () => clone(fallbackSshConfigHosts)),
   upsertSshConfigHost: (draft: SshHostDraft) => requiredInvoke<SshConfigWriteResult>("upsert_ssh_config_host", { draft }),
@@ -1028,7 +1065,7 @@ export const api = {
     return {
       changed: true,
       action: "deleted",
-      configPath: "%USERPROFILE%\\.ssh\\config",
+      configPath: fallbackSshStatus().configPath,
       backupPath: null,
       host: null,
       message: `Deleted Host ${alias} from the mock SSH config inventory.`,
@@ -1042,6 +1079,7 @@ export const api = {
       ...fallbackLatestCodexVersion,
       checkedAt: new Date().toISOString()
     })),
+  getLocalCodexStatus: () => safeInvoke<LocalCodexStatus>("get_local_codex_status", undefined, fallbackLocalCodexStatus),
   addHost: (draft: HostDraft) =>
     safeInvoke<Host>("add_host", { draft }, () => ({
       id: `mock-host-${Date.now()}`,
@@ -1118,7 +1156,7 @@ export const api = {
         hostName: hostAlias,
         port: 22,
         user: "codex",
-        identityFile: "%USERPROFILE%\\.ssh\\id_ed25519"
+        identityFile: fallbackSshStatus().preferredIdentityFile
       })
     ),
   remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>

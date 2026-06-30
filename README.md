@@ -3,13 +3,15 @@
 
   <h1>CodexHub</h1>
 
-  <p><strong>Windows desktop control plane for Codex App SSH workspaces.</strong></p>
+  <p><strong>Windows-first desktop control plane for Codex App SSH workspaces, with macOS preview support in progress.</strong></p>
   <p>Prepare Linux hosts, install or update remote Codex, apply profiles, sync skills, and inspect redacted task logs without writing to Codex App private state.</p>
 
   <p>
     <a href="docs/zh-CN/README.md">简体中文</a>
     ·
     <a href="https://github.com/Jurio0304/CodexHub/releases/latest">Download</a>
+    ·
+    <a href="docs/macos-support.md">macOS Preview</a>
     ·
     <a href="docs/known-limitations.md">Known Limitations</a>
     ·
@@ -19,7 +21,7 @@
   <p>
     <img alt="Release" src="https://img.shields.io/github/v/release/Jurio0304/CodexHub?label=release" />
     <img alt="License" src="https://img.shields.io/github/license/Jurio0304/CodexHub" />
-    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4" />
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20preview-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-MSVC-B7410E" />
@@ -28,7 +30,7 @@
 
 ## 🧭 At a Glance
 
-CodexHub is a small desktop hub for one practical workflow: make a Windows machine ready to work with Codex App across SSH-connected Linux hosts.
+CodexHub is a Windows-first desktop control plane for one practical workflow: make a Windows machine ready to work with Codex App across SSH-connected Linux hosts. The current public release is Windows; macOS support is being developed as a preview branch and requires real Mac testing before release.
 
 * Manage local OpenSSH key state and CodexHub-owned SSH aliases.
 * Bootstrap new Linux hosts with a one-time password, then switch to key login.
@@ -49,6 +51,7 @@ CodexHub is a small desktop hub for one practical workflow: make a Windows machi
 ## ✨ Core Features
 
 * Reads local Windows OpenSSH status and public keys.
+* Uses a platform adapter for local SSH and Codex paths on Windows and macOS.
 * Generates a non-overwriting Ed25519 key when no suitable key exists.
 * Imports safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode.
 * Adds, updates, or deletes only CodexHub-managed SSH config blocks with timestamped backups.
@@ -76,7 +79,7 @@ More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-l
 
 ## ✅ Requirements
 
-For the full Windows desktop app:
+For the released Windows desktop app:
 
 1. Windows 10/11.
 2. Microsoft WebView2 Runtime.
@@ -90,12 +93,20 @@ For development from source:
 
 Mock mode only needs Node.js.
 
+For macOS preview testing:
+
+1. A real Mac is required for GUI, Gatekeeper, `.app`, and `.dmg` validation.
+2. OpenSSH client tools and `ssh-keygen`.
+3. Codex CLI installed through official OpenAI/Codex guidance.
+4. Download unsigned preview artifacts from GitHub Actions, not GitHub Releases.
+
 ## 🚀 Install
 
-For everyday use, download the latest Windows build from [GitHub Releases](https://github.com/Jurio0304/CodexHub/releases/latest).
+For everyday use, download the latest Windows build from [GitHub Releases](https://github.com/Jurio0304/CodexHub/releases/latest). GitHub Releases should host binaries for formal releases; GitHub Actions artifacts are preview-only test packages.
 
 * Installer: download and run the Windows x64 setup `.exe`.
 * Portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
+* Maintainers can create the Windows portable package with `pnpm release:portable`.
 
 For source development:
 
@@ -179,6 +190,7 @@ When the system `node` is not on `PATH`, prepend the bundled Codex runtime Node/
 
 ## ⚠️ Known Limitations
 
+* macOS support is preview-only until the real Mac checklist in [docs/macos-support.md](docs/macos-support.md) passes.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.

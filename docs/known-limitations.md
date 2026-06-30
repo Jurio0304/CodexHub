@@ -1,6 +1,18 @@
 # CodexHub Known Limitations
 
-Date: 2026-06-26
+Date: 2026-07-01
+
+## macOS Preview
+
+macOS support is under development on `feature/macos-support` and is not a formal release. Windows remains the validated release platform until the preview artifact is tested on a real Mac.
+
+The following items require real macOS test:
+
+- Launching the `.app` and `.dmg`.
+- Gatekeeper behavior for unsigned/ad-hoc preview artifacts.
+- `~/.ssh/config` writes and backups on a real Mac account.
+- Local Codex CLI detection through Homebrew, `/usr/local/bin`, `~/.local/bin`, and `which codex`.
+- Codex App Settings / Connections / SSH handoff.
 
 ## Codex App Integration
 
@@ -10,6 +22,8 @@ No public stable API was found for either of these actions:
 - Forcing Codex App to reconnect to an SSH remote.
 
 MVP mitigation: CodexHub provides a clear UI fallback with verified SSH aliases, copyable commands, and manual Codex App settings steps. CodexHub must not write Codex App private state.
+
+If Codex App supports a public documented SSH deep link on the tester's machine, CodexHub may present it as a convenience only after writing `~/.ssh/config`. It must not depend on undocumented Codex App files, databases, sockets, or private IPC.
 
 ## Remote Host Requirements
 
