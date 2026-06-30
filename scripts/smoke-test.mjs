@@ -180,8 +180,8 @@ for (const command of [
   "delete_profile",
   "duplicate_profile",
   "import_profiles",
-  "export_profiles",
   "set_profile_api_key",
+  "get_profile_api_key",
   "delete_profile_api_key",
   "preview_profile_apply",
   "apply_profile",
@@ -201,6 +201,7 @@ for (const command of [
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
 }
+if (rustLib.includes("export_profiles")) fail("Profiles export command should be removed");
 for (const removedCommand of [
   removed("search", "_online", "_skills"),
   removed("clone", "_skill", "_repo"),
@@ -289,7 +290,23 @@ for (const token of ["setup_guide_dismissed", "#[serde(default)]"]) {
 for (const token of ["CREATE_NO_WINDOW", "process_command", "creation_flags(CREATE_NO_WINDOW)"]) {
   if (!sshRs.includes(token)) fail(`missing hidden Windows child-process token: ${token}`);
 }
-for (const token of ["parse_cc_switch_sqlite_profiles", "provider_endpoints", "cc-switch.db", "currentProviderCodex", "credential_stored: false"]) {
+for (const token of [
+  "parse_cc_switch_sqlite_profiles",
+  "provider_endpoints",
+  "cc-switch.db",
+  "currentProviderCodex",
+  "credential_stored: false",
+  "CcSwitchProfileRecord",
+  "#[serde(skip_serializing)]",
+  "cc_switch_api_key_from_value",
+  "cc_switch_profile_import_key",
+  "cc_switch_auth_key_may_hold_api_key",
+  "cc_switch_profile_base_url_key",
+  "credential_by_key",
+  "store_profile_api_key_local",
+  "migrate_cc_switch_api_key_for_profile",
+  "is_missing_credential_error"
+]) {
   if (!rustLib.includes(token)) fail(`missing cc-switch adapter token: ${token}`);
 }
 for (const token of ["profiles: Vec<Profile>", "hosts: Vec<Host>", "sync_profile_host_links", "sync_profile_host_ids", "clear_profile_host_links", "reconcile_hosts_with_profile_links", "RemoteApiConfigMatch"]) {
@@ -486,9 +503,8 @@ for (const token of [
   "api.deleteProfile",
   "api.duplicateProfile",
   "api.importProfiles",
-  "api.exportProfiles",
   "api.setProfileApiKey",
-  "api.deleteProfileApiKey",
+  "api.getProfileApiKey",
   "api.previewProfileApply",
   "api.applyProfile",
   "api.detectCcSwitchProfiles",
@@ -497,6 +513,21 @@ for (const token of [
   "credentialStored"
 ]) {
   if (!app.includes(token)) fail(`missing Profiles UI/API token: ${token}`);
+}
+for (const token of ["api.exportProfiles", "copy.profiles.export"]) {
+  if (app.includes(token)) fail(`Profiles export UI/API token should be removed: ${token}`);
+}
+for (const token of ["Store key", "Delete key", "存储 key", "删除 key", "未存储凭据", "No stored credential", "api.deleteProfileApiKey"]) {
+  if (app.includes(token)) fail(`removed credential editor token should not appear in App UI: ${token}`);
+}
+for (const token of ["SimpleDeleteConfirmModal", "deleteHostAlias", "deleteProfileId", "credentialVisible", "CredentialVisibilityIcon", "viewBox=\"0 0 24 24\"", "showApiKey", "hideApiKey", "onGetProfileApiKey", "handleDetectLocalSshHosts"]) {
+  if (!app.includes(token)) fail(`missing delete confirmation or API key editor token: ${token}`);
+}
+for (const token of ["const nextProfiles = await api.listProfiles();", "passwordInputWrap profileCredentialInputWrap"]) {
+  if (!app.includes(token)) fail(`missing profile credential refresh/visibility token: ${token}`);
+}
+for (const token of ["disabled={!password}", "disabled={credentialLoading || (!canLoadStoredCredential && !credentialInput.trim())"]) {
+  if (app.includes(token)) fail(`credential visibility button must stay visible and enabled: ${token}`);
 }
 for (const token of [
   'library: "Local config"',
@@ -522,13 +553,14 @@ for (const token of [
   'ccSwitchChecking: "Checking cc-switch..."',
   'ccSwitchChecking: "正在检测 cc-switch..."',
   'importDetected: "导入检测配置"',
-  'apiKeyEnvVar: "API key"',
+  'apiKeyEnvVar: "Env key"',
+  'apiKeyEnvVar: "环境变量"',
+  "apiKeyStoredPlaceholder",
   "Credential stored",
   "Third-party import",
   "第三方导入",
   "Local storage",
   "本地存储",
-  "Store key",
   "Rendered TOML",
   "backup"
 ]) {
@@ -641,14 +673,30 @@ if (app.includes("脳")) fail("Modal close buttons must not contain mojibake tex
 const profileRowActions = [
   ["edit", "copy.profiles.edit"],
   ["duplicate", "copy.profiles.duplicate"],
-  ["export", "copy.profiles.export"],
   ["delete", "copy.profiles.delete"]
 ];
 for (const [action, token] of profileRowActions) {
   if (!app.includes(token)) fail(`missing profile row ${action} action token: ${token}`);
 }
-if (!app.includes("copy.profiles.newProfile") && !app.includes("copy.profiles.create")) {
-  fail("Profiles library actions should include create/new profile");
+if (!app.includes('activeSection === "profiles"') || !app.includes("copy.profiles.newApiConfig") || !app.includes("newProfileRequest")) {
+  fail("Profiles page header should include a top-level New API config action");
+}
+if (!app.includes("lastNewProfileRequestRef") || !app.includes("newProfileRequest === lastNewProfileRequestRef.current")) {
+  fail("Profiles new-profile request should not replay when entering the Profiles page");
+}
+for (const token of [
+  'namePlaceholder: "Custom config name"',
+  'namePlaceholder: "自定义配置名"',
+  "modelPlaceholder: DEFAULT_PROFILE_MODEL",
+  "providerPlaceholder: DEFAULT_PROFILE_PROVIDER",
+  "baseUrlPlaceholder: DEFAULT_PROFILE_BASE_URL",
+  "placeholder={copy.profiles.namePlaceholder}",
+  "placeholder={copy.profiles.modelPlaceholder}",
+  "placeholder={copy.profiles.providerPlaceholder}",
+  "placeholder={copy.profiles.baseUrlPlaceholder}",
+  "profileDraftWithCreateDefaults"
+]) {
+  if (!app.includes(token)) fail(`missing Profiles new-profile placeholder token: ${token}`);
 }
 for (const [action, token] of [
   ["import", "copy.profiles.import"],
@@ -739,8 +787,8 @@ for (const token of [
   "deleteProfile",
   "duplicateProfile",
   "importProfiles",
-  "exportProfiles",
   "setProfileApiKey",
+  "getProfileApiKey",
   "deleteProfileApiKey",
   "previewProfileApply",
   "applyProfile",
@@ -754,6 +802,7 @@ for (const token of [
 ]) {
   if (!api.includes(token)) fail(`missing Profile/API config token: ${token}`);
 }
+if (api.includes("exportProfiles")) fail("Profiles export API should be removed");
 for (const token of [
   "listSkillPacks",
   "list_local_skills",
@@ -803,8 +852,11 @@ const models = read("src/models.ts");
 for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "RemoteCodexMaintenanceResult", "check-version", "password_login", "verify_alias_login"]) {
   if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
-for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
+for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileApiKeyResult", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
   if (!models.includes(token)) fail(`missing Profile/API model token: ${token}`);
+}
+for (const token of ["SshConfigDeleteResult", "DeleteOperationResult", "task: TaskRun"]) {
+  if (!models.includes(token)) fail(`missing delete operation model token: ${token}`);
 }
 for (const token of ["LatestCodexVersion", "version: string | null", "checkedAt: string | null", 'source: "npm" | string']) {
   if (!models.includes(token)) fail(`missing latest Codex version model token: ${token}`);
@@ -902,6 +954,15 @@ for (const token of ["sshHostsTable", "table-layout: auto", "flex-wrap: nowrap",
 }
 for (const token of ["profilesStack", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileTable", "profileRowActions", "profileApplyPanel", "profileApplyTable", "profileHostSelectCell", "profileHostSelectModal", "profileHostSelectList", "profileModelCombobox", "profileModelOptions", "profileModelOption", "profileFastModeSegment", "profileFastModeOption"]) {
   if (!styles.includes(token)) fail(`missing compact Profiles style token: ${token}`);
+}
+for (const token of ["simpleDeleteModal", "credentialVisibilityButton", "credentialEyeIcon", ".sshHostModal.ProfileEditModal .fieldGroup", ".sshHostModal:not(.ProfileEditModal) .fieldGroup input", "::-ms-reveal", ".passwordInputWrap .credentialVisibilityButton"]) {
+  if (!styles.includes(token)) fail(`missing delete confirmation or credential editor style token: ${token}`);
+}
+for (const token of [".credentialEyeIcon::before", ".credentialEyeIcon::after"]) {
+  if (styles.includes(token)) fail(`credential visibility icon must be real SVG, not CSS-drawn pseudo icon: ${token}`);
+}
+for (const token of ["min-width: 0", ".skillsTable td:nth-child(5)", ".skillRowActions", "flex-wrap: wrap"]) {
+  if (!styles.includes(token)) fail(`missing responsive Skills table style token: ${token}`);
 }
 for (const token of [
   "skillsStack",

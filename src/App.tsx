@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, fallbackHealth } from "./api";
 import type {
+  DeleteOperationResult,
   Health,
   Host,
   HostStatus,
   LatestCodexVersion,
   Profile,
+  ProfileApiKeyResult,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
   ProfileDraft,
@@ -30,6 +32,7 @@ import type {
   SshBootstrapResult,
   SshBootstrapStep,
   SshBootstrapStepStatus,
+  SshConfigDeleteResult,
   SshConfigHost,
   SshHostDraft,
   SshKeyInfo,
@@ -59,6 +62,10 @@ type CodexOperationModalState = {
 
 const CODEX_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2", "gpt-5-codex"];
 const REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"];
+const DEFAULT_PROFILE_MODEL = "gpt-5-codex";
+const DEFAULT_PROFILE_PROVIDER = "openai";
+const DEFAULT_PROFILE_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_PROFILE_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const appLogoUrl = new URL("../figs/app-logo.png", import.meta.url).href;
 
 const uiCopy = {
@@ -195,8 +202,10 @@ const uiCopy = {
       noManagedHostsBody: "Click Add Server in the Hosts header to connect and create the first SSH config entry.",
       detectedSshHosts: "Host list",
       detectedSshHostsBody: "CodexHub lists local SSH config HostAlias entries for unified management.",
+      detect: "Detect",
       refreshDetected: "Test all",
       detectLocalConfig: "Detect local config",
+      detectedLocalHosts: (count: number) => `${count} local SSH Host entr${count === 1 ? "y" : "ies"} detected.`,
       testingAll: "Testing all...",
       testedAll: "All hosts tested.",
       updateOutdatedCodex: "Update outdated",
@@ -253,10 +262,10 @@ const uiCopy = {
       preview: "Preview",
       applyConfig: "Apply configuration",
       newProfile: "New",
+      newApiConfig: "New API config",
       duplicate: "Duplicate",
       delete: "Delete",
       import: "Import",
-      export: "Export",
       actions: "Actions",
       applyColumn: "Apply",
       selectHosts: "Select hosts",
@@ -270,19 +279,25 @@ const uiCopy = {
       saving: "Saving...",
       create: "Create",
       name: "Name",
+      namePlaceholder: "Custom config name",
       description: "Description",
       model: "Model",
+      modelPlaceholder: DEFAULT_PROFILE_MODEL,
       provider: "Provider",
+      providerPlaceholder: DEFAULT_PROFILE_PROVIDER,
       baseUrl: "Base URL",
-      apiKeyEnvVar: "API key",
+      baseUrlPlaceholder: DEFAULT_PROFILE_BASE_URL,
+      apiKeyEnvVar: "Env key",
       apiKey: "API key",
       apiKeyPlaceholder: "Paste a new key to store",
+      apiKeyStoredPlaceholder: "Saved API key",
+      apiKeyLoading: "Loading key...",
+      apiKeyMissing: "No stored key was found.",
+      showApiKey: "Show API key",
+      hideApiKey: "Hide API key",
       credentialStored: "Credential stored",
-      noCredential: "No stored credential",
       thirdPartyImport: "Third-party import",
       localStorageLabel: "Local storage",
-      storeCredential: "Store key",
-      deleteCredential: "Delete key",
       modelReasoningEffort: "Model reasoning",
       planModeReasoningEffort: "Plan reasoning",
       fastMode: "Fast mode",
@@ -306,7 +321,6 @@ const uiCopy = {
       noHostTargets: "No hosts available.",
       applySuccess: (name: string, count: number) => `${name} applied to ${count} host${count === 1 ? "" : "s"}.`,
       importReady: (count: number) => `${count} profiles imported.`,
-      exportReady: (count: number) => `${count} profiles exported.`,
       deleteConfirm: (name: string) => `Delete profile ${name}?`,
       ccSwitchFound: (count: number) => `${count} cc-switch profiles detected.`,
       ccSwitchNone: "No cc-switch profiles detected.",
@@ -351,7 +365,7 @@ const uiCopy = {
       downloadBody: "Enter a GitHub repository URL.",
       downloadAction: "Download",
       downloaded: "Download complete",
-      githubUrl: "GitHub URL",
+      githubUrl: "GitHub URL:",
       noSkills: "No local skills",
       noSkillsBody: "Use Detect, Import, or Download to populate the local skill library.",
       skill: "Skill",
@@ -436,6 +450,8 @@ const uiCopy = {
         "List remote skills": "List remote skills",
         "Preview skill install": "Preview skill install",
         "Install skill": "Install skill",
+        "Delete SSH Host": "Delete SSH Host",
+        "Delete profile": "Delete profile",
         "Delete skill": "Delete skill"
       }
     },
@@ -628,8 +644,10 @@ const uiCopy = {
       noManagedHostsBody: "点击主机页右上角“添加服务器”，连接成功后会创建第一个 SSH 配置项。",
       detectedSshHosts: "主机列表",
       detectedSshHostsBody: "CodexHub 列出本地 SSH config 中的 HostAlias，用于统一管理。",
+      detect: "检测",
       refreshDetected: "一键测试",
       detectLocalConfig: "检测本地配置",
+      detectedLocalHosts: (count: number) => `检测到 ${count} 个本地 SSH Host。`,
       testingAll: "测试中...",
       testedAll: "一键测试完成。",
       updateOutdatedCodex: "一键更新",
@@ -686,10 +704,10 @@ const uiCopy = {
       preview: "预览",
       applyConfig: "应用配置",
       newProfile: "新建",
+      newApiConfig: "新建API配置",
       duplicate: "复制",
       delete: "删除",
       import: "导入",
-      export: "导出",
       actions: "操作",
       applyColumn: "应用",
       selectHosts: "选择主机",
@@ -703,19 +721,25 @@ const uiCopy = {
       saving: "保存中...",
       create: "创建",
       name: "名称",
+      namePlaceholder: "自定义配置名",
       description: "说明",
       model: "模型",
+      modelPlaceholder: DEFAULT_PROFILE_MODEL,
       provider: "Provider",
+      providerPlaceholder: DEFAULT_PROFILE_PROVIDER,
       baseUrl: "Base URL",
-      apiKeyEnvVar: "API key",
+      baseUrlPlaceholder: DEFAULT_PROFILE_BASE_URL,
+      apiKeyEnvVar: "环境变量",
       apiKey: "API key",
       apiKeyPlaceholder: "粘贴新 key 后存储",
+      apiKeyStoredPlaceholder: "已保存 API key",
+      apiKeyLoading: "正在读取 key...",
+      apiKeyMissing: "未找到已保存的 key。",
+      showApiKey: "显示 API key",
+      hideApiKey: "隐藏 API key",
       credentialStored: "凭据已存储",
-      noCredential: "未存储凭据",
       thirdPartyImport: "第三方导入",
       localStorageLabel: "本地存储",
-      storeCredential: "存储 key",
-      deleteCredential: "删除 key",
       modelReasoningEffort: "模型推理",
       planModeReasoningEffort: "计划推理",
       fastMode: "快速模式",
@@ -739,7 +763,6 @@ const uiCopy = {
       noHostTargets: "暂无可用主机。",
       applySuccess: (name: string, count: number) => `已将 ${name} 应用到 ${count} 台主机。`,
       importReady: (count: number) => `已导入 ${count} 个配置。`,
-      exportReady: (count: number) => `已导出 ${count} 个配置。`,
       deleteConfirm: (name: string) => `删除配置 ${name}？`,
       ccSwitchFound: (count: number) => `检测到 ${count} 个 cc-switch 配置。`,
       ccSwitchNone: "未检测到 cc-switch 配置。",
@@ -784,7 +807,7 @@ const uiCopy = {
       downloadBody: "输入 GitHub 仓库 URL。",
       downloadAction: "下载",
       downloaded: "下载完成",
-      githubUrl: "GitHub URL",
+      githubUrl: "GitHub URL：",
       noSkills: "还没有本地技能",
       noSkillsBody: "使用“检测”“导入”或“下载”添加到本地技能库。",
       skill: "技能",
@@ -869,6 +892,8 @@ const uiCopy = {
         "List remote skills": "列出远端 Skills",
         "Preview skill install": "预览 Skill 安装",
         "Install skill": "安装 Skill",
+        "Delete SSH Host": "删除 SSH Host",
+        "Delete profile": "删除配置",
         "Delete skill": "删除 Skill"
       }
     },
@@ -958,6 +983,7 @@ function App() {
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
   const [hostModalOpen, setHostModalOpen] = useState(false);
+  const [newProfileRequest, setNewProfileRequest] = useState(0);
   const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("language");
@@ -1004,17 +1030,27 @@ function App() {
       api.listSshConfigHosts(),
       api.refreshDiscoveredHosts()
     ]);
-    const nextSshConfigHosts = visibleSshConfigHostsForHosts(detectedSshConfigHosts, nextHosts);
     setSshStatus(nextSshStatus);
     setSetupGuideSshConfigHosts(detectedSshConfigHosts);
-    setSshConfigHosts(nextSshConfigHosts);
+    setSshConfigHosts(detectedSshConfigHosts);
     setHosts(nextHosts);
     return {
       sshStatus: nextSshStatus,
-      sshConfigHosts: nextSshConfigHosts,
+      sshConfigHosts: detectedSshConfigHosts,
       detectedSshConfigHosts,
       hosts: nextHosts
     };
+  };
+
+  const handleDetectLocalSshHosts = async () => {
+    try {
+      const result = await importLocalSshConfig();
+      setNotice(copy.hosts.detectedLocalHosts(result.detectedSshConfigHosts.length));
+      return result;
+    } catch (error) {
+      setNotice(formatError(error));
+      throw error;
+    }
   };
 
   const refreshLatestCodex = async (force = false) => {
@@ -1173,7 +1209,9 @@ function App() {
   const handleDeleteSshConfigHost = async (alias: string) => {
     const result = await api.deleteSshConfigHost(alias);
     await refreshSshState();
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
     setNotice(result.backupPath ? `${result.message} Backup: ${result.backupPath}` : result.message);
+    return result;
   };
 
   const handleGenerateEd25519Key = async () => {
@@ -1427,10 +1465,16 @@ function App() {
 
   const handleDeleteProfile = async (id: string) => {
     const profile = profiles.find((item) => item.id === id);
-    await api.deleteProfile(id);
+    const result = await api.deleteProfile(id);
+    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+    if (!result.deleted) {
+      setNotice(result.message);
+      return result;
+    }
     setProfiles((current) => current.filter((item) => item.id !== id));
     setHosts((current) => current.map((host) => (host.profileId === id ? { ...host, profileId: null, apiConfigName: null, apiConfigSource: null } : host)));
     setNotice(profile ? `${profile.name}: ${copy.profiles.delete}` : copy.profiles.delete);
+    return result;
   };
 
   const handleDuplicateProfile = async (id: string) => {
@@ -1444,12 +1488,6 @@ function App() {
     const result = await api.importProfiles(bundle);
     setProfiles((current) => [...current, ...result.profiles]);
     setNotice(copy.profiles.importReady(result.profiles.length));
-    return result;
-  };
-
-  const handleExportProfiles = async (profileIds?: string[]) => {
-    const result = await api.exportProfiles(profileIds);
-    setNotice(copy.profiles.exportReady(result.profiles.length));
     return result;
   };
 
@@ -1562,12 +1600,21 @@ function App() {
     return profile;
   };
 
-  const handleDeleteProfileApiKey = async (profileId: string) => {
-    const profile = await api.deleteProfileApiKey(profileId);
-    replaceProfile(profile);
-    setNotice(`${profile.name}: ${copy.profiles.noCredential}`);
-    return profile;
-  };
+  const handleGetProfileApiKey = useCallback(async (profileId: string) => {
+    const result = await api.getProfileApiKey(profileId);
+    if (result.exists) {
+      setProfiles((current) => {
+        let changed = false;
+        const next = current.map((profile) => {
+          if (profile.id !== result.profileId || profile.credentialStored) return profile;
+          changed = true;
+          return { ...profile, credentialStored: true };
+        });
+        return changed ? next : current;
+      });
+    }
+    return result;
+  }, []);
 
   const handlePreviewProfileApply = (profileId: string, hostIds: string[]) => api.previewProfileApply(profileId, hostIds);
 
@@ -1655,7 +1702,8 @@ function App() {
 
   const handleImportCcSwitchProfiles = async (detection: CcSwitchDetection) => {
     const result = await api.importCcSwitchProfiles(detection);
-    setProfiles((current) => [...current, ...result.profiles]);
+    const nextProfiles = await api.listProfiles();
+    setProfiles(nextProfiles);
     setNotice(copy.profiles.importReady(result.profiles.length));
     return result;
   };
@@ -1744,6 +1792,7 @@ function App() {
             onCloseAddHost={() => setHostModalOpen(false)}
             onConnectSshHost={handleConnectSshHost}
             onDeleteSshConfigHost={handleDeleteSshConfigHost}
+            onDetectLocalSshHosts={handleDetectLocalSshHosts}
             onGenerateEd25519Key={handleGenerateEd25519Key}
             onManageCodex={handleRemoteCodexAction}
             onOpenAddHost={handleAddHost}
@@ -1760,12 +1809,12 @@ function App() {
             hosts={hosts}
             latestCodexVersion={latestCodexVersion}
             profiles={profiles}
+            newProfileRequest={newProfileRequest}
             onCreateProfile={handleCreateProfile}
             onDeleteProfile={handleDeleteProfile}
-            onDeleteProfileApiKey={handleDeleteProfileApiKey}
             onDetectCcSwitchProfiles={handleDetectCcSwitchProfiles}
             onDuplicateProfile={handleDuplicateProfile}
-            onExportProfiles={handleExportProfiles}
+            onGetProfileApiKey={handleGetProfileApiKey}
             onImportCcSwitchProfiles={handleImportCcSwitchProfiles}
             onImportProfiles={handleImportProfiles}
             onPreviewProfileApply={handlePreviewProfileApply}
@@ -1850,6 +1899,9 @@ function App() {
           <div className="topActions">
             {activeSection === "hosts" ? (
               <button className="primaryButton" type="button" onClick={handleAddHost}>{copy.common.addServer}</button>
+            ) : null}
+            {activeSection === "profiles" ? (
+              <button className="primaryButton" type="button" onClick={() => setNewProfileRequest((current) => current + 1)}>{copy.profiles.newApiConfig}</button>
             ) : null}
           </div>
         </header>
@@ -2341,6 +2393,7 @@ function HostsView({
   onCloseAddHost,
   onConnectSshHost,
   onDeleteSshConfigHost,
+  onDetectLocalSshHosts,
   onGenerateEd25519Key,
   onManageCodex,
   onOpenAddHost,
@@ -2360,7 +2413,8 @@ function HostsView({
   sshStatus: SshStatus | null;
   onCloseAddHost: () => void;
   onConnectSshHost: (draft: SshHostDraft, password: string, requestId: string, onProgress: (event: SshBootstrapProgressEvent) => void) => Promise<SshBootstrapResult>;
-  onDeleteSshConfigHost: (alias: string) => Promise<void>;
+  onDeleteSshConfigHost: (alias: string) => Promise<SshConfigDeleteResult>;
+  onDetectLocalSshHosts: () => Promise<unknown>;
   onGenerateEd25519Key: () => Promise<void>;
   onManageCodex: (id: string, action: RemoteCodexAction) => void;
   onOpenAddHost: () => void;
@@ -2376,6 +2430,9 @@ function HostsView({
   );
   const [selectedHostAlias, setSelectedHostAlias] = useState<string | null>(sshConfigHosts[0]?.alias ?? hosts[0]?.hostAlias ?? null);
   const [editingDraft, setEditingDraft] = useState<SshHostDraft | null>(null);
+  const [deleteHostAlias, setDeleteHostAlias] = useState<string | null>(null);
+  const [deleteHostBusy, setDeleteHostBusy] = useState(false);
+  const [detectHostsBusy, setDetectHostsBusy] = useState(false);
   const selectedHost =
     selectedHostAlias ? hostByAlias.get(selectedHostAlias.toLowerCase()) ?? hosts.find((host) => host.hostAlias === selectedHostAlias) ?? null : hosts[0] ?? null;
   const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
@@ -2411,10 +2468,24 @@ function HostsView({
     onOpenAddHost();
   };
 
-  const handleDelete = async (alias: string) => {
-    const confirmed = window.confirm(copy.hosts.deleteConfirm(alias));
-    if (!confirmed) return;
-    await onDeleteSshConfigHost(alias);
+  const handleDelete = async () => {
+    if (!deleteHostAlias) return;
+    setDeleteHostBusy(true);
+    try {
+      await onDeleteSshConfigHost(deleteHostAlias);
+      setDeleteHostAlias(null);
+    } finally {
+      setDeleteHostBusy(false);
+    }
+  };
+
+  const handleDetectLocalHosts = async () => {
+    setDetectHostsBusy(true);
+    try {
+      await onDetectLocalSshHosts();
+    } finally {
+      setDetectHostsBusy(false);
+    }
   };
 
   return (
@@ -2437,6 +2508,9 @@ function HostsView({
             <h2>{copy.hosts.detectedSshHosts}</h2>
           </div>
           <div className="topActions">
+            <button className="secondaryButton" disabled={detectHostsBusy || anyHostBusy} type="button" onClick={() => void handleDetectLocalHosts().catch(() => undefined)}>
+              {detectHostsBusy ? copy.setupGuide.detecting : copy.hosts.detect}
+            </button>
             <button className="secondaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
               {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
             </button>
@@ -2494,7 +2568,7 @@ function HostsView({
                             {busy === "test" ? copy.hosts.testing : copy.hosts.test}
                           </button>
                           <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); handleEdit(sshHost); }}>{copy.hosts.edit}</button>
-                          <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); void handleDelete(sshHost.alias); }}>{copy.hosts.delete}</button>
+                          <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); setDeleteHostAlias(sshHost.alias); }}>{copy.hosts.delete}</button>
                         </div>
                       </td>
                       <td className="sshHostsCodexCol">
@@ -2517,6 +2591,16 @@ function HostsView({
       </section>
 
       <HostDetailsPanel copy={copy} host={selectedHost} hosts={hosts} inventoryStatus={inventoryStatus} latestCodexVersion={latestCodexVersion} />
+      {deleteHostAlias ? (
+        <SimpleDeleteConfirmModal
+          busy={deleteHostBusy}
+          body={copy.hosts.deleteConfirm(deleteHostAlias)}
+          copy={copy}
+          title={`${copy.hosts.delete}: ${deleteHostAlias}`}
+          onClose={() => setDeleteHostAlias(null)}
+          onDelete={() => void handleDelete().catch(() => undefined)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2544,6 +2628,7 @@ function SshHostModal({
 }) {
   const [draft, setDraft] = useState<SshHostDraft>(() => initialDraft ?? emptySshHostDraft(defaultIdentityFile));
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [message, setMessage] = useState<string>(copy.hosts.formIntro);
   const [showProgress, setShowProgress] = useState(false);
@@ -2557,6 +2642,7 @@ function SshHostModal({
     const nextDraft = initialDraft ?? emptySshHostDraft(defaultIdentityFile);
     setDraft({ ...nextDraft, identityFile: nextDraft.identityFile || defaultIdentityFile });
     setPassword("");
+    setPasswordVisible(false);
     setConnecting(false);
     setMessage(copy.hosts.formIntro);
     setShowProgress(false);
@@ -2646,9 +2732,29 @@ function SshHostModal({
           </label>
           <label className="fieldGroup">
             <span>{copy.hosts.bootstrapPassword}</span>
-            <input autoComplete="new-password" disabled={connecting} type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" required />
+            <div className="passwordInputWrap">
+              <input
+                autoComplete="new-password"
+                disabled={connecting}
+                type={passwordVisible ? "text" : "password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Password"
+                required
+              />
+              <button
+                aria-label={passwordVisible ? copy.profiles.hideApiKey : copy.profiles.showApiKey}
+                aria-pressed={passwordVisible}
+                className="credentialVisibilityButton"
+                title={passwordVisible ? copy.profiles.hideApiKey : copy.profiles.showApiKey}
+                type="button"
+                onClick={() => setPasswordVisible((current) => !current)}
+              >
+                <CredentialVisibilityIcon visible={passwordVisible} />
+              </button>
+            </div>
           </label>
-          <div className="fieldGroup identityRow">
+          <div className="fieldGroup identityRow" data-has-action={!hasIdentityFile}>
             <span>IDFile</span>
             <input readOnly value={hasIdentityFile ? "id_ed25519 detected" : "id_ed25519 not detected"} />
             {!hasIdentityFile ? (
@@ -2824,12 +2930,12 @@ function ProfilesView({
   hosts,
   latestCodexVersion,
   profiles,
+  newProfileRequest,
   onCreateProfile,
   onDeleteProfile,
-  onDeleteProfileApiKey,
   onDetectCcSwitchProfiles,
   onDuplicateProfile,
-  onExportProfiles,
+  onGetProfileApiKey,
   onImportCcSwitchProfiles,
   onImportProfiles,
   onPreviewProfileApply,
@@ -2841,12 +2947,12 @@ function ProfilesView({
   hosts: Host[];
   latestCodexVersion: LatestCodexVersion | null;
   profiles: Profile[];
+  newProfileRequest: number;
   onCreateProfile: (draft: ProfileDraft) => Promise<Profile>;
-  onDeleteProfile: (id: string) => Promise<void>;
-  onDeleteProfileApiKey: (profileId: string) => Promise<Profile>;
+  onDeleteProfile: (id: string) => Promise<DeleteOperationResult>;
   onDetectCcSwitchProfiles: () => Promise<CcSwitchDetection>;
   onDuplicateProfile: (id: string) => Promise<Profile>;
-  onExportProfiles: (profileIds?: string[]) => Promise<ProfileImportExport>;
+  onGetProfileApiKey: (profileId: string) => Promise<ProfileApiKeyResult>;
   onImportCcSwitchProfiles: (detection: CcSwitchDetection) => Promise<ProfileImportExport>;
   onImportProfiles: (bundle: ProfileImportExport) => Promise<ProfileImportExport>;
   onPreviewProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyPreview>;
@@ -2863,12 +2969,15 @@ function ProfilesView({
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [hostPickerProfileId, setHostPickerProfileId] = useState<string | null>(null);
+  const [deleteProfileId, setDeleteProfileId] = useState<string | null>(null);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const lastNewProfileRequestRef = useRef(newProfileRequest);
   const [ccDetection, setCcDetection] = useState<CcSwitchDetection | null>(null);
   const [ccDetectionError, setCcDetectionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const editingProfile = editingProfileId ? profiles.find((profile) => profile.id === editingProfileId) ?? null : null;
   const hostPickerProfile = hostPickerProfileId ? profiles.find((profile) => profile.id === hostPickerProfileId) ?? null : null;
+  const deleteProfile = deleteProfileId ? profiles.find((profile) => profile.id === deleteProfileId) ?? null : null;
   const profileById = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const appliedHostCountByProfileId = useMemo(() => {
     const counts = new Map<string, Set<string>>();
@@ -2906,6 +3015,14 @@ function ProfilesView({
     setApplyResult(null);
   }, [selectedProfile?.id, selectedAppliedHostIds]);
 
+  useEffect(() => {
+    if (newProfileRequest === lastNewProfileRequestRef.current) return;
+    lastNewProfileRequestRef.current = newProfileRequest;
+    if (newProfileRequest <= 0) return;
+    setEditingProfileId(null);
+    setProfileEditorOpen(true);
+  }, [newProfileRequest]);
+
   const runBusy = async <T,>(label: string, action: () => Promise<T>) => {
     setBusy(label);
     try {
@@ -2924,8 +3041,8 @@ function ProfilesView({
   };
 
   const handleDelete = async (profile: Profile) => {
-    if (!window.confirm(copy.profiles.deleteConfirm(profile.name))) return;
     await runBusy("delete", () => onDeleteProfile(profile.id));
+    setDeleteProfileId(null);
   };
 
   const handleDuplicate = async (profile: Profile) => {
@@ -2944,11 +3061,6 @@ function ProfilesView({
     const imported = await runBusy("import", () => onImportProfiles(bundle));
     setSelectedProfileId(imported.profiles[0]?.id ?? selectedProfileId);
     if (importInputRef.current) importInputRef.current.value = "";
-  };
-
-  const handleExport = async (profile: Profile) => {
-    const exported = await runBusy("export", () => onExportProfiles([profile.id]));
-    downloadProfileExport(exported);
   };
 
   const handleDetectCcSwitch = async () => {
@@ -2974,10 +3086,6 @@ function ProfilesView({
     const updated = await runBusy("store-key", () => onSetProfileApiKey(profileId, apiKey));
     setSelectedProfileId(updated.id);
     return updated;
-  };
-
-  const handleDeleteCredential = async (profileId: string) => {
-    return runBusy("delete-key", () => onDeleteProfileApiKey(profileId));
   };
 
   const clearApplyState = () => {
@@ -3042,10 +3150,6 @@ function ProfilesView({
             <h2>{copy.profiles.library}</h2>
           </div>
           <div className="topActions profileLibraryActions">
-            <button className="secondaryButton" type="button" onClick={() => {
-              setEditingProfileId(null);
-              setProfileEditorOpen(true);
-            }}>{copy.profiles.newProfile}</button>
             <button className="secondaryButton" type="button" onClick={() => importInputRef.current?.click()}>{copy.profiles.import}</button>
             <button
               className={`${canImportCcSwitchDetection ? "primaryButton" : "secondaryButton"} ccSwitchActionButton`}
@@ -3111,8 +3215,7 @@ function ProfilesView({
                           setProfileEditorOpen(true);
                         }}>{copy.profiles.edit}</button>
                         <button className="miniButton" disabled={busy === "duplicate"} type="button" onClick={() => void handleDuplicate(profile)}>{copy.profiles.duplicate}</button>
-                        <button className="miniButton" disabled={busy === "export"} type="button" onClick={() => void handleExport(profile)}>{copy.profiles.export}</button>
-                        <button className="miniButton danger" disabled={busy === "delete"} type="button" onClick={() => void handleDelete(profile)}>{copy.profiles.delete}</button>
+                        <button className="miniButton danger" disabled={busy === "delete"} type="button" onClick={() => setDeleteProfileId(profile.id)}>{copy.profiles.delete}</button>
                       </div>
                     </td>
                     <td>
@@ -3209,7 +3312,7 @@ function ProfilesView({
         open={profileEditorOpen}
         profile={editingProfile}
         onClose={() => setProfileEditorOpen(false)}
-        onDeleteCredential={handleDeleteCredential}
+        onGetCredential={onGetProfileApiKey}
         onSave={handleSaveProfile}
         onStoreCredential={handleStoreCredential}
       />
@@ -3234,6 +3337,16 @@ function ProfilesView({
         onApplySelected={() => void handleApply()}
         onClose={() => setPreviewModalOpen(false)}
       />
+      {deleteProfile ? (
+        <SimpleDeleteConfirmModal
+          busy={busy === "delete"}
+          body={copy.profiles.deleteConfirm(deleteProfile.name)}
+          copy={copy}
+          title={`${copy.profiles.delete}: ${deleteProfile.name}`}
+          onClose={() => setDeleteProfileId(null)}
+          onDelete={() => void handleDelete(deleteProfile).catch(() => undefined)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -3339,7 +3452,7 @@ function ProfileEditModal({
   open,
   profile,
   onClose,
-  onDeleteCredential,
+  onGetCredential,
   onSave,
   onStoreCredential
 }: {
@@ -3348,18 +3461,53 @@ function ProfileEditModal({
   open: boolean;
   profile: Profile | null;
   onClose: () => void;
-  onDeleteCredential: (profileId: string) => Promise<Profile>;
+  onGetCredential: (profileId: string) => Promise<ProfileApiKeyResult>;
   onSave: (profile: Profile | null, draft: ProfileDraft) => Promise<Profile>;
   onStoreCredential: (profileId: string, apiKey: string) => Promise<Profile>;
 }) {
   const [draft, setDraft] = useState<ProfileDraft>(() => profileToDraft(profile));
   const [credentialInput, setCredentialInput] = useState("");
+  const [credentialVisible, setCredentialVisible] = useState(false);
+  const [credentialLoaded, setCredentialLoaded] = useState(false);
+  const [credentialLoading, setCredentialLoading] = useState(false);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+  const canLoadStoredCredential = Boolean(profile?.credentialStored || profile?.source === "cc-switch");
 
   useEffect(() => {
     if (!open) return;
     setDraft(profileToDraft(profile));
     setCredentialInput("");
+    setCredentialVisible(false);
+    setCredentialLoaded(false);
+    setCredentialLoading(false);
+    setCredentialError(null);
   }, [open, profile]);
+
+  useEffect(() => {
+    if (!open || !profile || !canLoadStoredCredential) return;
+    let cancelled = false;
+    setCredentialLoading(true);
+    setCredentialError(null);
+    onGetCredential(profile.id)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.apiKey) {
+          setCredentialInput(result.apiKey);
+          setCredentialLoaded(true);
+        } else {
+          setCredentialError(copy.profiles.apiKeyMissing);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setCredentialError(formatError(error));
+      })
+      .finally(() => {
+        if (!cancelled) setCredentialLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canLoadStoredCredential, copy.profiles.apiKeyMissing, onGetCredential, open, profile?.id]);
 
   if (!open) return null;
 
@@ -3369,22 +3517,38 @@ function ProfileEditModal({
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const saved = await onSave(profile, draft);
+    const saved = await onSave(profile, profile ? draft : profileDraftWithCreateDefaults(draft));
     if (credentialInput.trim()) {
       await onStoreCredential(saved.id, credentialInput.trim());
     }
     onClose();
   };
 
-  const handleStoreCredential = async () => {
-    if (!profile || !credentialInput.trim()) return;
-    await onStoreCredential(profile.id, credentialInput.trim());
-    setCredentialInput("");
-  };
-
-  const handleDeleteCredential = async () => {
-    if (!profile) return;
-    await onDeleteCredential(profile.id);
+  const handleToggleCredentialVisible = async () => {
+    if (credentialLoading) return;
+    if (credentialVisible) {
+      setCredentialVisible(false);
+      return;
+    }
+    if (profile && canLoadStoredCredential && !credentialLoaded && !credentialInput.trim()) {
+      setCredentialLoading(true);
+      setCredentialError(null);
+      try {
+        const result = await onGetCredential(profile.id);
+        if (!result.apiKey) {
+          setCredentialError(copy.profiles.apiKeyMissing);
+          return;
+        }
+        setCredentialInput(result.apiKey);
+        setCredentialLoaded(true);
+      } catch (error) {
+        setCredentialError(formatError(error));
+        return;
+      } finally {
+        setCredentialLoading(false);
+      }
+    }
+    setCredentialVisible(true);
   };
 
   return (
@@ -3398,24 +3562,51 @@ function ProfileEditModal({
         <form className="modalForm profileModalForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
             <span>{copy.profiles.name}</span>
-            <input value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} required />
+            <input value={draft.name} onChange={(event) => updateDraft("name", event.target.value)} placeholder={copy.profiles.namePlaceholder} required />
           </label>
           <div className="fieldGroup">
             <span>{copy.profiles.model}</span>
-            <ProfileModelCombobox value={draft.model} onChange={(value) => updateDraft("model", value)} />
+            <ProfileModelCombobox value={draft.model} placeholder={copy.profiles.modelPlaceholder} onChange={(value) => updateDraft("model", value)} />
           </div>
           <label className="fieldGroup">
             <span>{copy.profiles.provider}</span>
-            <input value={draft.provider} onChange={(event) => updateDraft("provider", event.target.value)} />
+            <input value={draft.provider} onChange={(event) => updateDraft("provider", event.target.value)} placeholder={copy.profiles.providerPlaceholder} />
           </label>
           <label className="fieldGroup">
             <span>{copy.profiles.baseUrl}</span>
-            <input value={draft.baseUrl} onChange={(event) => updateDraft("baseUrl", event.target.value)} />
+            <input value={draft.baseUrl} onChange={(event) => updateDraft("baseUrl", event.target.value)} placeholder={copy.profiles.baseUrlPlaceholder} />
           </label>
-          <label className="fieldGroup">
-            <span>{copy.profiles.apiKeyEnvVar}</span>
-            <input value={draft.apiKeyEnvVar} onChange={(event) => updateDraft("apiKeyEnvVar", event.target.value)} />
-          </label>
+          <div className="profileCredentialRow">
+            <div className="profileCredentialLabel">
+              <span>{copy.profiles.apiKey}</span>
+            </div>
+            <div className="passwordInputWrap profileCredentialInputWrap">
+              <input
+                autoComplete="new-password"
+                placeholder={canLoadStoredCredential && !credentialLoaded ? copy.profiles.apiKeyStoredPlaceholder : copy.profiles.apiKeyPlaceholder}
+                type={credentialVisible ? "text" : "password"}
+                value={credentialInput}
+                onChange={(event) => {
+                  setCredentialInput(event.target.value);
+                  setCredentialLoaded(false);
+                  setCredentialError(null);
+                }}
+              />
+              <button
+                aria-label={credentialVisible ? copy.profiles.hideApiKey : copy.profiles.showApiKey}
+                aria-pressed={credentialVisible}
+                className="credentialVisibilityButton"
+                title={credentialVisible ? copy.profiles.hideApiKey : copy.profiles.showApiKey}
+                type="button"
+                onClick={() => void handleToggleCredentialVisible()}
+              >
+                <CredentialVisibilityIcon visible={credentialVisible} />
+              </button>
+            </div>
+            {credentialLoading || credentialError ? (
+              <p className="profileCredentialHint">{credentialLoading ? copy.profiles.apiKeyLoading : credentialError}</p>
+            ) : null}
+          </div>
           <label className="fieldGroup">
             <span>{copy.profiles.modelReasoningEffort}</span>
             <select value={draft.modelReasoningEffort} onChange={(event) => updateDraft("modelReasoningEffort", event.target.value)}>
@@ -3456,6 +3647,10 @@ function ProfileEditModal({
             <summary>{copy.profiles.advanced}</summary>
             <div className="profileAdvancedGrid">
               <label className="fieldGroup">
+                <span>{copy.profiles.apiKeyEnvVar}</span>
+                <input value={draft.apiKeyEnvVar} onChange={(event) => updateDraft("apiKeyEnvVar", event.target.value)} />
+              </label>
+              <label className="fieldGroup">
                 <span>{copy.profiles.serviceTier}</span>
                 <input value={draft.serviceTier} onChange={(event) => updateDraft("serviceTier", event.target.value)} />
               </label>
@@ -3467,24 +3662,6 @@ function ProfileEditModal({
                 <span>{copy.profiles.extraToml}</span>
                 <textarea value={draft.extraToml} onChange={(event) => updateDraft("extraToml", event.target.value)} rows={5} />
               </label>
-              <div className="profileCredentialRow">
-                <Badge tone={profile?.credentialStored ? "green" : "gray"}>
-                  {profile?.credentialStored ? copy.profiles.credentialStored : copy.profiles.noCredential}
-                </Badge>
-                <input
-                  autoComplete="new-password"
-                  placeholder={copy.profiles.apiKeyPlaceholder}
-                  type="password"
-                  value={credentialInput}
-                  onChange={(event) => setCredentialInput(event.target.value)}
-                />
-                <button className="secondaryButton" disabled={!profile || !credentialInput.trim() || busy === "store-key"} type="button" onClick={() => void handleStoreCredential()}>
-                  {copy.profiles.storeCredential}
-                </button>
-                <button className="secondaryButton" disabled={!profile?.credentialStored || busy === "delete-key"} type="button" onClick={() => void handleDeleteCredential()}>
-                  {copy.profiles.deleteCredential}
-                </button>
-              </div>
             </div>
           </details>
 
@@ -3499,7 +3676,7 @@ function ProfileEditModal({
   );
 }
 
-function ProfileModelCombobox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function ProfileModelCombobox({ value, placeholder, onChange }: { value: string; placeholder?: string; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
   const query = value.trim().toLowerCase();
   const options = useMemo(
@@ -3512,6 +3689,7 @@ function ProfileModelCombobox({ value, onChange }: { value: string; onChange: (v
       <input
         aria-autocomplete="list"
         aria-expanded={open}
+        placeholder={placeholder}
         role="combobox"
         value={value}
         onBlur={() => window.setTimeout(() => setOpen(false), 90)}
@@ -3626,10 +3804,10 @@ function profileToDraft(profile: Profile | null): ProfileDraft {
   return {
     name: profile?.name ?? "",
     description: profile?.description ?? "",
-    model: profile?.model ?? "gpt-5-codex",
-    provider: profile?.provider ?? "openai",
-    baseUrl: profile?.baseUrl ?? "https://api.openai.com/v1",
-    apiKeyEnvVar: profile?.apiKeyEnvVar ?? "OPENAI_API_KEY",
+    model: profile?.model ?? "",
+    provider: profile?.provider ?? "",
+    baseUrl: profile?.baseUrl ?? "",
+    apiKeyEnvVar: profile?.apiKeyEnvVar ?? DEFAULT_PROFILE_API_KEY_ENV_VAR,
     modelReasoningEffort: profile?.modelReasoningEffort ?? "medium",
     planModeReasoningEffort: profile?.planModeReasoningEffort ?? "high",
     fastMode: profile?.fastMode ?? false,
@@ -3641,14 +3819,14 @@ function profileToDraft(profile: Profile | null): ProfileDraft {
   };
 }
 
-function downloadProfileExport(bundle: ProfileImportExport) {
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `codexhub-profiles-${bundle.exportedAt.slice(0, 10)}.json`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+function profileDraftWithCreateDefaults(draft: ProfileDraft): ProfileDraft {
+  return {
+    ...draft,
+    model: draft.model.trim() || DEFAULT_PROFILE_MODEL,
+    provider: draft.provider.trim() || DEFAULT_PROFILE_PROVIDER,
+    baseUrl: draft.baseUrl.trim() || DEFAULT_PROFILE_BASE_URL,
+    apiKeyEnvVar: draft.apiKeyEnvVar.trim() || DEFAULT_PROFILE_API_KEY_ENV_VAR
+  };
 }
 
 function profileApplyTone(status: ProfileApplyBatchResult["results"][number]["status"]): "green" | "yellow" | "red" | "blue" | "gray" {
@@ -4367,6 +4545,75 @@ function SkillTargetsModal({
         </div>
       </section>
     </div>
+  );
+}
+
+function SimpleDeleteConfirmModal({
+  body,
+  busy,
+  copy,
+  title,
+  onClose,
+  onDelete
+}: {
+  body: string;
+  busy: boolean;
+  copy: UICopy;
+  title: string;
+  onClose: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal simpleDeleteModal" role="dialog" aria-modal="true" aria-labelledby="simple-delete-title">
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="simple-delete-title">{`🗑️ ${title}`}</h2>
+            <p>{body}</p>
+          </div>
+        </div>
+        <div className="modalActions">
+          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+            {copy.hosts.cancel}
+          </button>
+          <button className="primaryButton dangerButton" disabled={busy} type="button" onClick={onDelete}>
+            {copy.hosts.delete}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CredentialVisibilityIcon({ visible }: { visible: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="credentialEyeIcon"
+      data-visible={visible}
+      fill="none"
+      height="18"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      {visible ? (
+        <>
+          <path d="M2.1 12.3c2.2-4.5 5.5-6.8 9.9-6.8s7.7 2.3 9.9 6.8c-2.2 4.1-5.5 6.2-9.9 6.2s-7.7-2.1-9.9-6.2Z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      ) : (
+        <>
+          <path d="M3 3l18 18" />
+          <path d="M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-4.8" />
+          <path d="M9.9 5.8A10.8 10.8 0 0 1 12 5.5c4.4 0 7.7 2.3 9.9 6.8a13.2 13.2 0 0 1-3.1 3.9" />
+          <path d="M6.1 7.6a14.3 14.3 0 0 0-4 4.7c2.2 4.1 5.5 6.2 9.9 6.2 1.5 0 2.9-.3 4.1-.8" />
+        </>
+      )}
+    </svg>
   );
 }
 

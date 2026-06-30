@@ -971,12 +971,20 @@ tr:last-child td {
 .skillsTable th,
 .skillsTable td {
   padding: 11px 10px;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.skillsTable th,
+.skillsTable td:nth-child(2),
+.skillsTable td:nth-child(3),
+.skillsTable td:nth-child(5) {
+  white-space: nowrap;
 }
 
 .skillsTable th:nth-child(1),
 .skillsTable td:nth-child(1) {
-  width: 20%;
+  width: 22%;
 }
 
 .skillsTable th:nth-child(2),
@@ -986,21 +994,29 @@ tr:last-child td {
 
 .skillsTable th:nth-child(3),
 .skillsTable td:nth-child(3) {
-  width: 14%;
+  width: 12%;
 }
 
 .skillsTable th:nth-child(4),
 .skillsTable td:nth-child(4) {
-  width: 22%;
+  width: 34%;
 }
 
 .skillsTable th:nth-child(5),
 .skillsTable td:nth-child(5) {
-  width: 32%;
+  width: 20%;
 }
 
 .skillsTable td:first-child {
   min-width: 0;
+}
+
+.skillsTable td:first-child strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skillLibraryActions,
@@ -1019,10 +1035,15 @@ tr:last-child td {
 .skillRowActions {
   width: 100%;
   min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.skillApplicationTags {
+  flex-wrap: wrap;
 }
 
 .skillRowActions .miniButton {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
   padding: 4px 7px;
   font-size: 0.76rem;
@@ -1032,8 +1053,8 @@ tr:last-child td {
 
 .skillApplicationTags .badge {
   max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .skillModal {
@@ -1047,14 +1068,14 @@ tr:last-child td {
 
 .skillDownloadForm .fieldGroup {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  gap: 6px;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
 }
 
 .skillDownloadForm .fieldGroup > span {
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 750;
 }
 
@@ -1071,6 +1092,10 @@ tr:last-child td {
 
 .skillPreviewModal {
   width: min(700px, 100%);
+}
+
+.simpleDeleteModal {
+  width: min(400px, 100%);
 }
 
 .skillPreviewBadge {
@@ -1182,6 +1207,13 @@ tr:last-child td {
 
 .dangerButton {
   color: var(--red);
+}
+
+.primaryButton.dangerButton {
+  border-color: color-mix(in srgb, var(--red) 72%, var(--border));
+  color: #ffffff;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--red) 84%, #ffffff), var(--red));
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--red) 18%, transparent);
 }
 
 .skillMessage {
@@ -1595,6 +1627,62 @@ tr:last-child td {
   .tasksGrid .spanWide {
     grid-column: 1 / -1;
   }
+
+  .skillsTable th,
+  .skillsTable td {
+    padding: 8px 5px;
+    font-size: 0.78rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .skillsTable td:nth-child(2),
+  .skillsTable td:nth-child(3),
+  .skillsTable td:nth-child(5) {
+    white-space: normal;
+  }
+
+  .skillsTable th:nth-child(1),
+  .skillsTable td:nth-child(1) {
+    width: 20%;
+  }
+
+  .skillsTable th:nth-child(2),
+  .skillsTable td:nth-child(2) {
+    width: 12%;
+  }
+
+  .skillsTable th:nth-child(3),
+  .skillsTable td:nth-child(3) {
+    width: 14%;
+  }
+
+  .skillsTable th:nth-child(4),
+  .skillsTable td:nth-child(4) {
+    width: 28%;
+  }
+
+  .skillsTable th:nth-child(5),
+  .skillsTable td:nth-child(5) {
+    width: 26%;
+  }
+
+  .skillsTable td:first-child strong,
+  .skillApplicationTags .badge,
+  .skillRowActions .miniButton {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .skillRowActions {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .skillRowActions .miniButton {
+    padding: 3px 5px;
+    font-size: 0.72rem;
+  }
 }
 
 @media (max-width: 820px) {
@@ -1699,6 +1787,66 @@ tr:last-child td {
     white-space: normal;
   }
 
+  .skillsTable th,
+  .skillsTable td {
+    padding: 8px 5px;
+    font-size: 0.78rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .skillsTable td:nth-child(2),
+  .skillsTable td:nth-child(3),
+  .skillsTable td:nth-child(5) {
+    white-space: normal;
+  }
+
+  .skillsTable th {
+    font-size: 0.64rem;
+  }
+
+  .skillsTable th:nth-child(1),
+  .skillsTable td:nth-child(1) {
+    width: 20%;
+  }
+
+  .skillsTable th:nth-child(2),
+  .skillsTable td:nth-child(2) {
+    width: 12%;
+  }
+
+  .skillsTable th:nth-child(3),
+  .skillsTable td:nth-child(3) {
+    width: 14%;
+  }
+
+  .skillsTable th:nth-child(4),
+  .skillsTable td:nth-child(4) {
+    width: 28%;
+  }
+
+  .skillsTable th:nth-child(5),
+  .skillsTable td:nth-child(5) {
+    width: 26%;
+  }
+
+  .skillsTable td:first-child strong,
+  .skillApplicationTags .badge,
+  .skillRowActions .miniButton {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .skillRowActions {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .skillRowActions .miniButton {
+    padding: 3px 5px;
+    font-size: 0.72rem;
+  }
+
   .profileApplyTable th,
   .profileApplyTable td {
     padding: 6px 4px;
@@ -1771,6 +1919,17 @@ tr:last-child td {
   .ProfileApplyPreviewModal .fieldGroup select,
   .ProfileApplyPreviewModal .fieldGroup textarea {
     grid-column: 1;
+  }
+
+  .profileCredentialInputWrap,
+  .profileCredentialActions,
+  .profileCredentialHint {
+    grid-column: 1;
+  }
+
+  .profileCredentialActions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 
@@ -1975,21 +2134,92 @@ tr:last-child td {
 
 .profileCredentialRow {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) auto auto;
-  gap: 8px;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 8px 10px;
   align-items: center;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  margin-top: 0;
 }
 
-.profileCredentialRow input {
+.profileCredentialLabel {
+  display: grid;
+  align-items: center;
+  align-self: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.profileCredentialLabel .badge {
+  justify-self: start;
+}
+
+.profileCredentialInputWrap {
+  position: relative;
+  display: flex;
+  grid-column: 2;
+  min-width: 0;
+}
+
+.profileCredentialInputWrap input {
+  width: 100%;
   min-width: 0;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 10px 42px 10px 12px;
   color: var(--text);
   background: var(--surface-solid);
+}
+
+.credentialVisibilityButton {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  opacity: 1;
+  z-index: 1;
+}
+
+.credentialVisibilityButton:hover,
+.credentialVisibilityButton[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.credentialVisibilityButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.credentialEyeIcon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.profileCredentialActions {
+  display: flex;
+  grid-column: 2;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.profileCredentialHint {
+  grid-column: 2;
+  margin: -2px 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
 }
 
 .profileEditModal,
@@ -2008,6 +2238,19 @@ tr:last-child td {
 
 .profileModalForm {
   min-width: 0;
+}
+
+.ProfileEditModal .fieldGroup {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.ProfileEditModal .fieldGroup input,
+.ProfileEditModal .fieldGroup select,
+.ProfileEditModal .fieldGroup textarea,
+.ProfileEditModal .profileModelCombobox,
+.ProfileEditModal .profileFastModeSegment {
+  grid-column: 2;
+  width: 100%;
 }
 
 .profileModelCombobox,
@@ -2461,9 +2704,54 @@ button:disabled {
 }
 
 .sshHostModal .fieldGroup input,
-.sshHostModal .fieldGroup select {
+.sshHostModal .fieldGroup select,
+.sshHostModal .passwordInputWrap {
   grid-column: 2;
   min-height: 38px;
+}
+
+.sshHostModal:not(.ProfileEditModal) .fieldGroup input,
+.sshHostModal:not(.ProfileEditModal) .fieldGroup select,
+.sshHostModal:not(.ProfileEditModal) .passwordInputWrap {
+  grid-column: 2 / 4;
+}
+
+.sshHostModal:not(.ProfileEditModal) .identityRow input {
+  grid-column: 2;
+}
+
+.sshHostModal:not(.ProfileEditModal) .identityRow[data-has-action="false"] input {
+  grid-column: 2 / 4;
+}
+
+.passwordInputWrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.passwordInputWrap input {
+  width: 100%;
+  padding-right: 42px;
+}
+
+.passwordInputWrap input::-ms-reveal,
+.passwordInputWrap input::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.passwordInputWrap input::-webkit-credentials-auto-fill-button,
+.passwordInputWrap input::-webkit-caps-lock-indicator {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.passwordInputWrap .credentialVisibilityButton {
+  right: 6px;
+  opacity: 1;
 }
 
 .identityRow button {
@@ -2478,6 +2766,19 @@ button:disabled {
   justify-content: flex-end;
   gap: 10px;
   padding-top: 2px;
+}
+
+.sshHostModal.ProfileEditModal .fieldGroup {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.sshHostModal.ProfileEditModal .fieldGroup input,
+.sshHostModal.ProfileEditModal .fieldGroup select,
+.sshHostModal.ProfileEditModal .fieldGroup textarea,
+.sshHostModal.ProfileEditModal .profileModelCombobox,
+.sshHostModal.ProfileEditModal .profileFastModeSegment {
+  grid-column: 2;
+  width: 100%;
 }
 
 .codexOperationModal {
@@ -2777,6 +3078,20 @@ td code {
   .sshHostModal .fieldGroup {
     grid-template-columns: 92px minmax(0, 1fr) 64px;
     gap: 8px;
+  }
+
+  .sshHostModal.ProfileEditModal .fieldGroup {
+    grid-template-columns: 1fr;
+  }
+
+  .sshHostModal.ProfileEditModal .fieldGroup input,
+  .sshHostModal.ProfileEditModal .fieldGroup select,
+  .sshHostModal.ProfileEditModal .fieldGroup textarea,
+  .sshHostModal.ProfileEditModal .profileModelCombobox,
+  .sshHostModal.ProfileEditModal .profileFastModeSegment,
+  .sshHostModal.ProfileEditModal .profileCredentialInputWrap,
+  .sshHostModal.ProfileEditModal .profileCredentialActions {
+    grid-column: 1;
   }
 
   .identityField {

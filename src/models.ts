@@ -103,6 +103,12 @@ export type ProfileImportExport = {
   profiles: Profile[];
 };
 
+export type ProfileApiKeyResult = {
+  profileId: string;
+  exists: boolean;
+  apiKey: string | null;
+};
+
 export type ProfileApplyHostResult = {
   hostId: string;
   hostName: string;
@@ -420,6 +426,17 @@ export type SshConfigWriteResult = {
   backupPath: string | null;
   host: SshConfigHost | null;
   message: string;
+};
+
+export type SshConfigDeleteResult = SshConfigWriteResult & {
+  task: TaskRun;
+};
+
+export type DeleteOperationResult = {
+  ok: boolean;
+  deleted: boolean;
+  message: string;
+  task: TaskRun;
 };
 
 export type SshKeyGenerationResult = {

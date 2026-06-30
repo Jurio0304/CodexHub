@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone}
 use flate2::{write::GzEncoder, Compression};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -221,6 +221,14 @@ struct ProfileImportExport {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProfileApiKeyResult {
+    profile_id: String,
+    exists: bool,
+    api_key: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ProfileImportResult {
     imported: Vec<Profile>,
     skipped: Vec<String>,
@@ -231,6 +239,14 @@ struct ProfileImportResult {
 struct DetectedCcSwitchProfile {
     source_path: String,
     profile: Profile,
+    #[serde(skip_serializing)]
+    api_key: Option<String>,
+}
+
+#[derive(Clone)]
+struct CcSwitchProfileRecord {
+    profile: Profile,
+    api_key: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -546,6 +562,23 @@ struct SshBootstrapResult {
     private_key_path: String,
     public_key_path: String,
     write_result: ssh::SshConfigWriteResult,
+    task: TaskRun,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SshConfigDeleteResult {
+    #[serde(flatten)]
+    write_result: ssh::SshConfigWriteResult,
+    task: TaskRun,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteOperationResult {
+    ok: bool,
+    deleted: bool,
+    message: String,
     task: TaskRun,
 }
 
@@ -1323,7 +1356,10 @@ fn delete_ssh_config_host(
     app: AppHandle,
     alias: String,
     state: State<'_, AppState>,
-) -> Result<ssh::SshConfigWriteResult, String> {
+) -> Result<SshConfigDeleteResult, String> {
+    let normalized_alias = alias.trim().to_string();
+    let host_id = host_id_for_alias(&state, &normalized_alias);
+    let host_name = host_name_for_alias(&state, &normalized_alias);
     let result = ssh::delete_ssh_config_host(alias.clone())?;
     if result.changed {
         let next_hosts = {
@@ -1333,7 +1369,21 @@ fn delete_ssh_config_host(
         };
         save_hosts(&app, &state, &next_hosts)?;
     }
-    Ok(result)
+    let task_id = format!("task-delete-host-{}", timestamp_millis());
+    let task = delete_task(
+        &task_id,
+        &host_id,
+        &host_name,
+        "Delete SSH Host",
+        &result.message,
+        true,
+        Some(format!("delete_ssh_config_host {}", normalized_alias)),
+    );
+    record_task(&state, task.clone());
+    Ok(SshConfigDeleteResult {
+        write_result: result,
+        task,
+    })
 }
 
 #[tauri::command]
@@ -1657,17 +1707,48 @@ fn update_profile(
 }
 
 #[tauri::command]
-fn delete_profile(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<bool, String> {
+fn delete_profile(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<DeleteOperationResult, String> {
     let mut profiles = load_profiles(&app, &state)?;
+    let profile_name = profiles
+        .iter()
+        .find(|profile| profile.id == id)
+        .map(|profile| profile.name.clone())
+        .unwrap_or_else(|| id.clone());
     let before = profiles.len();
     profiles.retain(|profile| profile.id != id);
     let deleted = profiles.len() != before;
     if deleted {
         save_profiles(&app, &state, &profiles)?;
         clear_profile_from_hosts(&state, &id);
+        save_current_hosts(&app, &state)?;
         let _ = delete_profile_api_key_local(&id);
     }
-    Ok(deleted)
+    let message = if deleted {
+        format!("Deleted profile {profile_name}.")
+    } else {
+        format!("Profile {profile_name} was not found.")
+    };
+    let task_id = format!("task-delete-profile-{}", timestamp_millis());
+    let task = delete_task(
+        &task_id,
+        &id,
+        &profile_name,
+        "Delete profile",
+        &message,
+        deleted,
+        Some(format!("delete_profile {id}")),
+    );
+    record_task(&state, task.clone());
+    Ok(DeleteOperationResult {
+        ok: deleted,
+        deleted,
+        message,
+        task,
+    })
 }
 
 #[tauri::command]
@@ -1708,23 +1789,6 @@ fn import_profiles(
 }
 
 #[tauri::command]
-fn export_profiles(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    profile_ids: Option<Vec<String>>,
-) -> Result<ProfileImportExport, String> {
-    let mut profiles = load_profiles(&app, &state)?;
-    if let Some(ids) = profile_ids {
-        let wanted: BTreeSet<String> = ids.into_iter().collect();
-        profiles.retain(|profile| wanted.contains(&profile.id));
-    }
-    for profile in &mut profiles {
-        profile.credential_stored = profile_api_key_exists(&profile.id);
-    }
-    Ok(profile_import_export(profiles))
-}
-
-#[tauri::command]
 fn set_profile_api_key(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1745,6 +1809,37 @@ fn set_profile_api_key(
     let updated = profile.clone();
     save_profiles(&app, &state, &profiles)?;
     Ok(updated)
+}
+
+#[tauri::command]
+fn get_profile_api_key(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    profile_id: String,
+) -> Result<ProfileApiKeyResult, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+        .ok_or_else(|| format!("Profile {profile_id} was not found."))?;
+    let mut api_key = load_profile_api_key_local(&profile_id)?;
+    if api_key.is_none() && profile.source == "cc-switch" {
+        api_key = migrate_cc_switch_api_key_for_profile(&app, &state, &profile)?;
+        if api_key.is_some() {
+            for item in &mut profiles {
+                if item.id == profile_id {
+                    item.credential_stored = true;
+                }
+            }
+            save_profiles(&app, &state, &profiles)?;
+        }
+    }
+    Ok(ProfileApiKeyResult {
+        profile_id,
+        exists: api_key.is_some(),
+        api_key,
+    })
 }
 
 #[tauri::command]
@@ -1841,9 +1936,49 @@ fn import_cc_switch_profiles(
     replace: Option<bool>,
 ) -> Result<ProfileImportExport, String> {
     let detected = detect_cc_switch_profiles_inner(&app, &state)?;
-    let profiles = detected.into_iter().map(|item| item.profile).collect();
+    let credential_by_key = detected
+        .iter()
+        .filter_map(|item| {
+            item.api_key
+                .as_ref()
+                .map(|api_key| (cc_switch_profile_import_key(&item.profile), api_key.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    let profiles = detected
+        .into_iter()
+        .map(|item| item.profile)
+        .collect::<Vec<_>>();
     let result = import_profiles_inner(&app, &state, profiles, replace.unwrap_or(false))?;
-    Ok(profile_import_export(result.imported))
+    for profile in &result.imported {
+        if let Some(api_key) = credential_by_key.get(&cc_switch_profile_import_key(profile)) {
+            store_profile_api_key_local(&profile.id, api_key)?;
+        }
+    }
+    let mut imported = result.imported;
+    refresh_credential_flags(&mut imported);
+    let mut profiles = load_profiles(&app, &state)?;
+    refresh_credential_flags(&mut profiles);
+    save_profiles(&app, &state, &profiles)?;
+    Ok(profile_import_export(imported))
+}
+
+fn migrate_cc_switch_api_key_for_profile(
+    app: &AppHandle,
+    state: &AppState,
+    profile: &Profile,
+) -> Result<Option<String>, String> {
+    let import_key = cc_switch_profile_import_key(profile);
+    let detected = detect_cc_switch_profiles_inner(app, state)?;
+    let api_key = detected
+        .into_iter()
+        .find(|item| cc_switch_profile_import_key(&item.profile) == import_key)
+        .and_then(|item| item.api_key);
+    if let Some(api_key) = api_key {
+        store_profile_api_key_local(&profile.id, &api_key)?;
+        Ok(Some(api_key))
+    } else {
+        Ok(None)
+    }
 }
 
 #[tauri::command]
@@ -2721,6 +2856,48 @@ fn bootstrap_task(
         ended_at: Some("now".into()),
         summary: summary.to_string(),
         logs,
+    }
+}
+
+fn delete_task(
+    task_id: &str,
+    host_id: &str,
+    host_name: &str,
+    action: &str,
+    summary: &str,
+    ok: bool,
+    command: Option<String>,
+) -> TaskRun {
+    TaskRun {
+        id: task_id.to_string(),
+        host_id: host_id.to_string(),
+        host_name: host_name.to_string(),
+        action: action.to_string(),
+        status: if ok {
+            TaskStatus::Success
+        } else {
+            TaskStatus::Failed
+        },
+        started_at: "now".into(),
+        ended_at: Some("now".into()),
+        summary: summary.to_string(),
+        logs: vec![TaskLog {
+            id: format!("{task_id}-log-1"),
+            task_run_id: task_id.to_string(),
+            level: if ok {
+                TaskLogLevel::Info
+            } else {
+                TaskLogLevel::Error
+            },
+            timestamp: "now".into(),
+            message: summary.to_string(),
+            command,
+            stdout: if ok { Some("ok".into()) } else { None },
+            stderr: if ok { None } else { Some(summary.to_string()) },
+            exit_code: Some(if ok { 0 } else { 1 }),
+            duration_ms: Some(1),
+            timed_out: Some(false),
+        }],
     }
 }
 
@@ -5427,7 +5604,7 @@ mod tests {
             let current_config = "model = \"gpt-5.5\"\nmodel_provider = \"custom\"\nmodel_reasoning_effort = \"xhigh\"\n[features]\nfast_mode = true\n[model_providers.custom]\nname = \"custom\"\n";
             let other_config = "model = \"gpt-5-codex\"\nmodel_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://config.example/v1\"\nenv_key = \"REMOTE_API_KEY\"\n";
             let current_settings = serde_json::json!({
-                "auth": { "api_key": "sk-test-secret" },
+                "auth": { "OPENAI_API_KEY": "sk-test-secret", "auth_mode": "api_key" },
                 "config": current_config
             })
             .to_string();
@@ -5462,25 +5639,38 @@ mod tests {
 
         let profiles = parse_cc_switch_sqlite_profiles(&db_path).expect("parse sqlite profiles");
         assert_eq!(profiles.len(), 2);
-        assert_eq!(profiles[0].name, "Current Codex");
+        assert_eq!(profiles[0].profile.name, "Current Codex");
         assert_eq!(
-            profiles[0].base_url.as_deref(),
+            profiles[0].profile.base_url.as_deref(),
             Some("https://endpoint.example/v1")
         );
-        assert_eq!(profiles[0].provider, "custom");
-        assert_eq!(profiles[0].model_reasoning_effort.as_deref(), Some("xhigh"));
-        assert!(profiles[0].fast_mode);
+        assert_eq!(profiles[0].profile.provider, "custom");
         assert_eq!(
-            profiles[1].api_key_env_var.as_deref(),
+            profiles[0].profile.model_reasoning_effort.as_deref(),
+            Some("xhigh")
+        );
+        assert!(profiles[0].profile.fast_mode);
+        assert_eq!(profiles[0].api_key.as_deref(), Some("sk-test-secret"));
+        assert_eq!(
+            profiles[1].profile.api_key_env_var.as_deref(),
             Some("REMOTE_API_KEY")
         );
-        let serialized = serde_json::to_string(&profiles).expect("serialize profiles");
+        let serialized = serde_json::to_string(&profiles[0].profile).expect("serialize profile");
         assert!(!serialized.contains("sk-test-secret"));
-        assert!(profiles.iter().all(|profile| !profile.credential_stored));
+        assert!(profiles
+            .iter()
+            .all(|record| !record.profile.credential_stored));
 
         let _ = fs::remove_file(&db_path);
         let _ = fs::remove_file(dir.join("settings.json"));
         let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn keyring_missing_entry_message_is_not_a_hard_failure() {
+        assert!(is_missing_credential_error(
+            "No matching entry found in secure storage"
+        ));
     }
 
     #[test]
@@ -5496,16 +5686,17 @@ mod tests {
         let profiles = parse_cc_switch_raw_db_profiles(&content, Path::new("cc-switch.db"));
 
         assert_eq!(profiles.len(), 1);
-        assert_eq!(profiles[0].name, "Raw Provider");
+        assert_eq!(profiles[0].profile.name, "Raw Provider");
         assert_eq!(
-            profiles[0].base_url.as_deref(),
+            profiles[0].profile.base_url.as_deref(),
             Some("https://raw.example/v1")
         );
         assert_eq!(
-            profiles[0].api_key_env_var.as_deref(),
+            profiles[0].profile.api_key_env_var.as_deref(),
             Some("OPENAI_API_KEY")
         );
-        let serialized = serde_json::to_string(&profiles[0]).expect("serialize profile");
+        assert_eq!(profiles[0].api_key.as_deref(), Some("sk-raw-secret"));
+        let serialized = serde_json::to_string(&profiles[0].profile).expect("serialize profile");
         assert!(!serialized.contains("sk-raw-secret"));
     }
 
@@ -6169,8 +6360,8 @@ pub fn run() {
             delete_profile,
             duplicate_profile,
             import_profiles,
-            export_profiles,
             set_profile_api_key,
+            get_profile_api_key,
             delete_profile_api_key,
             preview_profile_apply,
             apply_profile,
@@ -8666,6 +8857,13 @@ fn import_profiles_inner(
         match validate_profile(&profile) {
             Ok(()) => {
                 profiles.retain(|item| item.id != profile.id);
+                if profile.source == "cc-switch" {
+                    let incoming_key = cc_switch_profile_import_key(&profile);
+                    profiles.retain(|item| {
+                        item.source != "cc-switch"
+                            || cc_switch_profile_import_key(item) != incoming_key
+                    });
+                }
                 profiles.push(profile.clone());
                 imported.push(profile);
             }
@@ -8871,11 +9069,20 @@ fn store_profile_api_key_local(profile_id: &str, api_key: &str) -> Result<(), St
         .map_err(|error| format!("Failed to store profile API key in OS credential store: {error}"))
 }
 
+fn load_profile_api_key_local(profile_id: &str) -> Result<Option<String>, String> {
+    match profile_key_entry(profile_id)?.get_password() {
+        Ok(api_key) => Ok(Some(api_key)),
+        Err(error) if is_missing_credential_error(&error.to_string()) => Ok(None),
+        Err(error) => Err(format!(
+            "Failed to read profile API key from OS credential store: {error}"
+        )),
+    }
+}
+
 fn delete_profile_api_key_local(profile_id: &str) -> Result<(), String> {
     match profile_key_entry(profile_id)?.delete_credential() {
         Ok(()) => Ok(()),
-        Err(error) if error.to_string().to_ascii_lowercase().contains("no entry") => Ok(()),
-        Err(error) if error.to_string().to_ascii_lowercase().contains("not found") => Ok(()),
+        Err(error) if is_missing_credential_error(&error.to_string()) => Ok(()),
         Err(error) => Err(format!(
             "Failed to delete profile API key from OS credential store: {error}"
         )),
@@ -8891,6 +9098,14 @@ fn profile_api_key_exists(profile_id: &str) -> bool {
                 .map_err(|error| error.to_string())
         })
         .is_ok()
+}
+
+fn is_missing_credential_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("no entry")
+        || lower.contains("not found")
+        || lower.contains("no matching entry")
+        || lower.contains("could not find")
 }
 
 fn profile_key_entry(profile_id: &str) -> Result<keyring::Entry, String> {
@@ -8963,7 +9178,10 @@ fn cc_switch_candidate_paths(app: &AppHandle) -> Vec<PathBuf> {
     paths
 }
 
-fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, String> {
+fn parse_cc_switch_profiles(
+    content: &str,
+    path: &Path,
+) -> Result<Vec<CcSwitchProfileRecord>, String> {
     let json = match serde_json::from_str::<serde_json::Value>(content) {
         Ok(value) => value,
         Err(_) => return Ok(Vec::new()),
@@ -8994,11 +9212,16 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
             None,
             path,
         );
+        let config_api_key = cc_switch_api_key_from_config(config);
         let model = item
             .get("model")
             .or_else(|| settings.and_then(|value| value.get("model")))
             .and_then(|value| value.as_str())
-            .or_else(|| from_config.as_ref().map(|profile| profile.model.as_str()))
+            .or_else(|| {
+                from_config
+                    .as_ref()
+                    .map(|record| record.profile.model.as_str())
+            })
             .unwrap_or("gpt-5-codex");
         let provider = item
             .get("provider")
@@ -9009,7 +9232,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
             .or_else(|| {
                 from_config
                     .as_ref()
-                    .map(|profile| profile.provider.as_str())
+                    .map(|record| record.profile.provider.as_str())
             })
             .unwrap_or("openai");
         let now = timestamp_label();
@@ -9030,7 +9253,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
                 .or_else(|| {
                     from_config
                         .as_mut()
-                        .and_then(|profile| profile.base_url.take())
+                        .and_then(|record| record.profile.base_url.take())
                 }),
             api_key_env_var: item
                 .get("api_key_env_var")
@@ -9042,7 +9265,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
                 .or_else(|| {
                     from_config
                         .as_mut()
-                        .and_then(|profile| profile.api_key_env_var.take())
+                        .and_then(|record| record.profile.api_key_env_var.take())
                 })
                 .or_else(|| Some("OPENAI_API_KEY".into())),
             model_reasoning_effort: item
@@ -9053,7 +9276,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
                 .or_else(|| {
                     from_config
                         .as_mut()
-                        .and_then(|profile| profile.model_reasoning_effort.take())
+                        .and_then(|record| record.profile.model_reasoning_effort.take())
                 }),
             plan_mode_reasoning_effort: item
                 .get("plan_mode_reasoning_effort")
@@ -9063,7 +9286,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
                 .or_else(|| {
                     from_config
                         .as_mut()
-                        .and_then(|profile| profile.plan_mode_reasoning_effort.take())
+                        .and_then(|record| record.profile.plan_mode_reasoning_effort.take())
                 }),
             fast_mode: item
                 .get("fast_mode")
@@ -9072,7 +9295,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
                 .unwrap_or_else(|| {
                     from_config
                         .as_ref()
-                        .map(|profile| profile.fast_mode)
+                        .map(|record| record.profile.fast_mode)
                         .unwrap_or(false)
                 }),
             service_tier: item
@@ -9083,7 +9306,7 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
                 .or_else(|| {
                     from_config
                         .as_mut()
-                        .and_then(|profile| profile.service_tier.take())
+                        .and_then(|record| record.profile.service_tier.take())
                 }),
             approval_policy: item
                 .get("approval_policy")
@@ -9105,7 +9328,13 @@ fn parse_cc_switch_profiles(content: &str, path: &Path) -> Result<Vec<Profile>, 
             host_ids: Vec::new(),
         };
         if validate_profile(&profile).is_ok() {
-            profiles.push(profile);
+            profiles.push(CcSwitchProfileRecord {
+                api_key: cc_switch_api_key_from_value(item)
+                    .or_else(|| settings.and_then(cc_switch_api_key_from_value))
+                    .or(config_api_key)
+                    .or_else(|| from_config.and_then(|record| record.api_key)),
+                profile,
+            });
         }
     }
     Ok(profiles)
@@ -9148,7 +9377,7 @@ fn collect_cc_switch_profile_entries<'a>(
     }
 }
 
-fn parse_cc_switch_db_profiles(path: &Path) -> Result<Vec<Profile>, String> {
+fn parse_cc_switch_db_profiles(path: &Path) -> Result<Vec<CcSwitchProfileRecord>, String> {
     let sqlite_profiles = parse_cc_switch_sqlite_profiles(path)?;
     if !sqlite_profiles.is_empty() {
         return Ok(sqlite_profiles);
@@ -9161,7 +9390,7 @@ fn parse_cc_switch_db_profiles(path: &Path) -> Result<Vec<Profile>, String> {
     Ok(parse_cc_switch_raw_db_profiles(&text, path))
 }
 
-fn parse_cc_switch_sqlite_profiles(path: &Path) -> Result<Vec<Profile>, String> {
+fn parse_cc_switch_sqlite_profiles(path: &Path) -> Result<Vec<CcSwitchProfileRecord>, String> {
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let connection = match rusqlite::Connection::open_with_flags(path, flags) {
@@ -9210,17 +9439,22 @@ fn parse_cc_switch_sqlite_profiles(path: &Path) -> Result<Vec<Profile>, String> 
         let endpoint = cc_switch_provider_endpoint(&connection, &row.id)
             .unwrap_or(None)
             .or(row.website_url.clone());
-        if let Some(profile) =
+        if let Some(mut record) =
             cc_switch_profile_from_config(&row.id, &row.name, config, endpoint.as_deref(), path)
         {
+            record.api_key = cc_switch_api_key_from_value(&settings)
+                .or_else(|| cc_switch_api_key_from_config(config))
+                .or(record.api_key);
             let is_current = row.is_current || current_provider.as_deref() == Some(row.id.as_str());
-            profiles.push((is_current, profile));
+            profiles.push((is_current, record));
         }
     }
 
-    profiles.sort_by_key(|(is_current, profile)| (!*is_current, profile.name.to_ascii_lowercase()));
+    profiles.sort_by_key(|(is_current, record)| {
+        (!*is_current, record.profile.name.to_ascii_lowercase())
+    });
     Ok(dedupe_cc_switch_profiles(
-        profiles.into_iter().map(|(_, profile)| profile).collect(),
+        profiles.into_iter().map(|(_, record)| record).collect(),
     ))
 }
 
@@ -9276,7 +9510,7 @@ fn read_cc_switch_current_provider(db_path: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-fn parse_cc_switch_raw_db_profiles(content: &str, path: &Path) -> Vec<Profile> {
+fn parse_cc_switch_raw_db_profiles(content: &str, path: &Path) -> Vec<CcSwitchProfileRecord> {
     let mut profiles = Vec::new();
     let mut seen_json_starts = BTreeSet::new();
     for marker in ["{\"auth\"", "{\"env\"", "{\"config\""] {
@@ -9301,14 +9535,17 @@ fn parse_cc_switch_raw_db_profiles(content: &str, path: &Path) -> Vec<Profile> {
                 .and_then(|value| value.as_str())
                 .unwrap_or_default();
             let fallback_url = extract_url_after(content, json_end);
-            if let Some(profile) = cc_switch_profile_from_config(
+            if let Some(mut record) = cc_switch_profile_from_config(
                 &record_id,
                 &name,
                 config,
                 fallback_url.as_deref(),
                 path,
             ) {
-                profiles.push(profile);
+                record.api_key = cc_switch_api_key_from_value(&settings)
+                    .or_else(|| cc_switch_api_key_from_config(config))
+                    .or(record.api_key);
+                profiles.push(record);
             }
         }
     }
@@ -9456,7 +9693,7 @@ fn cc_switch_profile_from_config(
     config: &str,
     fallback_url: Option<&str>,
     path: &Path,
-) -> Option<Profile> {
+) -> Option<CcSwitchProfileRecord> {
     let parsed = config.parse::<TomlValue>().ok();
     let root = parsed.as_ref().and_then(TomlValue::as_table);
     let model = root
@@ -9481,6 +9718,7 @@ fn cc_switch_profile_from_config(
         .and_then(|table| toml_string(table, "env_key"))
         .or_else(|| toml_line_string(config, "env_key"))
         .or_else(|| Some("OPENAI_API_KEY".into()));
+    let api_key = cc_switch_api_key_from_config(config);
     let model_reasoning_effort = root
         .and_then(|table| toml_string(table, "model_reasoning_effort"))
         .or_else(|| toml_line_string(config, "model_reasoning_effort"));
@@ -9523,7 +9761,72 @@ fn cc_switch_profile_from_config(
         credential_stored: false,
         host_ids: Vec::new(),
     };
-    validate_profile(&profile).ok().map(|_| profile)
+    validate_profile(&profile)
+        .ok()
+        .map(|_| CcSwitchProfileRecord { profile, api_key })
+}
+
+fn cc_switch_api_key_from_value(value: &serde_json::Value) -> Option<String> {
+    let direct_candidates = [
+        value
+            .get("auth")
+            .and_then(|auth| auth.get("api_key"))
+            .and_then(|item| item.as_str()),
+        value
+            .get("auth")
+            .and_then(|auth| auth.get("apiKey"))
+            .and_then(|item| item.as_str()),
+        value.get("api_key").and_then(|item| item.as_str()),
+        value.get("apiKey").and_then(|item| item.as_str()),
+    ];
+    direct_candidates
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|item| !item.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            value
+                .get("auth")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|auth| {
+                    auth.iter()
+                        .filter(|(key, _)| cc_switch_auth_key_may_hold_api_key(key))
+                        .filter_map(|(_, value)| value.as_str())
+                        .map(str::trim)
+                        .find(|item| !item.is_empty())
+                        .map(str::to_string)
+                })
+        })
+}
+
+fn cc_switch_auth_key_may_hold_api_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    normalized.contains("apikey") || normalized.ends_with("token")
+}
+
+fn cc_switch_api_key_from_config(config: &str) -> Option<String> {
+    let parsed = config.parse::<TomlValue>().ok();
+    let root = parsed.as_ref().and_then(TomlValue::as_table);
+    let provider = root
+        .and_then(|table| toml_string(table, "model_provider"))
+        .or_else(|| toml_line_string(config, "model_provider"))
+        .unwrap_or_else(|| "openai".into());
+    let provider_table = root
+        .and_then(|table| table.get("model_providers"))
+        .and_then(TomlValue::as_table)
+        .and_then(|providers| providers.get(&provider))
+        .and_then(TomlValue::as_table);
+    provider_table
+        .and_then(|table| toml_string(table, "api_key"))
+        .or_else(|| root.and_then(|table| toml_string(table, "api_key")))
+        .or_else(|| toml_line_string(config, "api_key"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn toml_string(table: &TomlMap<String, TomlValue>, key: &str) -> Option<String> {
@@ -9560,34 +9863,48 @@ fn push_detected_cc_switch_profiles(
     detected: &mut Vec<DetectedCcSwitchProfile>,
     seen: &mut BTreeSet<String>,
     path: &Path,
-    profiles: Vec<Profile>,
+    profiles: Vec<CcSwitchProfileRecord>,
 ) {
-    for profile in profiles {
-        let key = cc_switch_profile_key(&profile);
+    for record in profiles {
+        let key = cc_switch_profile_import_key(&record.profile);
         if seen.insert(key) {
             detected.push(DetectedCcSwitchProfile {
                 source_path: path.to_string_lossy().into_owned(),
-                profile,
+                profile: record.profile,
+                api_key: record.api_key,
             });
         }
     }
 }
 
-fn dedupe_cc_switch_profiles(profiles: Vec<Profile>) -> Vec<Profile> {
+fn dedupe_cc_switch_profiles(profiles: Vec<CcSwitchProfileRecord>) -> Vec<CcSwitchProfileRecord> {
     let mut seen = BTreeSet::new();
     profiles
         .into_iter()
-        .filter(|profile| seen.insert(cc_switch_profile_key(profile)))
+        .filter(|record| seen.insert(cc_switch_profile_import_key(&record.profile)))
         .collect()
 }
 
-fn cc_switch_profile_key(profile: &Profile) -> String {
+fn cc_switch_profile_import_key(profile: &Profile) -> String {
     format!(
-        "{}|{}|{}",
-        profile.id,
-        profile.name,
-        profile.base_url.as_deref().unwrap_or_default()
+        "{}|{}|{}|{}",
+        cc_switch_profile_key_part(&profile.name),
+        cc_switch_profile_key_part(&profile.provider),
+        cc_switch_profile_key_part(&profile.model),
+        cc_switch_profile_base_url_key(profile.base_url.as_deref())
     )
+}
+
+fn cc_switch_profile_key_part(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn cc_switch_profile_base_url_key(value: Option<&str>) -> String {
+    value
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('/')
+        .to_ascii_lowercase()
 }
 
 fn contains_key_material(content: &str) -> bool {

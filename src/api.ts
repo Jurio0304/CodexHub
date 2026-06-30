@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ConnectionTest,
+  DeleteOperationResult,
   Health,
   Host,
   HostDraft,
@@ -10,6 +11,7 @@ import type {
   LatestCodexVersion,
   CcSwitchDetection,
   Profile,
+  ProfileApiKeyResult,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
   ProfileDraft,
@@ -29,6 +31,7 @@ import type {
   SshBootstrapProgressEvent,
   SshBootstrapResult,
   SshCheckResult,
+  SshConfigDeleteResult,
   SshConfigHost,
   SshConfigWriteResult,
   SshHostDraft,
@@ -120,13 +123,44 @@ function formatInvokeError(error: unknown) {
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 let mockProfiles = clone(fallbackProfiles);
+let mockProfileApiKeys = new Map<string, string>();
 let mockSkillPacks = clone(fallbackSkillPacks);
+let mockTasks = clone(fallbackTasks);
 let mockSkillInventoryStatus: SkillInventoryStatus = {
   firstHostScanCompleted: false,
   localSkillRoot: "%USERPROFILE%\\.codex\\skills",
   localSkills: [],
   hostInventories: []
 };
+
+function mockTaskRun(hostId: string, hostName: string, action: string, summary: string, ok = true, command?: string): TaskRun {
+  const taskId = `mock-task-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return {
+    id: taskId,
+    hostId,
+    hostName,
+    action,
+    status: ok ? "success" : "failed",
+    startedAt: "now",
+    endedAt: "now",
+    summary,
+    logs: [
+      {
+        id: `${taskId}-log-1`,
+        taskRunId: taskId,
+        level: ok ? "info" : "error",
+        timestamp: "now",
+        message: summary,
+        command,
+        stdout: ok ? "ok" : "",
+        stderr: ok ? "" : summary,
+        exitCode: ok ? 0 : 1,
+        durationMs: 1,
+        timedOut: false
+      }
+    ]
+  };
+}
 
 function nowStamp() {
   return new Date().toISOString().slice(0, 16).replace("T", " ");
@@ -393,7 +427,7 @@ function mockCcSwitchDetection(): CcSwitchDetection {
     createdAt: timestamp,
     updatedAt: timestamp,
     source: "cc-switch",
-    credentialStored: false,
+    credentialStored: true,
     hostIds: []
   };
   return {
@@ -406,6 +440,15 @@ function mockCcSwitchDetection(): CcSwitchDetection {
       profiles: [profile]
     }
   };
+}
+
+function ccSwitchProfileKey(profile: Pick<Profile, "name" | "provider" | "model" | "baseUrl">) {
+  return [
+    profile.name.trim().toLowerCase(),
+    profile.provider.trim().toLowerCase(),
+    profile.model.trim().toLowerCase(),
+    profile.baseUrl.trim().replace(/\/+$/, "").toLowerCase()
+  ].join("|");
 }
 
 function mockSshCheck(hostAlias: string): SshCheckResult {
@@ -969,7 +1012,29 @@ export const api = {
   generateEd25519Key: () => requiredInvoke<SshKeyGenerationResult>("generate_ed25519_key"),
   listSshConfigHosts: () => safeInvoke<SshConfigHost[]>("list_ssh_config_hosts", undefined, () => clone(fallbackSshConfigHosts)),
   upsertSshConfigHost: (draft: SshHostDraft) => requiredInvoke<SshConfigWriteResult>("upsert_ssh_config_host", { draft }),
-  deleteSshConfigHost: (alias: string) => requiredInvoke<SshConfigWriteResult>("delete_ssh_config_host", { alias }),
+  deleteSshConfigHost: async (alias: string) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SshConfigDeleteResult>("delete_ssh_config_host", { alias });
+    }
+    const task = mockTaskRun(
+      `mock-host-${slugifyProfileName(alias)}`,
+      alias,
+      "Delete SSH Host",
+      `Deleted Host ${alias} from the mock SSH config inventory.`,
+      true,
+      `delete_ssh_config_host ${alias}`
+    );
+    mockTasks = [task, ...mockTasks];
+    return {
+      changed: true,
+      action: "deleted",
+      configPath: "%USERPROFILE%\\.ssh\\config",
+      backupPath: null,
+      host: null,
+      message: `Deleted Host ${alias} from the mock SSH config inventory.`,
+      task
+    };
+  },
   listHosts: () => safeInvoke<Host[]>("list_hosts", undefined, () => clone(fallbackHosts)),
   refreshDiscoveredHosts: () => safeInvoke<Host[]>("refresh_discovered_hosts", undefined, () => clone(fallbackHosts)),
   refreshLatestCodexVersion: (force = false, timeoutMs = 30000) =>
@@ -1103,9 +1168,24 @@ export const api = {
       return clone(next);
     }).then(normalizeProfile),
   deleteProfile: (id: string) =>
-    safeInvoke<boolean>("delete_profile", { id }, () => {
-      mockProfiles = mockProfiles.filter((profile) => profile.id !== id);
-      return true;
+    safeInvoke<DeleteOperationResult>("delete_profile", { id }, () => {
+      const profile = mockProfiles.find((item) => item.id === id);
+      const deleted = Boolean(profile);
+      mockProfiles = mockProfiles.filter((item) => item.id !== id);
+      mockProfileApiKeys.delete(id);
+      const message = deleted
+        ? `Deleted profile ${profile?.name ?? id}.`
+        : `Profile ${id} was not found.`;
+      const task = mockTaskRun(
+        id,
+        profile?.name ?? id,
+        "Delete profile",
+        message,
+        deleted,
+        `delete_profile ${id}`
+      );
+      mockTasks = [task, ...mockTasks];
+      return { ok: deleted, deleted, message, task };
     }),
   duplicateProfile: (id: string) =>
     safeInvoke<Profile>("duplicate_profile", { id }, () => {
@@ -1137,11 +1217,6 @@ export const api = {
       mockProfiles = [...mockProfiles, ...imported];
       return { schemaVersion: bundle.schemaVersion || 1, exportedAt: nowStamp(), profiles: clone(imported) };
     }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
-  exportProfiles: (profileIds?: string[]) =>
-    safeInvoke<ProfileImportExport>("export_profiles", { profileIds }, () => {
-      const selected = profileIds?.length ? mockProfiles.filter((profile) => profileIds.includes(profile.id)) : mockProfiles;
-      return { schemaVersion: 1, exportedAt: nowStamp(), profiles: clone(selected) };
-    }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
   setProfileApiKey: async (profileId: string, apiKey: string) => {
     if (hasTauriRuntime()) {
       return requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile);
@@ -1153,8 +1228,18 @@ export const api = {
       credentialStored: Boolean(apiKey),
       updatedAt: nowStamp()
     });
+    if (apiKey) mockProfileApiKeys.set(profileId, apiKey);
     mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
     return clone(profile);
+  },
+  getProfileApiKey: async (profileId: string) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<ProfileApiKeyResult>("get_profile_api_key", { profileId });
+    }
+    const current = mockProfiles.find((item) => item.id === profileId);
+    if (!current) throw new Error(`Profile ${profileId} was not found.`);
+    const apiKey = mockProfileApiKeys.get(profileId) ?? null;
+    return { profileId, exists: Boolean(apiKey), apiKey };
   },
   deleteProfileApiKey: async (profileId: string) => {
     if (hasTauriRuntime()) {
@@ -1167,6 +1252,7 @@ export const api = {
       credentialStored: false,
       updatedAt: nowStamp()
     });
+    mockProfileApiKeys.delete(profileId);
     mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
     return clone(profile);
   },
@@ -1188,13 +1274,19 @@ export const api = {
       const imported = detection.importExport.profiles.map((profile) =>
         normalizeProfile({
           ...profile,
-          id: mockProfiles.some((item) => item.id === profile.id) ? uniqueProfileId(profile.name) : profile.id,
           source: "cc-switch",
-          credentialStored: false,
+          credentialStored: true,
           updatedAt: nowStamp()
         })
       );
-      mockProfiles = [...mockProfiles, ...imported];
+      for (const profile of imported) {
+        mockProfileApiKeys.set(profile.id, mockProfileApiKeys.get(profile.id) ?? "sk-cc-switch-local-mock");
+      }
+      const importedKeys = new Set(imported.map(ccSwitchProfileKey));
+      mockProfiles = [
+        ...mockProfiles.filter((profile) => profile.source !== "cc-switch" || !importedKeys.has(ccSwitchProfileKey(profile))),
+        ...imported
+      ];
       return { schemaVersion: 1, exportedAt: nowStamp(), profiles: clone(imported) };
     }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
   listSkillPacks: () => safeInvoke<SkillPack[]>("list_local_skills", undefined, () => clone(mockSkillPacks)),
@@ -1266,5 +1358,5 @@ export const api = {
     }
     return mockUpdateLibrarySkillAbout(skillId, about);
   },
-  listTasks: () => safeInvoke<TaskRun[]>("list_tasks", undefined, () => clone(fallbackTasks))
+  listTasks: () => safeInvoke<TaskRun[]>("list_tasks", undefined, () => clone(mockTasks))
 };
