@@ -149,14 +149,26 @@ export type SkillPack = {
   name: string;
   version: string;
   description: string;
-  sourceType: "local" | "git" | "mock" | string;
+  about: string;
+  sourceType: "local" | "github" | string;
   source: string;
   originalPath: string | null;
   managedPath: string;
   hasSkillMd: boolean;
   skillCount: number;
   enabled: boolean;
+  addedAt: string;
   updatedAt: string;
+  applications: SkillApplication[];
+};
+
+export type SkillApplication = {
+  targetType: "local" | "host" | string;
+  label: string;
+  hostAlias: string | null;
+  path: string;
+  detectedAt: string;
+  hasSkillMd: boolean;
 };
 
 export type SkillImportResult = {
@@ -165,26 +177,27 @@ export type SkillImportResult = {
   message: string;
 };
 
-export type OnlineSkillCandidate = {
-  id: string;
-  fullName: string;
-  name: string;
-  description: string;
-  repoUrl: string;
-  htmlUrl: string;
-  stars: number;
-  updatedAt: string;
-  source: string;
+export type HostSkillInventory = {
+  hostAlias: string;
+  scannedAt: string;
+  ok: boolean;
+  message: string;
+  skills: RemoteSkill[];
 };
 
-export type OnlineSkillSearchResult = {
-  query: string;
-  candidates: OnlineSkillCandidate[];
+export type SkillInventoryStatus = {
+  firstHostScanCompleted: boolean;
+  localSkillRoot: string;
+  localSkills: RemoteSkill[];
+  hostInventories: HostSkillInventory[];
+};
+
+export type SkillDetectionResult = {
+  skills: SkillPack[];
+  status: SkillInventoryStatus;
+  tasks: TaskRun[];
   message: string;
 };
-
-export type RemoteSkillScope = "user" | "project";
-export type SkillConflictPolicy = "backup" | "skip" | "overwrite";
 
 export type RemoteSkill = {
   name: string;
@@ -203,46 +216,46 @@ export type RemoteSkillListResult = {
   task: TaskRun;
 };
 
-export type RemoteSkillInstallPreview = {
-  hostAlias: string;
-  skillId: string;
-  skillName: string;
-  scope: RemoteSkillScope;
-  targetPath: string;
-  exists: boolean;
-  hasSkillMd: boolean;
-  backupExpected: boolean;
-  message: string;
-  task: TaskRun;
+export type SkillTargetRequest = {
+  targetType: "local" | "host" | string;
+  hostAlias?: string | null;
 };
 
-export type RemoteSkillInstallResult = {
-  hostAlias: string;
-  ok: boolean;
-  skillId: string;
-  skillName: string;
-  scope: RemoteSkillScope;
-  targetPath: string;
-  backupPath: string | null;
-  skipped: boolean;
+export type SkillTarget = {
+  targetType: "local" | "host" | string;
+  label: string;
+  hostAlias: string | null;
+  path: string;
+  installed: boolean;
+  canInstall: boolean;
+  canUninstall: boolean;
+  status: string;
   message: string;
-  task: TaskRun;
 };
 
-export type RemoteSkillBatchInstallResult = {
-  ok: boolean;
-  results: RemoteSkillInstallResult[];
+export type SkillTargetsResult = {
+  skillId: string;
+  skillName: string;
+  targets: SkillTarget[];
   tasks: TaskRun[];
+  message: string;
 };
 
-export type RemoteSkillDeleteResult = {
-  hostAlias: string;
+export type SkillTargetOperationItem = {
+  targetType: "local" | "host" | string;
+  label: string;
+  hostAlias: string | null;
   ok: boolean;
-  skillName: string;
-  targetPath: string;
-  backupPath: string | null;
   message: string;
-  task: TaskRun;
+  task: TaskRun | null;
+};
+
+export type SkillTargetOperationResult = {
+  ok: boolean;
+  skills: SkillPack[];
+  tasks: TaskRun[];
+  results: SkillTargetOperationItem[];
+  message: string;
 };
 
 export type TaskStatus = "queued" | "running" | "success" | "failed";

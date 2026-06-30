@@ -60,12 +60,14 @@ Tauri command surface:
 - `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, and record redacted task logs for a single host or selected-host batch.
 - `list_local_skills()` / `list_skill_packs()`: read persisted local managed skills.
 - `import_local_skill(path)`: validate `SKILL.md` at the selected directory or immediate child directories, then copy valid skills into CodexHub-managed storage.
-- `search_online_skills(query, limit, timeout_ms)`: query GitHub repository search for v1 skill discovery candidates.
-- `clone_skill_repo(repo_url)`: run `git clone --depth 1`, then import valid root or immediate child skills.
-- `list_remote_skills(host_alias)`: list remote `~/.codex/skills`, validate each child for `SKILL.md`, update host skill count, and record a task log.
-- `preview_remote_skill_install(host_alias, skill_id, scope, project_path)`: check the selected remote user or project target before mutation.
-- `install_remote_skill(...)` and `install_remote_skill_batch(...)`: archive the managed local skill, upload it to `/tmp`, validate/extract via `tar`, then install with explicit `backup`, `skip`, or `overwrite` policy.
-- `delete_remote_skill(host_alias, skill_name, scope, project_path, confirm_name)`: require exact confirmation and move the remote skill directory to a timestamped backup.
+- `update_library_skill_about(skill_id, about)`: persist a user-edited library About/details field for preview.
+- `get_skill_inventory_status()`: read whether the first host skill inventory scan has completed and return the remembered host skill lists.
+- `detect_installed_skills(include_hosts, timeout_ms)`: scan `%CODEX_HOME%\skills` or `%USERPROFILE%\.codex\skills`; on first scan it can also list every configured host's `~/.codex/skills`.
+- `download_github_skill(repo_url, timeout_ms)`: accept direct `https://github.com/<owner>/<repo>` / `.git` repository URLs and `tree/<branch>/<skill-path>` subdirectory URLs, shallow clone, and import valid skills; preview details default to the `SKILL.md` frontmatter `description`.
+- `get_skill_targets(skill_id, timeout_ms)`: check the local Codex skills root and configured hosts, returning installable/uninstallable targets for the library table.
+- `install_skill_targets(skill_id, targets, timeout_ms)`: install the managed copy to the selected local or host Codex skills root.
+- `uninstall_skill_targets(skill_id, targets, timeout_ms)`: move local installs into a local CodexHub backup folder and use the remote backup-delete flow for host installs.
+- `delete_library_skill(skill_id, uninstall_first, timeout_ms)`: remove the CodexHub library record and managed copy, optionally uninstalling known targets first.
 - `remote_restore_backup(server_id, backup_id)`: restore a known CodexHub backup.
 
 ## Local Data Model
@@ -101,13 +103,32 @@ type SkillPackage = {
   id: string;
   name: string;
   description: string;
+  about: string;
   version: string;
-  sourceType: "local" | "git" | "mock" | string;
+  sourceType: "local" | "github" | string;
   source: string;
   originalPath?: string;
   managedPath: string;
   hasSkillMd: boolean;
+  addedAt: string;
   updatedAt: string;
+  applications: SkillApplication[];
+};
+
+type SkillApplication = {
+  targetType: "local" | "host" | string;
+  label: string;
+  hostAlias?: string | null;
+  path: string;
+  detectedAt: string;
+  hasSkillMd: boolean;
+};
+
+type SkillInventoryStatus = {
+  firstHostScanCompleted: boolean;
+  localSkillRoot: string;
+  localSkills: RemoteSkill[];
+  hostInventories: HostSkillInventory[];
 };
 
 type OperationLog = {
@@ -175,14 +196,16 @@ Window 6 skill management is folder-based and uses the same direct SSH/SCP route
 
 - Local import accepts a selected directory with `SKILL.md`, or scans immediate child directories and imports each valid child.
 - Imported skills are copied into CodexHub-managed app config storage so later remote installs do not depend on the original source path.
-- Online discovery uses GitHub repository search for v1. Clone import is restricted to `https://github.com/...` URLs, uses `git clone --depth 1`, and then reuses the same `SKILL.md` scan.
-- Remote user scope installs to `$HOME/.codex/skills/<skill-name>`.
-- Remote project scope installs to `<projectPath>/.codex/skills/<skill-name>`, with the project root entered explicitly.
-- Install packages the managed skill as `.tgz`, uploads to `/tmp`, extracts to staging, validates `SKILL.md`, and then replaces the target.
-- If the target exists, `backup` moves it to `<skill-name>.codexhub.bak.<timestamp>`, `skip` leaves it untouched, and `overwrite` replaces it without backup.
-- Remote view lists `~/.codex/skills`, checks each child for `SKILL.md`, reports valid/invalid counts, and updates the host skill count.
-- Delete requires typed confirmation and moves the skill directory to a timestamped backup instead of hard-deleting.
-- Keep the skill root configurable in settings later to handle documentation drift between `~/.codex/skills` and `.agents/skills`.
+- Online discovery accepts direct `https://github.com/<owner>/<repo>` / `.git` repository URLs and `https://github.com/<owner>/<repo>/tree/<branch>/<skill-path>` skill subdirectory URLs. Download uses `git clone --depth 1` and reuses the same `SKILL.md` scan on the selected root or subdirectory; preview details default to the `SKILL.md` frontmatter `description`.
+- Installed-skill detection scans the local Codex skill root plus every configured host and persists the local and host skill inventory. Remote detection covers both `~/.codex/skills` and `~/.codex/superpowers/skills`, including hidden second-level layouts such as `.system/<skill>/SKILL.md`. Manual detection refreshes the host cache, the Refresh button reloads the page from the local cache only, and install/uninstall modals read the cache without probing every host on open.
+- The Skills page presents one local library table with `Skill`, `Source`, `Added`, `Applied`, and `Actions` columns.
+- The Skills page also presents an installed skill library table with local machine and host rows, showing alias, source, host IP, and compact skill tags colored consistently by skill name.
+- The Applied column is derived from `SkillApplication` rows: local installs show the local machine label, host installs show the host alias, and empty applications show an unapplied badge.
+- Target checks read the persisted inventory cache rather than probing every host on modal open. Already-installed, unavailable, or never-scanned targets are not selectable for install until detection refreshes the cache.
+- Install packages the managed skill as `.tgz`, uploads to `/tmp`, extracts to staging, validates `SKILL.md`, and installs only to the default Codex skills root.
+- Uninstall moves local installs into a CodexHub backup folder under the local skills root and moves remote skill directories to timestamped backups.
+- Delete can uninstall known applications first, or directly remove only the CodexHub local library record and managed copy.
+- The MVP does not manage `.agents/skills`; keep path-drift handling as a later setting or host capability check.
 
 ## SSH Config Policy
 

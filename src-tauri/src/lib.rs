@@ -270,16 +270,42 @@ enum SafeReconnectDecision {
 struct SkillPack {
     id: String,
     name: String,
+    #[serde(default)]
     version: String,
+    #[serde(default)]
     description: String,
+    #[serde(default)]
+    about: String,
     source_type: String,
+    #[serde(default)]
     source: String,
+    #[serde(default)]
     original_path: Option<String>,
+    #[serde(default)]
     managed_path: String,
+    #[serde(default)]
     has_skill_md: bool,
+    #[serde(default)]
     skill_count: u16,
+    #[serde(default = "default_true")]
     enabled: bool,
+    #[serde(default)]
+    added_at: String,
+    #[serde(default)]
     updated_at: String,
+    #[serde(default)]
+    applications: Vec<SkillApplication>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillApplication {
+    target_type: String,
+    label: String,
+    host_alias: Option<String>,
+    path: String,
+    detected_at: String,
+    has_skill_md: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -290,29 +316,7 @@ struct SkillImportResult {
     message: String,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OnlineSkillCandidate {
-    id: String,
-    full_name: String,
-    name: String,
-    description: String,
-    repo_url: String,
-    html_url: String,
-    stars: u64,
-    updated_at: String,
-    source: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OnlineSkillSearchResult {
-    query: String,
-    candidates: Vec<OnlineSkillCandidate>,
-    message: String,
-}
-
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteSkill {
     name: String,
@@ -350,21 +354,6 @@ enum SkillConflictPolicy {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RemoteSkillInstallPreview {
-    host_alias: String,
-    skill_id: String,
-    skill_name: String,
-    scope: RemoteSkillScope,
-    target_path: String,
-    exists: bool,
-    has_skill_md: bool,
-    backup_expected: bool,
-    message: String,
-    task: TaskRun,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct RemoteSkillInstallResult {
     host_alias: String,
     ok: bool,
@@ -380,14 +369,6 @@ struct RemoteSkillInstallResult {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RemoteSkillBatchInstallResult {
-    ok: bool,
-    results: Vec<RemoteSkillInstallResult>,
-    tasks: Vec<TaskRun>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct RemoteSkillDeleteResult {
     host_alias: String,
     ok: bool,
@@ -396,6 +377,90 @@ struct RemoteSkillDeleteResult {
     backup_path: Option<String>,
     message: String,
     task: TaskRun,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillInventoryStatus {
+    #[serde(default)]
+    first_host_scan_completed: bool,
+    #[serde(default)]
+    local_skill_root: String,
+    #[serde(default)]
+    local_skills: Vec<RemoteSkill>,
+    #[serde(default)]
+    host_inventories: Vec<HostSkillInventory>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostSkillInventory {
+    host_alias: String,
+    scanned_at: String,
+    ok: bool,
+    message: String,
+    skills: Vec<RemoteSkill>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillDetectionResult {
+    skills: Vec<SkillPack>,
+    status: SkillInventoryStatus,
+    tasks: Vec<TaskRun>,
+    message: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillTargetRequest {
+    target_type: String,
+    host_alias: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillTarget {
+    target_type: String,
+    label: String,
+    host_alias: Option<String>,
+    path: String,
+    installed: bool,
+    can_install: bool,
+    can_uninstall: bool,
+    status: String,
+    message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillTargetsResult {
+    skill_id: String,
+    skill_name: String,
+    targets: Vec<SkillTarget>,
+    tasks: Vec<TaskRun>,
+    message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillTargetOperationItem {
+    target_type: String,
+    label: String,
+    host_alias: Option<String>,
+    ok: bool,
+    message: String,
+    task: Option<TaskRun>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillTargetOperationResult {
+    ok: bool,
+    skills: Vec<SkillPack>,
+    tasks: Vec<TaskRun>,
+    results: Vec<SkillTargetOperationItem>,
+    message: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -772,6 +837,47 @@ fn codex_path_probe_script() -> String {
 
 fn codex_version_probe_script() -> String {
     format!("{CODEX_RESOLVER_SCRIPT}\nprintf '%s\\n' \"$best_version\"")
+}
+
+fn remote_skill_count_script() -> &'static str {
+    r#"count=0
+count_skill_dir() {
+  dir=$1
+  [ -d "$dir" ] || return
+  count=$((count + 1))
+}
+scan_child_dir() {
+  dir=$1
+  [ -d "$dir" ] || return
+  if [ -f "$dir/SKILL.md" ]; then
+    count_skill_dir "$dir"
+    return
+  fi
+  before=$count
+  for nested in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [ -d "$nested" ] || continue
+    [ -f "$nested/SKILL.md" ] || continue
+    count_skill_dir "$nested"
+  done
+  if [ "$count" = "$before" ]; then
+    count_skill_dir "$dir"
+  fi
+}
+scan_root() {
+  root=$1
+  [ -d "$root" ] || return
+  if [ -f "$root/SKILL.md" ]; then
+    count_skill_dir "$root"
+  else
+    for dir in "$root"/* "$root"/.[!.]* "$root"/..?*; do
+      scan_child_dir "$dir"
+    done
+  fi
+}
+scan_root "$HOME/.codex/skills"
+scan_root "$HOME/.codex/superpowers/skills"
+printf '%s\n' "$count"
+"#
 }
 
 const CODEX_PATH_REPAIR_SCRIPT: &str = r##"set -u
@@ -1236,6 +1342,7 @@ fn list_hosts(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<Host>, S
     *state.hosts.lock().expect("hosts mutex poisoned") = hosts;
     let profiles = profile_apply_profiles_snapshot(&app, &state);
     reconcile_hosts_with_profile_links(&state, &profiles);
+    apply_skill_inventory_to_hosts(&app, &state)?;
     let next_hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
     save_hosts(&app, &state, &next_hosts)?;
     Ok(next_hosts)
@@ -1297,7 +1404,12 @@ fn add_host(app: AppHandle, state: State<'_, AppState>, draft: HostDraft) -> Res
 }
 
 #[tauri::command]
-fn update_host(app: AppHandle, state: State<'_, AppState>, id: String, patch: HostPatch) -> Result<Host, String> {
+fn update_host(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    patch: HostPatch,
+) -> Result<Host, String> {
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
 
     if let Some(host) = hosts.iter_mut().find(|host| host.id == id) {
@@ -1382,7 +1494,11 @@ fn delete_host(app: AppHandle, state: State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-fn test_ssh_connection(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<ConnectionTest, String> {
+fn test_ssh_connection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ConnectionTest, String> {
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
 
     if let Some(host) = hosts.iter_mut().find(|host| host.id == id) {
@@ -1750,148 +1866,106 @@ fn import_local_skill(
 }
 
 #[tauri::command]
-async fn search_online_skills(
-    query: String,
-    limit: Option<u16>,
+fn update_library_skill_about(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    skill_id: String,
+    about: String,
+) -> Result<Vec<SkillPack>, String> {
+    let mut skills = load_skills(&app, &state)?;
+    let Some(skill) = skills.iter_mut().find(|skill| skill.id == skill_id) else {
+        return Err(format!("Skill {skill_id} was not found."));
+    };
+    let details = about.trim().to_string();
+    skill.description = details.clone();
+    skill.about = details;
+    skill.updated_at = timestamp_label();
+    save_skills(&app, &state, &skills)?;
+    Ok(skills)
+}
+
+#[tauri::command]
+fn get_skill_inventory_status(app: AppHandle) -> Result<SkillInventoryStatus, String> {
+    load_skill_inventory_status(&app)
+}
+
+#[tauri::command]
+async fn detect_installed_skills(
+    app: AppHandle,
+    include_hosts: Option<bool>,
     timeout_ms: Option<u64>,
-) -> Result<OnlineSkillSearchResult, String> {
-    run_blocking_command("search_online_skills", move || {
-        run_github_skill_search(query, limit.unwrap_or(10), timeout_ms)
+) -> Result<SkillDetectionResult, String> {
+    run_blocking_command("detect_installed_skills", move || {
+        let state = app.state::<AppState>();
+        run_detect_installed_skills(&app, &state, include_hosts.unwrap_or(false), timeout_ms)
     })
     .await?
 }
 
 #[tauri::command]
-async fn clone_skill_repo(
+async fn download_github_skill(
     app: AppHandle,
     repo_url: String,
     timeout_ms: Option<u64>,
 ) -> Result<SkillImportResult, String> {
-    run_blocking_command("clone_skill_repo", move || {
+    run_blocking_command("download_github_skill", move || {
         let state = app.state::<AppState>();
-        clone_and_import_skill_repo(&app, &state, repo_url, timeout_ms)
+        download_and_import_github_skill(&app, &state, repo_url, timeout_ms)
     })
     .await?
 }
 
 #[tauri::command]
-async fn list_remote_skills(
+async fn get_skill_targets(
     app: AppHandle,
-    host_alias: String,
-    timeout_ms: Option<u64>,
-) -> Result<RemoteSkillListResult, String> {
-    run_blocking_command("list_remote_skills", move || {
-        let state = app.state::<AppState>();
-        run_remote_skill_list(&state, host_alias, timeout_ms)
-    })
-    .await?
-}
-
-#[tauri::command]
-async fn preview_remote_skill_install(
-    app: AppHandle,
-    host_alias: String,
     skill_id: String,
-    scope: RemoteSkillScope,
-    project_path: Option<String>,
     timeout_ms: Option<u64>,
-) -> Result<RemoteSkillInstallPreview, String> {
-    run_blocking_command("preview_remote_skill_install", move || {
+) -> Result<SkillTargetsResult, String> {
+    run_blocking_command("get_skill_targets", move || {
         let state = app.state::<AppState>();
-        run_remote_skill_install_preview(
-            &app,
-            &state,
-            host_alias,
-            skill_id,
-            scope,
-            project_path,
-            timeout_ms,
-        )
+        run_get_skill_targets(&app, &state, skill_id, timeout_ms)
     })
     .await?
 }
 
 #[tauri::command]
-async fn install_remote_skill(
+async fn install_skill_targets(
     app: AppHandle,
-    host_alias: String,
     skill_id: String,
-    scope: RemoteSkillScope,
-    project_path: Option<String>,
-    conflict_policy: Option<SkillConflictPolicy>,
+    targets: Vec<SkillTargetRequest>,
     timeout_ms: Option<u64>,
-) -> Result<RemoteSkillInstallResult, String> {
-    run_blocking_command("install_remote_skill", move || {
+) -> Result<SkillTargetOperationResult, String> {
+    run_blocking_command("install_skill_targets", move || {
         let state = app.state::<AppState>();
-        run_remote_skill_install(
-            &app,
-            &state,
-            host_alias,
-            skill_id,
-            scope,
-            project_path,
-            conflict_policy.unwrap_or(SkillConflictPolicy::Backup),
-            timeout_ms,
-        )
+        run_install_skill_targets(&app, &state, skill_id, targets, timeout_ms)
     })
     .await?
 }
 
 #[tauri::command]
-async fn install_remote_skill_batch(
+async fn uninstall_skill_targets(
     app: AppHandle,
-    host_aliases: Vec<String>,
     skill_id: String,
-    scope: RemoteSkillScope,
-    project_path: Option<String>,
-    conflict_policy: Option<SkillConflictPolicy>,
+    targets: Vec<SkillTargetRequest>,
     timeout_ms: Option<u64>,
-) -> Result<RemoteSkillBatchInstallResult, String> {
-    run_blocking_command("install_remote_skill_batch", move || {
+) -> Result<SkillTargetOperationResult, String> {
+    run_blocking_command("uninstall_skill_targets", move || {
         let state = app.state::<AppState>();
-        let mut results = Vec::new();
-        for host_alias in host_aliases {
-            results.push(run_remote_skill_install(
-                &app,
-                &state,
-                host_alias,
-                skill_id.clone(),
-                scope.clone(),
-                project_path.clone(),
-                conflict_policy
-                    .clone()
-                    .unwrap_or(SkillConflictPolicy::Backup),
-                timeout_ms,
-            )?);
-        }
-        let ok = results.iter().all(|result| result.ok || result.skipped);
-        let tasks = results.iter().map(|result| result.task.clone()).collect();
-        Ok(RemoteSkillBatchInstallResult { ok, results, tasks })
+        run_uninstall_skill_targets(&app, &state, skill_id, targets, timeout_ms)
     })
     .await?
 }
 
 #[tauri::command]
-async fn delete_remote_skill(
+async fn delete_library_skill(
     app: AppHandle,
-    host_alias: String,
-    skill_name: String,
-    scope: RemoteSkillScope,
-    project_path: Option<String>,
-    confirm_name: String,
+    skill_id: String,
+    uninstall_first: bool,
     timeout_ms: Option<u64>,
-) -> Result<RemoteSkillDeleteResult, String> {
-    run_blocking_command("delete_remote_skill", move || {
+) -> Result<SkillTargetOperationResult, String> {
+    run_blocking_command("delete_library_skill", move || {
         let state = app.state::<AppState>();
-        run_remote_skill_delete(
-            &state,
-            host_alias,
-            skill_name,
-            scope,
-            project_path,
-            confirm_name,
-            timeout_ms,
-        )
+        run_delete_library_skill(&app, &state, skill_id, uninstall_first, timeout_ms)
     })
     .await?
 }
@@ -2725,6 +2799,7 @@ fn run_remote_probe(
 
     let codex_path_probe_script = codex_path_probe_script();
     let codex_version_probe_script = codex_version_probe_script();
+    let remote_skill_count_script = remote_skill_count_script();
     let commands = vec![
         ("uname -s", "uname -s", TaskLogLevel::Info),
         ("uname -m", "uname -m", TaskLogLevel::Info),
@@ -2753,7 +2828,7 @@ fn run_remote_probe(
         ),
         (
             "count ~/.codex/skills",
-            "if [ -d \"$HOME/.codex/skills\" ]; then find \"$HOME/.codex/skills\" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l; else printf 0; fi",
+            remote_skill_count_script,
             TaskLogLevel::Info,
         ),
     ];
@@ -5626,44 +5701,63 @@ mod tests {
     }
 
     #[test]
-    fn github_skill_search_parser_filters_to_safe_github_repositories() {
-        let content = r#"{
-          "items": [
-            {
-              "full_name": "owner/example-skill",
-              "name": "example-skill",
-              "description": "Codex skill pack",
-              "clone_url": "https://github.com/owner/example-skill.git",
-              "html_url": "https://github.com/owner/example-skill",
-              "stargazers_count": 42,
-              "updated_at": "2026-06-28T00:00:00Z"
-            },
-            {
-              "full_name": "owner/private",
-              "name": "private",
-              "description": "bad transport",
-              "clone_url": "git@github.com:owner/private.git",
-              "html_url": "https://github.com/owner/private",
-              "stargazers_count": 1,
-              "updated_at": "2026-06-27T00:00:00Z"
-            }
-          ]
-        }"#;
+    fn installed_skill_scan_includes_second_level_system_skills() {
+        let root = env::temp_dir().join(format!(
+            "codexhub-installed-skill-scan-{}",
+            timestamp_millis()
+        ));
+        let local = root.join("pdf");
+        let system = root.join(".system").join("imagegen");
+        let too_deep = root.join("nested").join("deep").join("ignored");
+        fs::create_dir_all(&local).expect("create local skill");
+        fs::create_dir_all(&system).expect("create system skill");
+        fs::create_dir_all(&too_deep).expect("create deep skill");
+        fs::write(local.join("SKILL.md"), "# PDF").expect("write local skill");
+        fs::write(system.join("SKILL.md"), "# Image").expect("write system skill");
+        fs::write(too_deep.join("SKILL.md"), "# Deep").expect("write deep skill");
 
-        let candidates = parse_github_skill_search(content, 10).expect("parse candidates");
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].id, "owner-example-skill");
-        assert_eq!(
-            candidates[0].repo_url,
+        let candidates = installed_skill_candidate_dirs(&root).expect("scan installed skills");
+
+        assert!(candidates.contains(&local));
+        assert!(candidates.contains(&system));
+        assert!(!candidates.contains(&too_deep));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn github_download_url_parser_is_strict_and_supports_tree_paths() {
+        assert!(is_allowed_github_repo_url(
+            "https://github.com/owner/example-skill"
+        ));
+        assert!(is_allowed_github_repo_url(
             "https://github.com/owner/example-skill.git"
+        ));
+        assert!(is_allowed_github_repo_url(
+            "https://github.com/openai/skills/tree/main/skills/.curated/winui-app"
+        ));
+        assert!(!is_allowed_github_repo_url(
+            "git@github.com:owner/example-skill.git"
+        ));
+        assert!(!is_allowed_github_repo_url("https://github.com/owner"));
+        assert!(!is_allowed_github_repo_url(
+            "https://github.com/owner/example/extra"
+        ));
+        let repo_url = parse_github_skill_url("https://github.com/owner/example-skill.git")
+            .expect("parse repo url");
+        assert_eq!(repo_url.owner, "owner");
+        assert_eq!(repo_url.repo, "example-skill");
+        let tree_url = parse_github_skill_url(
+            "https://github.com/openai/skills/tree/main/skills/.curated/winui-app",
+        )
+        .expect("parse tree url");
+        assert_eq!(tree_url.owner, "openai");
+        assert_eq!(tree_url.repo, "skills");
+        assert_eq!(tree_url.clone_url, "https://github.com/openai/skills.git");
+        assert_eq!(tree_url.branch.as_deref(), Some("main"));
+        assert_eq!(
+            tree_url.skill_subpath.as_deref(),
+            Some(Path::new("skills/.curated/winui-app"))
         );
-        assert_eq!(candidates[0].stars, 42);
-
-        assert!(parse_github_skill_search("<html>rate limited</html>", 10).is_err());
-        assert!(parse_github_skill_search(r#"{"message":"rate limit"}"#, 10)
-            .err()
-            .expect("github error")
-            .contains("GitHub search failed"));
     }
 
     #[test]
@@ -5679,6 +5773,69 @@ CODEXHUB_REMOTE_SKILL\tdraft-helper\tno\tmissing-skill-md\t/home/test/.codex/ski
         assert!(skills[0].has_skill_md);
         assert_eq!(skills[1].status, "missing-skill-md");
         assert!(!skills[1].has_skill_md);
+    }
+
+    #[test]
+    fn remote_skill_list_parser_accepts_space_delimited_output() {
+        let stdout = "CODEXHUB_SKILL_ROOT=/home/jy/.codex/skills\n\
+CODEXHUB_REMOTE_SKILL imagegen yes valid /home/jy/.codex/skills/.system/imagegen\n\
+CODEXHUB_REMOTE_SKILL openai-docs yes valid /home/jy/.codex/skills/.system/openai-docs\n\
+CODEXHUB_SKILL_ROOT=/home/jy/.codex/superpowers/skills\n\
+CODEXHUB_REMOTE_SKILL brainstorming yes valid /home/jy/.codex/superpowers/skills/brainstorming\n\
+CODEXHUB_SKILL_COUNT=3\n";
+
+        let skills = parse_remote_skill_list(stdout);
+
+        assert_eq!(skills.len(), 3);
+        assert_eq!(skills[0].name, "imagegen");
+        assert_eq!(
+            skills[2].path,
+            "/home/jy/.codex/superpowers/skills/brainstorming"
+        );
+        assert!(skills.iter().all(|skill| skill.has_skill_md));
+    }
+
+    #[test]
+    fn remote_skill_list_parser_deduplicates_paths() {
+        let stdout = "CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/imagegen\n\
+CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/imagegen\n";
+
+        let skills = parse_remote_skill_list(stdout);
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "imagegen");
+    }
+
+    #[test]
+    fn remote_skill_list_script_scans_hidden_second_level_skills() {
+        let script = remote_skill_list_script();
+
+        assert!(script.contains("\"$root\"/.[!.]*"));
+        assert!(script.contains("\"$root\"/..?*"));
+        assert!(script.contains("\"$dir\"/.[!.]*"));
+        assert!(script.contains("\"$dir\"/..?*"));
+        assert!(script.contains("$HOME/.codex/superpowers/skills"));
+        assert!(script.contains("scan_child_dir"));
+        assert!(script.contains("scan_root \"$HOME/.codex/skills\""));
+        assert!(script.contains("scan_root \"$HOME/.codex/superpowers/skills\""));
+        assert!(script.contains("emit_skill_dir \"$nested\""));
+        assert!(!script.contains("roots=\""));
+    }
+
+    #[test]
+    fn remote_skill_count_script_matches_hidden_second_level_scan() {
+        let script = remote_skill_count_script();
+
+        assert!(script.contains("\"$root\"/.[!.]*"));
+        assert!(script.contains("\"$root\"/..?*"));
+        assert!(script.contains("\"$dir\"/.[!.]*"));
+        assert!(script.contains("\"$dir\"/..?*"));
+        assert!(script.contains("$HOME/.codex/superpowers/skills"));
+        assert!(script.contains("scan_root \"$HOME/.codex/skills\""));
+        assert!(script.contains("scan_root \"$HOME/.codex/superpowers/skills\""));
+        assert!(script.contains("count_skill_dir \"$nested\""));
+        assert!(!script.contains("roots=\""));
+        assert!(!script.contains("find \"$HOME/.codex/skills\" -mindepth 1 -maxdepth 1"));
     }
 
     #[test]
@@ -6021,13 +6178,14 @@ pub fn run() {
             import_cc_switch_profiles,
             list_local_skills,
             import_local_skill,
-            search_online_skills,
-            clone_skill_repo,
-            list_remote_skills,
-            preview_remote_skill_install,
-            install_remote_skill,
-            install_remote_skill_batch,
-            delete_remote_skill,
+            update_library_skill_about,
+            get_skill_inventory_status,
+            detect_installed_skills,
+            download_github_skill,
+            get_skill_targets,
+            install_skill_targets,
+            uninstall_skill_targets,
+            delete_library_skill,
             list_tasks,
             list_skill_packs
         ])
@@ -6169,6 +6327,78 @@ fn skill_clone_cache_dir(app: &AppHandle) -> PathBuf {
         .join("skill-clones")
 }
 
+fn skill_inventory_path(app: &AppHandle) -> PathBuf {
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
+        .join("skills-inventory.json")
+}
+
+fn local_codex_skills_root() -> PathBuf {
+    env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .or_else(|| home_dir().map(|path| path.join(".codex")))
+        .unwrap_or_else(|| PathBuf::from(".codex"))
+        .join("skills")
+}
+
+fn load_skill_inventory_status(app: &AppHandle) -> Result<SkillInventoryStatus, String> {
+    let path = skill_inventory_path(app);
+    let mut status = if path.exists() {
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+        serde_json::from_str::<SkillInventoryStatus>(&content)
+            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
+    } else {
+        SkillInventoryStatus {
+            first_host_scan_completed: false,
+            local_skill_root: String::new(),
+            local_skills: Vec::new(),
+            host_inventories: Vec::new(),
+        }
+    };
+    status.local_skill_root = local_codex_skills_root().to_string_lossy().into_owned();
+    Ok(status)
+}
+
+fn save_skill_inventory_status(
+    app: &AppHandle,
+    status: &SkillInventoryStatus,
+) -> Result<(), String> {
+    let path = skill_inventory_path(app);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let content = serde_json::to_string_pretty(status).map_err(|error| error.to_string())?;
+    fs::write(&path, content)
+        .map_err(|error| format!("Failed to write {}: {error}", path.display()))
+}
+
+fn apply_skill_inventory_to_hosts(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let status = load_skill_inventory_status(app)?;
+    let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+    for host in hosts.iter_mut() {
+        if let Some(inventory) = status
+            .host_inventories
+            .iter()
+            .find(|item| item.host_alias.eq_ignore_ascii_case(&host.host_alias))
+        {
+            let count = if inventory.ok {
+                inventory.skills.len().min(u16::MAX as usize) as u16
+            } else {
+                0
+            };
+            host.skills_exists = Some(inventory.ok && count > 0);
+            host.skills_count = Some(count);
+            if inventory.ok {
+                host.status = HostStatus::Online;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn load_skills(app: &AppHandle, state: &AppState) -> Result<Vec<SkillPack>, String> {
     let path = skills_path(app);
     let mut skills = if path.exists() {
@@ -6183,6 +6413,9 @@ fn load_skills(app: &AppHandle, state: &AppState) -> Result<Vec<SkillPack>, Stri
             .expect("skill packs mutex poisoned")
             .clone()
     };
+    for skill in &mut skills {
+        normalize_skill_pack(skill);
+    }
     skills.sort_by_key(|skill| skill.name.to_ascii_lowercase());
     *state
         .skill_packs
@@ -6204,6 +6437,42 @@ fn save_skills(app: &AppHandle, state: &AppState, skills: &[SkillPack]) -> Resul
         .lock()
         .expect("skill packs mutex poisoned") = skills.to_vec();
     Ok(())
+}
+
+fn normalize_skill_pack(skill: &mut SkillPack) {
+    if skill.source_type == "git" {
+        skill.source_type = "github".into();
+    }
+    if skill.added_at.trim().is_empty() {
+        skill.added_at = date_label();
+    }
+    if skill.updated_at.trim().is_empty() {
+        skill.updated_at = timestamp_label();
+    }
+    if skill.about.trim().is_empty() {
+        skill.about = skill.description.clone();
+    }
+    skill
+        .applications
+        .retain(|application| !application.target_type.trim().is_empty());
+}
+
+fn merge_imported_skill(skills: &mut Vec<SkillPack>, mut skill: SkillPack) -> SkillPack {
+    if let Some(existing) = skills.iter().find(|item| item.id == skill.id) {
+        skill.added_at = if existing.added_at.trim().is_empty() {
+            date_label()
+        } else {
+            existing.added_at.clone()
+        };
+        if skill.about.trim().is_empty() {
+            skill.about = existing.about.clone();
+        }
+        skill.applications = existing.applications.clone();
+    }
+    normalize_skill_pack(&mut skill);
+    skills.retain(|item| item.id != skill.id);
+    skills.push(skill.clone());
+    skill
 }
 
 fn import_skills_from_path(
@@ -6234,9 +6503,7 @@ fn import_skills_from_path(
     for candidate in candidate_dirs {
         match import_single_skill(app, &candidate, source_type, source_override.as_deref()) {
             Ok(skill) => {
-                skills.retain(|item| item.id != skill.id);
-                skills.push(skill.clone());
-                imported.push(skill);
+                imported.push(merge_imported_skill(&mut skills, skill));
             }
             Err(error) => skipped.push(format!("{}: {error}", candidate.display())),
         }
@@ -6294,11 +6561,13 @@ fn import_single_skill(
         })?;
     }
     copy_skill_dir(source_dir, &managed_path)?;
+    let description = metadata.description.unwrap_or_default();
     Ok(SkillPack {
         id: id.clone(),
         name: metadata.name,
         version: metadata.version.unwrap_or_default(),
-        description: metadata.description.unwrap_or_default(),
+        description: description.clone(),
+        about: description,
         source_type: source_type.into(),
         source: source_override
             .map(str::to_string)
@@ -6308,7 +6577,9 @@ fn import_single_skill(
         has_skill_md: true,
         skill_count: 1,
         enabled: true,
+        added_at: date_label(),
         updated_at: timestamp_label(),
+        applications: Vec::new(),
     })
 }
 
@@ -6449,145 +6720,363 @@ fn copy_skill_dir(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_github_skill_search(
-    query: String,
-    limit: u16,
+fn run_detect_installed_skills(
+    app: &AppHandle,
+    state: &AppState,
+    include_hosts: bool,
     timeout_ms: Option<u64>,
-) -> Result<OnlineSkillSearchResult, String> {
-    let query = query.trim().to_string();
-    if query.is_empty() {
-        return Err("Search query is required.".into());
+) -> Result<SkillDetectionResult, String> {
+    let local_root = local_codex_skills_root();
+    let mut skills = load_skills(app, state)?;
+    for skill in &mut skills {
+        skill
+            .applications
+            .retain(|application| application.target_type != "local");
     }
-    let limit = limit.clamp(1, 25);
-    let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(30_000)));
-    let temp_dir = env::temp_dir().join(format!("codexhub-skill-search-{}", timestamp_millis()));
-    fs::create_dir_all(&temp_dir).map_err(|error| error.to_string())?;
-    let output_path = temp_dir.join("github-skill-search.json");
-    let search_query = format!("{query} SKILL.md codex skill");
-    let url = format!(
-        "https://api.github.com/search/repositories?q={}&per_page={limit}",
-        url_encode(&search_query)
-    );
-    let output = local_curl_download(
-        &url,
-        &output_path,
-        "search GitHub skill repositories",
-        timeout,
-        None,
-    );
-    if !output.success() {
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err(command_detail(&output));
+
+    let mut imported_count = 0usize;
+    let mut skipped = Vec::new();
+    let mut local_inventory_skills = Vec::new();
+    if local_root.is_dir() {
+        for candidate in installed_skill_candidate_dirs(&local_root)? {
+            match import_single_skill(app, &candidate, "local", None) {
+                Ok(detected) => {
+                    let application = local_skill_application(&candidate, detected.has_skill_md);
+                    let detected_id = detected.id.clone();
+                    local_inventory_skills.push(RemoteSkill {
+                        name: detected_id.clone(),
+                        path: candidate.to_string_lossy().into_owned(),
+                        has_skill_md: detected.has_skill_md,
+                        status: if detected.has_skill_md {
+                            "valid".into()
+                        } else {
+                            "invalid".into()
+                        },
+                    });
+                    if let Some(existing) = skills.iter().find(|item| item.id == detected_id) {
+                        let mut merged = detected;
+                        merged.source_type = existing.source_type.clone();
+                        merged.source = existing.source.clone();
+                        merged.original_path = existing.original_path.clone();
+                        merged.about = if existing.about.trim().is_empty() {
+                            merged.about
+                        } else {
+                            existing.about.clone()
+                        };
+                        merge_imported_skill(&mut skills, merged);
+                    } else {
+                        imported_count += 1;
+                        merge_imported_skill(&mut skills, detected);
+                    }
+                    set_skill_application(&mut skills, &detected_id, application);
+                }
+                Err(error) => skipped.push(format!("{}: {error}", candidate.display())),
+            }
+        }
     }
-    let content = fs::read_to_string(&output_path)
-        .map_err(|error| format!("Failed to read GitHub search response: {error}"))?;
-    let candidates = parse_github_skill_search(&content, limit)?;
-    let _ = fs::remove_dir_all(&temp_dir);
-    Ok(OnlineSkillSearchResult {
-        query,
-        message: format!(
-            "Found {} GitHub candidate(s). Clone a result to validate SKILL.md.",
-            candidates.len()
-        ),
-        candidates,
+
+    let mut tasks = Vec::new();
+    let mut status = load_skill_inventory_status(app)?;
+    status.local_skill_root = local_root.to_string_lossy().into_owned();
+    local_inventory_skills.sort_by_key(|skill| skill.name.to_ascii_lowercase());
+    status.local_skills = local_inventory_skills;
+    if include_hosts {
+        let hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+        for host in hosts {
+            let result = run_remote_skill_list(state, host.host_alias.clone(), timeout_ms)?;
+            let ok = matches!(result.task.status, TaskStatus::Success);
+            upsert_host_inventory(
+                &mut status,
+                HostSkillInventory {
+                    host_alias: result.host_alias.clone(),
+                    scanned_at: timestamp_label(),
+                    ok,
+                    message: result.task.summary.clone(),
+                    skills: result.skills.clone(),
+                },
+            );
+            tasks.push(result.task);
+        }
+        status.first_host_scan_completed = true;
+        refresh_host_applications_from_inventory(&mut skills, &status);
+    }
+
+    save_skills(app, state, &skills)?;
+    save_skill_inventory_status(app, &status)?;
+    let message = if include_hosts {
+        format!(
+            "Detected local skills and scanned {} host(s). Imported {} new local skill(s); {} skipped.",
+            tasks.len(),
+            imported_count,
+            skipped.len()
+        )
+    } else {
+        format!(
+            "Detected local Codex skills. Imported {} new local skill(s); {} skipped.",
+            imported_count,
+            skipped.len()
+        )
+    };
+    Ok(SkillDetectionResult {
+        skills,
+        status,
+        tasks,
+        message,
     })
 }
 
-fn parse_github_skill_search(
-    content: &str,
-    limit: u16,
-) -> Result<Vec<OnlineSkillCandidate>, String> {
-    let value: serde_json::Value = serde_json::from_str(content)
-        .map_err(|error| format!("GitHub search response was not JSON: {error}"))?;
-    if let Some(message) = value.get("message").and_then(serde_json::Value::as_str) {
-        if !value
-            .get("items")
-            .map(|items| items.is_array())
-            .unwrap_or(false)
-        {
-            return Err(format!("GitHub search failed: {message}"));
-        }
-    }
-    let items = value
-        .get("items")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "GitHub search response did not include items.".to_string())?;
+fn installed_skill_candidate_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut candidates = Vec::new();
-    for item in items.iter().take(limit as usize) {
-        let full_name = item
-            .get("full_name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let repo_url = item
-            .get("clone_url")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if full_name.is_empty() || !is_allowed_github_repo_url(&repo_url) {
-            continue;
-        }
-        candidates.push(OnlineSkillCandidate {
-            id: safe_skill_id(&full_name)
-                .unwrap_or_else(|_| format!("github-{}", candidates.len() + 1)),
-            name: item
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(&full_name)
-                .to_string(),
-            description: item
-                .get("description")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            html_url: item
-                .get("html_url")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            stars: item
-                .get("stargazers_count")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0),
-            updated_at: item
-                .get("updated_at")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            source: "github".into(),
-            full_name,
-            repo_url,
-        });
+    if root.join("SKILL.md").is_file() {
+        candidates.push(root.to_path_buf());
     }
+    if root.is_dir() {
+        for entry in fs::read_dir(root)
+            .map_err(|error| format!("Failed to read {}: {error}", root.display()))?
+        {
+            let entry = entry.map_err(|error| format!("Failed to read skill entry: {error}"))?;
+            let child = entry.path();
+            if !child.is_dir() {
+                continue;
+            }
+            if child.join("SKILL.md").is_file() {
+                candidates.push(child);
+            } else {
+                for nested in fs::read_dir(&child)
+                    .map_err(|error| format!("Failed to read {}: {error}", child.display()))?
+                {
+                    let nested = nested
+                        .map_err(|error| format!("Failed to read nested skill entry: {error}"))?;
+                    let nested_path = nested.path();
+                    if nested_path.is_dir() && nested_path.join("SKILL.md").is_file() {
+                        candidates.push(nested_path);
+                    }
+                }
+            }
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
     Ok(candidates)
 }
 
-fn clone_and_import_skill_repo(
+fn set_skill_application(skills: &mut [SkillPack], skill_id: &str, application: SkillApplication) {
+    if let Some(skill) = skills.iter_mut().find(|skill| skill.id == skill_id) {
+        skill.applications.retain(|current| {
+            current.target_type != application.target_type
+                || current.host_alias != application.host_alias
+        });
+        skill.applications.push(application);
+        skill.updated_at = timestamp_label();
+    }
+}
+
+fn remove_skill_application(
+    skills: &mut [SkillPack],
+    skill_id: &str,
+    request: &SkillTargetRequest,
+) {
+    if let Some(skill) = skills.iter_mut().find(|skill| skill.id == skill_id) {
+        skill.applications.retain(|current| {
+            current.target_type != request.target_type || current.host_alias != request.host_alias
+        });
+        skill.updated_at = timestamp_label();
+    }
+}
+
+fn local_skill_application(path: &Path, has_skill_md: bool) -> SkillApplication {
+    SkillApplication {
+        target_type: "local".into(),
+        label: "local".into(),
+        host_alias: None,
+        path: path.to_string_lossy().into_owned(),
+        detected_at: timestamp_label(),
+        has_skill_md,
+    }
+}
+
+fn host_skill_application(alias: &str, path: &str, has_skill_md: bool) -> SkillApplication {
+    SkillApplication {
+        target_type: "host".into(),
+        label: alias.to_string(),
+        host_alias: Some(alias.to_string()),
+        path: path.to_string(),
+        detected_at: timestamp_label(),
+        has_skill_md,
+    }
+}
+
+fn refresh_host_applications_from_inventory(
+    skills: &mut [SkillPack],
+    status: &SkillInventoryStatus,
+) {
+    let scanned_aliases = status
+        .host_inventories
+        .iter()
+        .filter(|inventory| inventory.ok)
+        .map(|inventory| inventory.host_alias.clone())
+        .collect::<BTreeSet<_>>();
+    for skill in skills.iter_mut() {
+        skill.applications.retain(|application| {
+            application.target_type != "host"
+                || application
+                    .host_alias
+                    .as_ref()
+                    .map(|alias| !scanned_aliases.contains(alias))
+                    .unwrap_or(true)
+        });
+    }
+    let mut additions = Vec::new();
+    for inventory in status
+        .host_inventories
+        .iter()
+        .filter(|inventory| inventory.ok)
+    {
+        for skill in skills.iter() {
+            if let Some(remote) = inventory
+                .skills
+                .iter()
+                .find(|remote| skill_matches_remote(skill, remote))
+            {
+                additions.push((
+                    skill.id.clone(),
+                    host_skill_application(
+                        &inventory.host_alias,
+                        &remote.path,
+                        remote.has_skill_md,
+                    ),
+                ));
+            }
+        }
+    }
+    for (skill_id, application) in additions {
+        set_skill_application(skills, &skill_id, application);
+    }
+}
+
+fn skill_matches_remote(skill: &SkillPack, remote: &RemoteSkill) -> bool {
+    remote.name.eq_ignore_ascii_case(&skill.id) || remote.name.eq_ignore_ascii_case(&skill.name)
+}
+
+fn upsert_host_inventory(status: &mut SkillInventoryStatus, inventory: HostSkillInventory) {
+    status
+        .host_inventories
+        .retain(|item| !item.host_alias.eq_ignore_ascii_case(&inventory.host_alias));
+    status.host_inventories.push(inventory);
+    status
+        .host_inventories
+        .sort_by_key(|item| item.host_alias.to_ascii_lowercase());
+}
+
+fn update_host_inventory_skill(
+    app: &AppHandle,
+    alias: &str,
+    skill_name: &str,
+    path: &str,
+    installed: bool,
+) -> Result<(), String> {
+    let mut status = load_skill_inventory_status(app)?;
+    if let Some(inventory) = status
+        .host_inventories
+        .iter_mut()
+        .find(|item| item.host_alias.eq_ignore_ascii_case(alias))
+    {
+        inventory.scanned_at = timestamp_label();
+        inventory.ok = true;
+        inventory
+            .skills
+            .retain(|skill| !skill.name.eq_ignore_ascii_case(skill_name));
+        if installed {
+            inventory.skills.push(RemoteSkill {
+                name: skill_name.to_string(),
+                path: path.to_string(),
+                has_skill_md: true,
+                status: "valid".into(),
+            });
+        }
+        inventory
+            .skills
+            .sort_by_key(|skill| skill.name.to_ascii_lowercase());
+    } else if installed {
+        status.host_inventories.push(HostSkillInventory {
+            host_alias: alias.to_string(),
+            scanned_at: timestamp_label(),
+            ok: true,
+            message: "Updated from skill operation.".into(),
+            skills: vec![RemoteSkill {
+                name: skill_name.to_string(),
+                path: path.to_string(),
+                has_skill_md: true,
+                status: "valid".into(),
+            }],
+        });
+    }
+    save_skill_inventory_status(app, &status)
+}
+
+fn update_local_inventory_skill(
+    app: &AppHandle,
+    skill_name: &str,
+    path: &str,
+    installed: bool,
+) -> Result<(), String> {
+    let mut status = load_skill_inventory_status(app)?;
+    status.local_skill_root = local_codex_skills_root().to_string_lossy().into_owned();
+    status
+        .local_skills
+        .retain(|skill| !skill.name.eq_ignore_ascii_case(skill_name));
+    if installed {
+        status.local_skills.push(RemoteSkill {
+            name: skill_name.to_string(),
+            path: path.to_string(),
+            has_skill_md: true,
+            status: "valid".into(),
+        });
+    }
+    status
+        .local_skills
+        .sort_by_key(|skill| skill.name.to_ascii_lowercase());
+    save_skill_inventory_status(app, &status)
+}
+
+fn download_and_import_github_skill(
     app: &AppHandle,
     state: &AppState,
     repo_url: String,
     timeout_ms: Option<u64>,
 ) -> Result<SkillImportResult, String> {
-    let repo_url = repo_url.trim().to_string();
     if !is_allowed_github_repo_url(&repo_url) {
         return Err("Only https://github.com/... skill repositories are supported in v1.".into());
     }
+    let parsed = parse_github_skill_url(&repo_url).expect("validated GitHub skill URL");
     let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(120_000)));
     let clone_root = skill_clone_cache_dir(app);
     fs::create_dir_all(&clone_root).map_err(|error| error.to_string())?;
     let clone_dir = clone_root.join(format!(
         "{}-{}",
-        safe_skill_id(&repo_url).unwrap_or_else(|_| "github-skill".into()),
+        safe_skill_id(&parsed.source_url).unwrap_or_else(|_| "github-skill".into()),
         timestamp_millis()
     ));
-    let args = vec![
-        "clone".into(),
-        "--depth".into(),
-        "1".into(),
-        repo_url.clone(),
-        clone_dir.to_string_lossy().to_string(),
-    ];
-    let command = format!("git clone --depth 1 {repo_url} {}", path_string(&clone_dir));
+    let mut args = vec!["clone".into(), "--depth".into(), "1".into()];
+    if let Some(branch) = &parsed.branch {
+        args.push("--branch".into());
+        args.push(branch.clone());
+    }
+    args.push(parsed.clone_url.clone());
+    args.push(clone_dir.to_string_lossy().to_string());
+    let command = if let Some(branch) = &parsed.branch {
+        format!(
+            "git clone --depth 1 --branch {branch} {} {}",
+            parsed.clone_url,
+            path_string(&clone_dir)
+        )
+    } else {
+        format!(
+            "git clone --depth 1 {} {}",
+            parsed.clone_url,
+            path_string(&clone_dir)
+        )
+    };
     let output = ssh::run_local_process("git", &args, &command, timeout).unwrap_or_else(|error| {
         failed_command_output(command, format!("Could not start git: {error}"))
     });
@@ -6595,34 +7084,646 @@ fn clone_and_import_skill_repo(
         let _ = fs::remove_dir_all(&clone_dir);
         return Err(command_detail(&output));
     }
-    let result = import_skills_from_path(app, state, clone_dir.clone(), "git", Some(repo_url));
+    let import_path = parsed
+        .skill_subpath
+        .as_ref()
+        .map(|subpath| clone_dir.join(subpath))
+        .unwrap_or_else(|| clone_dir.clone());
+    if !import_path.exists() {
+        let _ = fs::remove_dir_all(&clone_dir);
+        return Err(format!(
+            "GitHub skill path {} was not found after cloning.",
+            parsed.display_path()
+        ));
+    }
+    ensure_child_path(&clone_dir, &import_path)?;
+    let result = import_skills_from_path(
+        app,
+        state,
+        import_path,
+        "github",
+        Some(parsed.source_url.clone()),
+    );
     if result.is_err() {
         let _ = fs::remove_dir_all(&clone_dir);
     }
     result
 }
 
-fn is_allowed_github_repo_url(url: &str) -> bool {
-    let trimmed = url.trim();
-    trimmed.starts_with("https://github.com/")
-        && (trimmed.ends_with(".git") || !trimmed.contains(char::is_whitespace))
-        && !trimmed.contains("..")
-        && !trimmed.contains('\\')
-        && !trimmed.contains('"')
-        && !trimmed.contains('\'')
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GithubSkillUrl {
+    owner: String,
+    repo: String,
+    clone_url: String,
+    branch: Option<String>,
+    skill_subpath: Option<PathBuf>,
+    source_url: String,
 }
 
-fn url_encode(value: &str) -> String {
+impl GithubSkillUrl {
+    fn display_path(&self) -> String {
+        self.skill_subpath
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.repo.clone())
+    }
+}
+
+fn is_allowed_github_repo_url(url: &str) -> bool {
+    parse_github_skill_url(url).is_some()
+}
+
+fn parse_github_skill_url(url: &str) -> Option<GithubSkillUrl> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.contains(char::is_whitespace) {
+        return None;
+    }
+    if trimmed.contains("..")
+        || trimmed.contains('\\')
+        || trimmed.contains('"')
+        || trimmed.contains('\'')
+        || trimmed.contains(char::is_control)
+    {
+        return None;
+    }
+    let path = trimmed.strip_prefix("https://github.com/")?;
+    let parts = path.split('/').collect::<Vec<_>>();
+    if parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    if parts.len() != 2 && !(parts.len() >= 5 && parts[2] == "tree") {
+        return None;
+    }
+    let owner = parts[0].to_string();
+    let repo_part = parts[1].to_string();
+    let repo = repo_part
+        .strip_suffix(".git")
+        .unwrap_or(&repo_part)
+        .to_string();
+    if owner.is_empty()
+        || repo.is_empty()
+        || !is_safe_github_segment(&owner)
+        || !is_safe_github_segment(&repo)
+    {
+        return None;
+    }
+    if repo_part.ends_with(".git") && parts.len() != 2 {
+        return None;
+    }
+    let clone_url = format!("https://github.com/{owner}/{repo}.git");
+    if parts.len() == 2 {
+        return Some(GithubSkillUrl {
+            owner,
+            repo,
+            clone_url,
+            branch: None,
+            skill_subpath: None,
+            source_url: trimmed.to_string(),
+        });
+    }
+    let branch = parts[3].to_string();
+    if branch.is_empty() || !is_safe_github_tree_segment(&branch) {
+        return None;
+    }
+    let subpath_parts = parts[4..].to_vec();
+    if subpath_parts.is_empty()
+        || subpath_parts
+            .iter()
+            .any(|part| !is_safe_github_tree_segment(part) || *part == "." || *part == "..")
+    {
+        return None;
+    }
+    let mut skill_subpath = PathBuf::new();
+    for part in subpath_parts {
+        skill_subpath.push(part);
+    }
+    Some(GithubSkillUrl {
+        owner,
+        repo,
+        clone_url,
+        branch: Some(branch),
+        skill_subpath: Some(skill_subpath),
+        source_url: trimmed.to_string(),
+    })
+}
+
+fn is_safe_github_segment(value: &str) -> bool {
     value
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn is_safe_github_tree_segment(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains("..")
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '@' | '%'))
+}
+
+fn run_get_skill_targets(
+    app: &AppHandle,
+    state: &AppState,
+    skill_id: String,
+    _timeout_ms: Option<u64>,
+) -> Result<SkillTargetsResult, String> {
+    let skill = find_skill(app, state, &skill_id)?;
+    let status = load_skill_inventory_status(app)?;
+    let mut targets = Vec::new();
+    let local_path =
+        local_skill_installed_path(&skill).unwrap_or_else(|| local_skill_target_path(&skill.id));
+    let local_cached = status
+        .local_skills
+        .iter()
+        .find(|installed| skill_matches_remote(&skill, installed));
+    let local_installed = local_cached.is_some()
+        || skill
+            .applications
+            .iter()
+            .any(|application| application.target_type == "local");
+    let local_display_path = local_cached
+        .map(|installed| installed.path.clone())
+        .unwrap_or_else(|| local_path.to_string_lossy().into_owned());
+    targets.push(SkillTarget {
+        target_type: "local".into(),
+        label: "local".into(),
+        host_alias: None,
+        path: local_display_path,
+        installed: local_installed,
+        can_install: !local_installed
+            && PathBuf::from(&skill.managed_path)
+                .join("SKILL.md")
+                .is_file(),
+        can_uninstall: local_installed,
+        status: if local_installed {
+            "installed"
+        } else {
+            "available"
+        }
+        .into(),
+        message: if local_installed {
+            "Skill is installed on the local Codex root.".into()
+        } else {
+            "Skill can be installed to the local Codex root.".into()
+        },
+    });
+
+    let hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+    for host in hosts {
+        let inventory = status
+            .host_inventories
+            .iter()
+            .find(|item| item.host_alias.eq_ignore_ascii_case(&host.host_alias));
+        let cached_skill = inventory.and_then(|inventory| {
+            inventory
+                .skills
+                .iter()
+                .find(|installed| skill_matches_remote(&skill, installed))
+        });
+        let cache_ok = inventory.map(|item| item.ok).unwrap_or(false);
+        let installed = cache_ok && cached_skill.is_some();
+        let target_path = cached_skill
+            .map(|installed| installed.path.clone())
+            .unwrap_or_else(|| format!("~/.codex/skills/{}", skill.id));
+        targets.push(SkillTarget {
+            target_type: "host".into(),
+            label: host.host_alias.clone(),
+            host_alias: Some(host.host_alias.clone()),
+            path: target_path,
+            installed,
+            can_install: cache_ok && !installed,
+            can_uninstall: installed,
+            status: if cache_ok {
+                if installed {
+                    "installed"
+                } else {
+                    "available"
+                }
+            } else {
+                "cached-unavailable"
             }
-            b' ' => "+".into(),
-            _ => format!("%{byte:02X}"),
+            .into(),
+            message: if cache_ok {
+                if installed {
+                    "Cached: skill is installed on this host.".into()
+                } else {
+                    "Cached: skill can be installed to this host.".into()
+                }
+            } else {
+                inventory
+                    .map(|item| item.message.clone())
+                    .filter(|message| !message.trim().is_empty())
+                    .unwrap_or_else(|| "Run Detect to refresh this host skill cache.".into())
+            },
+        });
+    }
+
+    Ok(SkillTargetsResult {
+        skill_id: skill.id,
+        skill_name: skill.name,
+        targets,
+        tasks: Vec::new(),
+        message: "Loaded cached skill targets.".into(),
+    })
+}
+
+fn run_install_skill_targets(
+    app: &AppHandle,
+    state: &AppState,
+    skill_id: String,
+    targets: Vec<SkillTargetRequest>,
+    timeout_ms: Option<u64>,
+) -> Result<SkillTargetOperationResult, String> {
+    let skill = find_skill(app, state, &skill_id)?;
+    let mut skills = load_skills(app, state)?;
+    let mut tasks = Vec::new();
+    let mut results = Vec::new();
+    for request in targets {
+        if request.target_type == "local" {
+            let (item, application, task) = install_local_skill(&skill)?;
+            if item.ok {
+                let installed_path = application.path.clone();
+                set_skill_application(&mut skills, &skill.id, application);
+                let _ = update_local_inventory_skill(app, &skill.id, &installed_path, true);
+            }
+            if let Some(task) = task.clone() {
+                record_task(state, task.clone());
+                tasks.push(task);
+            }
+            results.push(item);
+        } else if request.target_type == "host" {
+            let Some(alias) = request.host_alias.clone() else {
+                results.push(failed_target_item(
+                    "host",
+                    "unknown",
+                    None,
+                    "Missing host alias.",
+                ));
+                continue;
+            };
+            let result = run_remote_skill_install(
+                app,
+                state,
+                alias.clone(),
+                skill.id.clone(),
+                RemoteSkillScope::User,
+                None,
+                SkillConflictPolicy::Skip,
+                timeout_ms,
+            )?;
+            let ok = result.ok && !result.skipped;
+            if ok {
+                set_skill_application(
+                    &mut skills,
+                    &skill.id,
+                    host_skill_application(&result.host_alias, &result.target_path, true),
+                );
+                let _ = update_host_inventory_skill(
+                    app,
+                    &result.host_alias,
+                    &skill.id,
+                    &result.target_path,
+                    true,
+                );
+            }
+            tasks.push(result.task.clone());
+            results.push(SkillTargetOperationItem {
+                target_type: "host".into(),
+                label: result.host_alias.clone(),
+                host_alias: Some(result.host_alias),
+                ok,
+                message: result.message,
+                task: Some(result.task),
+            });
+        }
+    }
+    save_skills(app, state, &skills)?;
+    let ok = results.iter().all(|result| result.ok);
+    let message = if ok {
+        "install-success".to_string()
+    } else {
+        "install-partial-failure".to_string()
+    };
+    Ok(SkillTargetOperationResult {
+        ok,
+        skills,
+        tasks,
+        results,
+        message,
+    })
+}
+
+fn run_uninstall_skill_targets(
+    app: &AppHandle,
+    state: &AppState,
+    skill_id: String,
+    targets: Vec<SkillTargetRequest>,
+    timeout_ms: Option<u64>,
+) -> Result<SkillTargetOperationResult, String> {
+    let skill = find_skill(app, state, &skill_id)?;
+    let mut skills = load_skills(app, state)?;
+    let mut tasks = Vec::new();
+    let mut results = Vec::new();
+    for request in targets {
+        if request.target_type == "local" {
+            let (item, task) = uninstall_local_skill(&skill)?;
+            if item.ok {
+                remove_skill_application(&mut skills, &skill.id, &request);
+                let _ = update_local_inventory_skill(app, &skill.id, "", false);
+            }
+            if let Some(task) = task.clone() {
+                record_task(state, task.clone());
+                tasks.push(task);
+            }
+            results.push(item);
+        } else if request.target_type == "host" {
+            let Some(alias) = request.host_alias.clone() else {
+                results.push(failed_target_item(
+                    "host",
+                    "unknown",
+                    None,
+                    "Missing host alias.",
+                ));
+                continue;
+            };
+            let result = run_remote_skill_delete(
+                state,
+                alias,
+                skill.id.clone(),
+                RemoteSkillScope::User,
+                None,
+                skill.id.clone(),
+                timeout_ms,
+            )?;
+            if result.ok {
+                remove_skill_application(&mut skills, &skill.id, &request);
+                let _ = update_host_inventory_skill(
+                    app,
+                    &result.host_alias,
+                    &skill.id,
+                    &result.target_path,
+                    false,
+                );
+            }
+            tasks.push(result.task.clone());
+            results.push(SkillTargetOperationItem {
+                target_type: "host".into(),
+                label: result.host_alias.clone(),
+                host_alias: Some(result.host_alias),
+                ok: result.ok,
+                message: result.message,
+                task: Some(result.task),
+            });
+        }
+    }
+    save_skills(app, state, &skills)?;
+    let ok = results.iter().all(|result| result.ok);
+    let message = if ok {
+        "uninstall-success".to_string()
+    } else {
+        "uninstall-partial-failure".to_string()
+    };
+    Ok(SkillTargetOperationResult {
+        ok,
+        skills,
+        tasks,
+        results,
+        message,
+    })
+}
+
+fn run_delete_library_skill(
+    app: &AppHandle,
+    state: &AppState,
+    skill_id: String,
+    uninstall_first: bool,
+    timeout_ms: Option<u64>,
+) -> Result<SkillTargetOperationResult, String> {
+    let skill = find_skill(app, state, &skill_id)?;
+    let mut tasks = Vec::new();
+    let mut results = Vec::new();
+    if uninstall_first {
+        let targets = skill
+            .applications
+            .iter()
+            .map(|application| SkillTargetRequest {
+                target_type: application.target_type.clone(),
+                host_alias: application.host_alias.clone(),
+            })
+            .collect::<Vec<_>>();
+        if !targets.is_empty() {
+            let uninstall =
+                run_uninstall_skill_targets(app, state, skill.id.clone(), targets, timeout_ms)?;
+            tasks.extend(uninstall.tasks);
+            results.extend(uninstall.results);
+            if !uninstall.ok {
+                return Ok(SkillTargetOperationResult {
+                    ok: false,
+                    skills: uninstall.skills,
+                    tasks,
+                    results,
+                    message: "Delete cancelled because one or more uninstall operations failed."
+                        .into(),
+                });
+            }
+        }
+    }
+
+    delete_managed_skill_dir(app, &skill)?;
+    let mut skills = load_skills(app, state)?;
+    skills.retain(|item| item.id != skill.id);
+    save_skills(app, state, &skills)?;
+    let message = format!("Removed {} from the local skill library.", skill.name);
+    Ok(SkillTargetOperationResult {
+        ok: true,
+        skills,
+        tasks,
+        results,
+        message,
+    })
+}
+
+fn local_skill_target_path(skill_id: &str) -> PathBuf {
+    local_codex_skills_root().join(skill_id)
+}
+
+fn local_skill_installed_path(skill: &SkillPack) -> Option<PathBuf> {
+    skill
+        .applications
+        .iter()
+        .find(|application| application.target_type == "local")
+        .map(|application| PathBuf::from(&application.path))
+        .filter(|path| path.join("SKILL.md").is_file())
+        .or_else(|| {
+            let target = local_skill_target_path(&skill.id);
+            target.join("SKILL.md").is_file().then_some(target)
         })
-        .collect()
+}
+
+fn install_local_skill(
+    skill: &SkillPack,
+) -> Result<(SkillTargetOperationItem, SkillApplication, Option<TaskRun>), String> {
+    let source = PathBuf::from(&skill.managed_path);
+    if !source.join("SKILL.md").is_file() {
+        return Err(format!(
+            "Managed skill {} no longer contains SKILL.md.",
+            skill.name
+        ));
+    }
+    let root = local_codex_skills_root();
+    fs::create_dir_all(&root)
+        .map_err(|error| format!("Failed to create {}: {error}", root.display()))?;
+    let target = root.join(&skill.id);
+    if target.exists() {
+        let message = format!("{} already exists at {}.", skill.name, target.display());
+        let task = local_skill_task("Install skill", &message, false);
+        return Ok((
+            SkillTargetOperationItem {
+                target_type: "local".into(),
+                label: "local".into(),
+                host_alias: None,
+                ok: false,
+                message,
+                task: Some(task.clone()),
+            },
+            local_skill_application(&target, target.join("SKILL.md").is_file()),
+            Some(task),
+        ));
+    }
+    copy_skill_dir(&source, &target)?;
+    let message = format!("Installed {} to {}.", skill.name, target.display());
+    let task = local_skill_task("Install skill", &message, true);
+    Ok((
+        SkillTargetOperationItem {
+            target_type: "local".into(),
+            label: "local".into(),
+            host_alias: None,
+            ok: true,
+            message,
+            task: Some(task.clone()),
+        },
+        local_skill_application(&target, true),
+        Some(task),
+    ))
+}
+
+fn uninstall_local_skill(
+    skill: &SkillPack,
+) -> Result<(SkillTargetOperationItem, Option<TaskRun>), String> {
+    let Some(target) = local_skill_installed_path(skill) else {
+        let message = format!("{} is not installed in the local Codex root.", skill.name);
+        let task = local_skill_task("Uninstall skill", &message, true);
+        return Ok((
+            SkillTargetOperationItem {
+                target_type: "local".into(),
+                label: "local".into(),
+                host_alias: None,
+                ok: true,
+                message,
+                task: Some(task.clone()),
+            },
+            Some(task),
+        ));
+    };
+    let root = local_codex_skills_root();
+    ensure_child_path(&root, &target)?;
+    let backup_root = root.join(".codexhub-backups");
+    fs::create_dir_all(&backup_root)
+        .map_err(|error| format!("Failed to create {}: {error}", backup_root.display()))?;
+    let mut backup = backup_root.join(format!("{}.deleted.{}", skill.id, timestamp_label()));
+    if backup.exists() {
+        backup = backup_root.join(format!(
+            "{}.deleted.{}.{}",
+            skill.id,
+            timestamp_label(),
+            timestamp_millis()
+        ));
+    }
+    fs::rename(&target, &backup).map_err(|error| {
+        format!(
+            "Failed to move {} to {}: {error}",
+            target.display(),
+            backup.display()
+        )
+    })?;
+    let message = format!("Moved local {} to backup {}.", skill.name, backup.display());
+    let task = local_skill_task("Uninstall skill", &message, true);
+    Ok((
+        SkillTargetOperationItem {
+            target_type: "local".into(),
+            label: "local".into(),
+            host_alias: None,
+            ok: true,
+            message,
+            task: Some(task.clone()),
+        },
+        Some(task),
+    ))
+}
+
+fn delete_managed_skill_dir(app: &AppHandle, skill: &SkillPack) -> Result<(), String> {
+    let managed_root = managed_skills_dir(app);
+    let managed_path = PathBuf::from(&skill.managed_path);
+    if managed_path.exists() {
+        ensure_child_path(&managed_root, &managed_path)?;
+        fs::remove_dir_all(&managed_path).map_err(|error| {
+            format!(
+                "Failed to remove managed skill {}: {error}",
+                managed_path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn ensure_child_path(root: &Path, child: &Path) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve {}: {error}", root.display()))?;
+    let child = child
+        .canonicalize()
+        .map_err(|error| format!("Could not resolve {}: {error}", child.display()))?;
+    if child.starts_with(&root) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Refusing to modify {} because it is outside {}.",
+            child.display(),
+            root.display()
+        ))
+    }
+}
+
+fn local_skill_task(action: &str, summary: &str, ok: bool) -> TaskRun {
+    skill_task(
+        &format!("task-local-skill-{}", timestamp_millis()),
+        "local",
+        "Local machine",
+        action,
+        if ok {
+            TaskStatus::Success
+        } else {
+            TaskStatus::Failed
+        },
+        summary,
+        Vec::new(),
+    )
+}
+
+fn failed_target_item(
+    target_type: &str,
+    label: &str,
+    host_alias: Option<String>,
+    message: &str,
+) -> SkillTargetOperationItem {
+    SkillTargetOperationItem {
+        target_type: target_type.into(),
+        label: label.into(),
+        host_alias,
+        ok: false,
+        message: message.into(),
+        task: None,
+    }
 }
 
 fn find_skill(app: &AppHandle, state: &AppState, skill_id: &str) -> Result<SkillPack, String> {
@@ -6706,6 +7807,57 @@ fn remote_skill_target_display(
     Ok(format!("{root}/{skill_name}"))
 }
 
+fn remote_skill_list_script() -> &'static str {
+    r#"count=0
+emit_skill_dir() {
+  dir=$1
+  [ -d "$dir" ] || return
+  name=${dir##*/}
+  if [ -f "$dir/SKILL.md" ]; then
+    status=valid
+    has=yes
+  else
+    status=missing-skill-md
+    has=no
+  fi
+  printf 'CODEXHUB_REMOTE_SKILL\t%s\t%s\t%s\t%s\n' "$name" "$has" "$status" "$dir"
+  count=$((count + 1))
+}
+scan_child_dir() {
+  dir=$1
+  [ -d "$dir" ] || return
+  if [ -f "$dir/SKILL.md" ]; then
+    emit_skill_dir "$dir"
+    return
+  fi
+  before=$count
+  for nested in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [ -d "$nested" ] || continue
+    [ -f "$nested/SKILL.md" ] || continue
+    emit_skill_dir "$nested"
+  done
+  if [ "$count" = "$before" ]; then
+    emit_skill_dir "$dir"
+  fi
+}
+scan_root() {
+  root=$1
+  printf 'CODEXHUB_SKILL_ROOT=%s\n' "$root"
+  [ -d "$root" ] || return
+  if [ -f "$root/SKILL.md" ]; then
+    emit_skill_dir "$root"
+  else
+    for dir in "$root"/* "$root"/.[!.]* "$root"/..?*; do
+      scan_child_dir "$dir"
+    done
+  fi
+}
+scan_root "$HOME/.codex/skills"
+scan_root "$HOME/.codex/superpowers/skills"
+printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
+"#
+}
+
 fn run_remote_skill_list(
     state: &AppState,
     host_alias: String,
@@ -6743,7 +7895,7 @@ fn run_remote_skill_list(
         record_task(state, task.clone());
         return Ok(RemoteSkillListResult {
             host_alias: alias,
-            root_path: "~/.codex/skills".into(),
+            root_path: "~/.codex/skills; ~/.codex/superpowers/skills".into(),
             count: 0,
             valid_count: 0,
             invalid_count: 0,
@@ -6752,33 +7904,45 @@ fn run_remote_skill_list(
         });
     }
 
-    let script = r#"root="$HOME/.codex/skills"
-if [ ! -d "$root" ]; then
-  printf 'CODEXHUB_SKILL_ROOT=%s\n' "$root"
-  printf 'CODEXHUB_SKILL_COUNT=0\n'
-  exit 0
-fi
-printf 'CODEXHUB_SKILL_ROOT=%s\n' "$root"
-count=0
-for dir in "$root"/*; do
-  [ -d "$dir" ] || continue
-  name=${dir##*/}
-  if [ -f "$dir/SKILL.md" ]; then
-    status=valid
-    has=yes
-  else
-    status=missing-skill-md
-    has=no
-  fi
-  printf 'CODEXHUB_REMOTE_SKILL\t%s\t%s\t%s\t%s\n' "$name" "$has" "$status" "$dir"
-  count=$((count + 1))
-done
-printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
-"#;
+    let script = remote_skill_list_script();
     let output = ssh::run_ssh_script(&alias, script, timeout).unwrap_or_else(|error| {
         failed_command_output(format!("ssh {alias} list remote skills"), error)
     });
     let ok = output.success();
+    let skills = if ok {
+        parse_remote_skill_list(&output.stdout)
+    } else {
+        Vec::new()
+    };
+    let stdout_line_count = output.stdout.lines().count();
+    let remote_marker_count = output
+        .stdout
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("CODEXHUB_REMOTE_SKILL"))
+        .count();
+    let stderr_summary = output
+        .stderr
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let list_message = if ok {
+        if stderr_summary.is_empty() {
+            format!(
+                "Listed remote Codex skill roots (~/.codex/skills, ~/.codex/superpowers/skills): stdout {stdout_line_count} line(s), markers {remote_marker_count}, parsed {}.",
+                skills.len()
+            )
+        } else {
+            format!(
+                "Listed remote Codex skill roots (~/.codex/skills, ~/.codex/superpowers/skills): stdout {stdout_line_count} line(s), markers {remote_marker_count}, parsed {}, stderr: {stderr_summary}",
+                skills.len()
+            )
+        }
+    } else {
+        "Failed to list remote skills.".to_string()
+    };
     logs.push(command_log(
         &task_id,
         2,
@@ -6787,18 +7951,9 @@ printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
         } else {
             TaskLogLevel::Error
         },
-        if ok {
-            "Listed remote ~/.codex/skills."
-        } else {
-            "Failed to list remote skills."
-        },
+        &list_message,
         &output,
     ));
-    let skills = if ok {
-        parse_remote_skill_list(&output.stdout)
-    } else {
-        Vec::new()
-    };
     let count = skills.len().min(u16::MAX as usize) as u16;
     let valid_count = skills
         .iter()
@@ -6808,7 +7963,9 @@ printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
     let invalid_count = count.saturating_sub(valid_count);
     update_host_skills(state, &alias, ok, count);
     let summary = if ok {
-        format!("Remote skill list completed for {alias}: {count} skill(s), {valid_count} valid.")
+        format!(
+            "Remote skill list completed for {alias}: {count} skill(s), {valid_count} valid across Codex skill roots."
+        )
     } else {
         format!(
             "Remote skill list failed for {alias}: {}",
@@ -6831,7 +7988,7 @@ printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
     record_task(state, task.clone());
     Ok(RemoteSkillListResult {
         host_alias: alias,
-        root_path: "~/.codex/skills".into(),
+        root_path: "~/.codex/skills; ~/.codex/superpowers/skills".into(),
         count,
         valid_count,
         invalid_count,
@@ -6841,106 +7998,28 @@ printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
 }
 
 fn parse_remote_skill_list(stdout: &str) -> Vec<RemoteSkill> {
+    let mut seen_paths = BTreeSet::new();
     stdout
         .lines()
         .filter_map(|line| {
-            let parts = line.split('\t').collect::<Vec<_>>();
-            if parts.len() != 5 || parts[0] != "CODEXHUB_REMOTE_SKILL" {
+            let parts = line.split_whitespace().collect::<Vec<_>>();
+            let [marker, name, has_skill_md, status, path] = parts.as_slice() else {
+                return None;
+            };
+            if *marker != "CODEXHUB_REMOTE_SKILL" {
+                return None;
+            }
+            if !seen_paths.insert(path.to_ascii_lowercase()) {
                 return None;
             }
             Some(RemoteSkill {
-                name: parts[1].to_string(),
-                has_skill_md: parts[2] == "yes",
-                status: parts[3].to_string(),
-                path: parts[4].to_string(),
+                name: (*name).to_string(),
+                has_skill_md: *has_skill_md == "yes",
+                status: (*status).to_string(),
+                path: (*path).to_string(),
             })
         })
         .collect()
-}
-
-fn run_remote_skill_install_preview(
-    app: &AppHandle,
-    state: &AppState,
-    host_alias: String,
-    skill_id: String,
-    scope: RemoteSkillScope,
-    project_path: Option<String>,
-    timeout_ms: Option<u64>,
-) -> Result<RemoteSkillInstallPreview, String> {
-    let skill = find_skill(app, state, &skill_id)?;
-    let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(30_000)));
-    let alias = ssh::validate_ssh_alias(&host_alias)?;
-    let target_display = remote_skill_target_display(&scope, project_path.as_deref(), &skill.id)?;
-    let (root_expr, _) = remote_skill_root(&scope, project_path.as_deref())?;
-    let task_id = format!("task-skill-preview-{}", timestamp_millis());
-    let host_id = host_id_for_alias(state, &alias);
-    let host_name = host_name_for_alias(state, &alias);
-    let script = remote_skill_preview_script(&root_expr, &skill.id);
-    let output = ssh::run_ssh_script(&alias, &script, timeout).unwrap_or_else(|error| {
-        failed_command_output(format!("ssh {alias} preview skill install"), error)
-    });
-    let ok = output.success();
-    let exists = marker_value(&output.stdout, "CODEXHUB_SKILL_EXISTS").as_deref() == Some("yes");
-    let has_skill_md =
-        marker_value(&output.stdout, "CODEXHUB_SKILL_HAS_SKILL_MD").as_deref() == Some("yes");
-    let logs = vec![command_log(
-        &task_id,
-        1,
-        if ok {
-            TaskLogLevel::Info
-        } else {
-            TaskLogLevel::Error
-        },
-        if ok {
-            "Previewed remote skill target."
-        } else {
-            "Failed to preview remote skill target."
-        },
-        &output,
-    )];
-    let message = if ok {
-        if exists {
-            format!(
-                "{} exists at {}; choose backup, skip, or overwrite.",
-                skill.name, target_display
-            )
-        } else {
-            format!("{} can be installed to {}.", skill.name, target_display)
-        }
-    } else {
-        format!(
-            "Could not preview {} on {}: {}",
-            skill.name,
-            alias,
-            command_detail(&output)
-        )
-    };
-    let task = skill_task(
-        &task_id,
-        &host_id,
-        &host_name,
-        "Preview skill install",
-        if ok {
-            TaskStatus::Success
-        } else {
-            TaskStatus::Failed
-        },
-        &message,
-        logs,
-    );
-    record_task(state, task.clone());
-    Ok(RemoteSkillInstallPreview {
-        host_alias: alias,
-        skill_id: skill.id,
-        skill_name: skill.name,
-        scope,
-        target_path: target_display,
-        exists,
-        has_skill_md,
-        backup_expected: exists,
-        message,
-        task,
-    })
 }
 
 fn run_remote_skill_install(
@@ -7268,29 +8347,6 @@ fn remote_count_after_skill_delete(state: &AppState, alias: &str) -> u16 {
         .and_then(|host| host.skills_count)
         .unwrap_or(1)
         .saturating_sub(1)
-}
-
-fn remote_skill_preview_script(root_expr: &str, skill_name: &str) -> String {
-    format!(
-        r#"set -u
-root={root_expr}
-skill_name={skill_name}
-target="$root/$skill_name"
-printf 'CODEXHUB_SKILL_TARGET=%s\n' "$target"
-if [ -d "$target" ]; then
-  printf 'CODEXHUB_SKILL_EXISTS=yes\n'
-else
-  printf 'CODEXHUB_SKILL_EXISTS=no\n'
-fi
-if [ -f "$target/SKILL.md" ]; then
-  printf 'CODEXHUB_SKILL_HAS_SKILL_MD=yes\n'
-else
-  printf 'CODEXHUB_SKILL_HAS_SKILL_MD=no\n'
-fi
-"#,
-        root_expr = root_expr,
-        skill_name = shell_single_quote(skill_name)
-    )
 }
 
 fn remote_skill_install_script(
@@ -8592,6 +9648,14 @@ fn sanitize_toml_key(value: &str) -> Result<String, String> {
 
 fn timestamp_label() -> String {
     timestamp_millis().to_string()
+}
+
+fn date_label() -> String {
+    Local::now().format("%Y-%m-%d").to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn home_dir() -> Option<PathBuf> {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, fallbackHealth } from "./api";
 import type {
@@ -7,7 +7,6 @@ import type {
   Host,
   HostStatus,
   LatestCodexVersion,
-  OnlineSkillSearchResult,
   Profile,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
@@ -18,14 +17,15 @@ import type {
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
-  RemoteSkillBatchInstallResult,
-  RemoteSkillDeleteResult,
-  RemoteSkillInstallPreview,
-  RemoteSkillListResult,
-  RemoteSkillScope,
-  SkillConflictPolicy,
+  SkillDetectionResult,
+  SkillInventoryStatus,
   SkillImportResult,
+  SkillApplication,
   SkillPack,
+  SkillTarget,
+  SkillTargetOperationResult,
+  SkillTargetRequest,
+  SkillTargetsResult,
   SshBootstrapProgressEvent,
   SshBootstrapResult,
   SshBootstrapStep,
@@ -337,52 +337,70 @@ const uiCopy = {
       viewTasks: "View Tasks"
     },
     skills: {
-      library: "Local library",
-      libraryBody: "Import local skills, clone GitHub skill repositories, and install validated skills to remote Codex paths.",
-      importDirectory: "Import directory",
-      searchPlaceholder: "Search GitHub skills",
-      search: "Search",
-      clone: "Clone",
-      cloneRepo: "Clone repo",
-      repoUrl: "Repository URL",
+      library: "Local skill library",
+      installedLibrary: "Installed skill library",
+      detect: "Detect",
+      detecting: "Detecting...",
+      detected: "Detection complete",
+      refresh: "Refresh",
+      refreshing: "Refreshing...",
+      refreshed: "Refreshed from cache",
+      importDirectory: "Import",
+      download: "Download",
+      downloadTitle: "Download skill",
+      downloadBody: "Enter a GitHub repository URL.",
+      downloadAction: "Download",
+      downloaded: "Download complete",
+      githubUrl: "GitHub URL",
       noSkills: "No local skills",
-      noSkillsBody: "Import a directory with SKILL.md or clone a GitHub repo to populate the library.",
-      noResults: "No search results",
-      candidates: "GitHub candidates",
-      localSkills: "Local skills",
-      install: "Install",
-      installSelected: "Install selected",
-      preview: "Preview",
-      remoteInstall: "Remote install",
-      remoteView: "Remote view",
-      listRemote: "List remote",
-      deleteRemote: "Delete",
-      selectSkill: "Select a skill",
-      selectHosts: "Select hosts",
-      selectAllHosts: "Select all",
-      userScope: "User",
-      projectScope: "Project",
-      projectPath: "Project path",
-      conflictPolicy: "Conflict",
-      backup: "Backup",
-      skip: "Skip",
-      overwrite: "Overwrite",
-      target: "Target",
-      exists: "Exists",
-      valid: "Valid",
-      invalid: "Missing SKILL.md",
-      confirmName: "Confirm name",
-      viewTasks: "View Tasks",
-      imported: (count: number) => `Imported ${count} skill(s).`,
-      installed: (count: number) => `Install finished on ${count} host(s).`,
-      remoteListed: (count: number) => `Remote list returned ${count} skill(s).`,
+      noSkillsBody: "Use Detect, Import, or Download to populate the local skill library.",
+      skill: "Skill",
       source: "Source",
-      sourceType: "Source type",
+      addedAt: "Added",
+      applications: "Applied",
+      actions: "Actions",
+      unapplied: "Not applied",
+      localMachine: "Local",
+      sourceLocal: "Local",
+      sourceGithub: "GitHub",
+      preview: "Preview",
+      edit: "Edit",
+      save: "Save",
+      install: "Install",
+      installSuccess: "Installed successfully!",
+      installPartialFailure: "Install incomplete.",
+      uninstall: "Uninstall",
+      uninstallSuccess: "Uninstalled successfully!",
+      uninstallPartialFailure: "Uninstall incomplete.",
+      delete: "Delete",
+      firstScanTitle: "First skill scan",
+      firstScanBody: "CodexHub will scan the local Codex skills folder and every configured host. This can take a while.",
+      firstScanAction: "Scan local and hosts",
+      localOnlyDetect: "Detect local skills",
+      selectTargets: "Select targets",
+      selectAll: "Select all",
+      noTargets: "No available targets",
+      installHint: "Installs to the default Codex skills root.",
+      uninstallHint: "Only targets where this skill is already installed can be selected.",
+      deleteTitle: "Delete skill",
+      deleteBody: "Remove this skill from the library. You can uninstall it from all known targets first, or only remove the library entry.",
+      uninstallAndDelete: "Uninstall and delete",
+      directDelete: "Delete only",
+      operationDone: "Operation finished.",
+      target: "Target",
       path: "Path",
-      skills: "Skills",
-      updated: "Updated",
-      enabled: "enabled",
-      disabled: "disabled"
+      details: "Details",
+      hostIp: "Host IP",
+      installedSkills: "Installed skills",
+      noInstalledSkills: "No skills",
+      status: "Status",
+      available: "Available",
+      installedTarget: "Installed",
+      unavailableTarget: "Unavailable",
+      aboutFallback: "No description available.",
+      imported: (count: number) => `Imported ${count} skill(s).`,
+      installed: (count: number) => `Installed on ${count} target(s).`,
+      uninstalled: (count: number) => `Uninstalled from ${count} target(s).`
     },
     tasks: {
       runs: "Runs",
@@ -752,52 +770,70 @@ const uiCopy = {
       viewTasks: "查看任务"
     },
     skills: {
-      library: "本地库",
-      libraryBody: "导入本地 skills、克隆 GitHub skill 仓库，并把校验通过的技能安装到远端 Codex 路径。",
-      importDirectory: "导入目录",
-      searchPlaceholder: "搜索 GitHub skills",
-      search: "搜索",
-      clone: "克隆",
-      cloneRepo: "克隆仓库",
-      repoUrl: "仓库 URL",
+      library: "本地技能库",
+      installedLibrary: "安装技能库",
+      detect: "检测",
+      detecting: "检测中...",
+      detected: "检测完成",
+      refresh: "刷新",
+      refreshing: "刷新中...",
+      refreshed: "已根据缓存刷新",
+      importDirectory: "导入",
+      download: "下载",
+      downloadTitle: "下载 skill",
+      downloadBody: "输入 GitHub 仓库 URL。",
+      downloadAction: "下载",
+      downloaded: "下载完成",
+      githubUrl: "GitHub URL",
       noSkills: "还没有本地技能",
-      noSkillsBody: "导入包含 SKILL.md 的目录，或克隆 GitHub 仓库来填充本地库。",
-      noResults: "没有搜索结果",
-      candidates: "GitHub 候选",
-      localSkills: "本地技能",
-      install: "安装",
-      installSelected: "安装所选",
-      preview: "预览",
-      remoteInstall: "远端安装",
-      remoteView: "远端查看",
-      listRemote: "列出远端",
-      deleteRemote: "删除",
-      selectSkill: "选择技能",
-      selectHosts: "选择主机",
-      selectAllHosts: "全选",
-      userScope: "用户级",
-      projectScope: "项目级",
-      projectPath: "项目路径",
-      conflictPolicy: "冲突策略",
-      backup: "备份",
-      skip: "跳过",
-      overwrite: "覆盖",
-      target: "目标",
-      exists: "已存在",
-      valid: "有效",
-      invalid: "缺少 SKILL.md",
-      confirmName: "确认名称",
-      viewTasks: "查看任务",
-      imported: (count: number) => `已导入 ${count} 个技能。`,
-      installed: (count: number) => `已在 ${count} 台主机完成安装。`,
-      remoteListed: (count: number) => `远端返回 ${count} 个技能。`,
+      noSkillsBody: "使用“检测”“导入”或“下载”添加到本地技能库。",
+      skill: "技能",
       source: "来源",
-      sourceType: "来源类型",
+      addedAt: "添加日期",
+      applications: "应用",
+      actions: "操作",
+      unapplied: "未应用",
+      localMachine: "本机",
+      sourceLocal: "本地",
+      sourceGithub: "GitHub",
+      preview: "预览",
+      edit: "编辑",
+      save: "保存",
+      install: "安装",
+      installSuccess: "安装成功！",
+      installPartialFailure: "安装未全部成功。",
+      uninstall: "卸载",
+      uninstallSuccess: "卸载成功！",
+      uninstallPartialFailure: "卸载未全部成功。",
+      delete: "删除",
+      firstScanTitle: "首次扫描",
+      firstScanBody: "将扫描本机和所有主机 Codex skills，耗时较久。",
+      firstScanAction: "扫描本机和主机",
+      localOnlyDetect: "仅检测本机",
+      selectTargets: "选择目标",
+      selectAll: "全选",
+      noTargets: "没有可用目标",
+      installHint: "默认安装到 Codex skills 根目录。",
+      uninstallHint: "只能选择已安装该 skill 的目标。",
+      deleteTitle: "删除 skill",
+      deleteBody: "从技能库删除该 skill。可以先从所有已知目标卸载，也可以只删除库记录。",
+      uninstallAndDelete: "卸载并删除",
+      directDelete: "直接删除",
+      operationDone: "操作完成。",
+      target: "目标",
       path: "路径",
-      skills: "技能",
-      updated: "更新于",
-      enabled: "已启用",
-      disabled: "已禁用"
+      details: "详细说明",
+      hostIp: "Host IP",
+      installedSkills: "已安装技能",
+      noInstalledSkills: "无技能",
+      status: "状态",
+      available: "可安装",
+      installedTarget: "已安装",
+      unavailableTarget: "不可用",
+      aboutFallback: "暂无简介。",
+      imported: (count: number) => `已导入 ${count} 个技能。`,
+      installed: (count: number) => `已安装到 ${count} 个目标。`,
+      uninstalled: (count: number) => `已从 ${count} 个目标卸载。`
     },
     tasks: {
       runs: "运行",
@@ -908,6 +944,12 @@ function App() {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
+  const [skillInventoryStatus, setSkillInventoryStatus] = useState<SkillInventoryStatus>({
+    firstHostScanCompleted: false,
+    localSkillRoot: "",
+    localSkills: [],
+    hostInventories: []
+  });
   const [tasks, setTasks] = useState<TaskRun[]>([]);
   const [sshStatus, setSshStatus] = useState<SshStatus | null>(null);
   const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
@@ -990,15 +1032,17 @@ function App() {
       api.listHosts(),
       api.listProfiles(),
       api.listSkillPacks(),
+      api.getSkillInventoryStatus(),
       api.listTasks()
     ])
-      .then(([nextSettings, nextHealth, nextHosts, nextProfiles, nextSkillPacks, nextTasks]) => {
+      .then(([nextSettings, nextHealth, nextHosts, nextProfiles, nextSkillPacks, nextSkillInventoryStatus, nextTasks]) => {
         if (!mounted) return;
         setSettings(nextSettings);
         setHealth(nextHealth);
         setHosts(nextHosts);
         setProfiles(nextProfiles);
         setSkillPacks(nextSkillPacks);
+        setSkillInventoryStatus(nextSkillInventoryStatus);
         setTasks(normalizeTaskRunsForUi(nextTasks));
         setSetupGuideStep("language");
         setSetupGuideOpen(!nextSettings.setupGuideDismissed);
@@ -1411,9 +1455,59 @@ function App() {
   };
 
   const refreshSkills = async () => {
-    const nextSkills = await api.listSkillPacks();
+    const [nextSkills, nextStatus] = await Promise.all([api.listSkillPacks(), api.getSkillInventoryStatus()]);
     setSkillPacks(nextSkills);
+    setSkillInventoryStatus(nextStatus);
     return nextSkills;
+  };
+
+  const handleRefreshSkillLibrary = async () => {
+    const [nextSkills, nextStatus, nextHosts] = await Promise.all([
+      api.listSkillPacks(),
+      api.getSkillInventoryStatus(),
+      api.listHosts()
+    ]);
+    setSkillPacks(nextSkills);
+    setSkillInventoryStatus(nextStatus);
+    setHosts(nextHosts);
+    setNotice(copy.skills.refreshed);
+    return { skills: nextSkills, status: nextStatus, hosts: nextHosts };
+  };
+
+  const applySkillDetectionResult = async (result: SkillDetectionResult) => {
+    setSkillPacks(result.skills);
+    setSkillInventoryStatus(result.status);
+    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+    const nextHosts = await api.listHosts();
+    setHosts(nextHosts);
+    setNotice(result.message);
+    return result;
+  };
+
+  const applySkillOperationResult = async (result: SkillTargetOperationResult) => {
+    setSkillPacks(result.skills);
+    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+    const nextHosts = await api.listHosts();
+    setHosts(nextHosts);
+    const nextStatus = await api.getSkillInventoryStatus();
+    setSkillInventoryStatus(nextStatus);
+    setNotice(
+      result.message === "install-success"
+        ? copy.skills.installSuccess
+        : result.message === "install-partial-failure"
+          ? copy.skills.installPartialFailure
+          : result.message === "uninstall-success"
+            ? copy.skills.uninstallSuccess
+            : result.message === "uninstall-partial-failure"
+              ? copy.skills.uninstallPartialFailure
+          : result.message || copy.skills.operationDone
+    );
+    return result;
+  };
+
+  const handleDetectInstalledSkills = async (includeHosts: boolean) => {
+    const result = await api.detectInstalledSkills(includeHosts);
+    return applySkillDetectionResult(result);
   };
 
   const handleImportSkillDirectory = async () => {
@@ -1426,88 +1520,40 @@ function App() {
     return result;
   };
 
-  const handleSearchOnlineSkills = async (query: string) => {
-    const result = await api.searchOnlineSkills(query);
-    setNotice(result.message);
-    return result;
-  };
-
-  const handleCloneSkillRepo = async (repoUrl: string) => {
-    const result = await api.cloneSkillRepo(repoUrl);
+  const handleDownloadGithubSkill = async (repoUrl: string) => {
+    const result = await api.downloadGithubSkill(repoUrl);
     await refreshSkills();
     setNotice(result.message || copy.skills.imported(result.imported.length));
     return result;
   };
 
-  const handleListRemoteSkills = async (hostAlias: string) => {
-    const result = await api.listRemoteSkills(hostAlias);
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-    setHosts((current) =>
-      current.map((host) =>
-        host.hostAlias === result.hostAlias
-          ? {
-              ...host,
-              skillsExists: result.task.status === "success",
-              skillsCount: result.count,
-              status: result.task.status === "success" ? "online" : host.status,
-              lastSeen: copy.common.justNow
-            }
-          : host
-      )
-    );
-    setNotice(copy.skills.remoteListed(result.count));
+  const handleGetSkillTargets = async (skillId: string) => {
+    const result = await api.getSkillTargets(skillId);
+    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
     return result;
   };
 
-  const handlePreviewRemoteSkillInstall = async (
-    hostAlias: string,
-    skillId: string,
-    scope: RemoteSkillScope,
-    projectPath?: string
-  ) => {
-    const result = await api.previewRemoteSkillInstall(hostAlias, skillId, scope, projectPath);
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-    setNotice(result.message);
-    return result;
+  const handleInstallSkillTargets = async (skillId: string, targets: SkillTargetRequest[]) => {
+    const result = await api.installSkillTargets(skillId, targets);
+    return applySkillOperationResult(result);
   };
 
-  const handleInstallRemoteSkills = async (
-    hostAliases: string[],
-    skillId: string,
-    scope: RemoteSkillScope,
-    projectPath: string | undefined,
-    conflictPolicy: SkillConflictPolicy
-  ) => {
-    const result = await api.installRemoteSkillBatch(hostAliases, skillId, scope, projectPath, conflictPolicy);
-    setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
-    setHosts((current) =>
-      current.map((host) =>
-        hostAliases.includes(host.hostAlias)
-          ? {
-              ...host,
-              skillsExists: true,
-              skillsCount: Math.max(host.skillsCount ?? 0, 1),
-              status: result.ok ? "online" : host.status,
-              lastSeen: copy.common.justNow
-            }
-          : host
-      )
-    );
-    setNotice(copy.skills.installed(result.results.length));
-    return result;
+  const handleUninstallSkillTargets = async (skillId: string, targets: SkillTargetRequest[]) => {
+    const result = await api.uninstallSkillTargets(skillId, targets);
+    return applySkillOperationResult(result);
   };
 
-  const handleDeleteRemoteSkill = async (
-    hostAlias: string,
-    skillName: string,
-    scope: RemoteSkillScope,
-    projectPath: string | undefined,
-    confirmName: string
-  ) => {
-    const result = await api.deleteRemoteSkill(hostAlias, skillName, scope, projectPath, confirmName);
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-    setNotice(result.message);
-    return result;
+  const handleDeleteLibrarySkill = async (skillId: string, uninstallFirst: boolean) => {
+    const result = await api.deleteLibrarySkill(skillId, uninstallFirst);
+    return applySkillOperationResult(result);
+  };
+
+  const handleUpdateLibrarySkillAbout = async (skillId: string, about: string) => {
+    const nextSkills = await api.updateLibrarySkillAbout(skillId, about);
+    setSkillPacks(nextSkills);
+    const updated = nextSkills.find((skill) => skill.id === skillId);
+    setNotice(updated ? `${updated.name}: ${copy.skills.save}` : copy.skills.save);
+    return updated ?? null;
   };
 
   const handleSetProfileApiKey = async (profileId: string, apiKey: string) => {
@@ -1673,6 +1719,7 @@ function App() {
             latestCodexVersion={latestCodexVersion}
             onlineCount={onlineCount}
             appliedProfileCount={appliedProfileCount}
+            inventoryStatus={skillInventoryStatus}
             profiles={profiles}
             sshConfigHosts={sshConfigHosts}
             skillPacks={skillPacks}
@@ -1733,15 +1780,17 @@ function App() {
           <SkillsView
             copy={copy}
             hosts={hosts}
+            inventoryStatus={skillInventoryStatus}
             skillPacks={skillPacks}
-            onCloneSkillRepo={handleCloneSkillRepo}
-            onDeleteRemoteSkill={handleDeleteRemoteSkill}
+            onDeleteLibrarySkill={handleDeleteLibrarySkill}
+            onDetectInstalledSkills={handleDetectInstalledSkills}
+            onDownloadGithubSkill={handleDownloadGithubSkill}
+            onGetSkillTargets={handleGetSkillTargets}
             onImportSkillDirectory={handleImportSkillDirectory}
-            onInstallRemoteSkills={handleInstallRemoteSkills}
-            onListRemoteSkills={handleListRemoteSkills}
-            onPreviewRemoteSkillInstall={handlePreviewRemoteSkillInstall}
-            onSearchOnlineSkills={handleSearchOnlineSkills}
-            onViewTasks={() => setActiveSection("tasks")}
+            onInstallSkillTargets={handleInstallSkillTargets}
+            onRefreshSkillLibrary={handleRefreshSkillLibrary}
+            onUninstallSkillTargets={handleUninstallSkillTargets}
+            onUpdateLibrarySkillAbout={handleUpdateLibrarySkillAbout}
           />
         );
       case "tasks":
@@ -2107,6 +2156,7 @@ function DashboardView({
   copy,
   hostBusy,
   hosts,
+  inventoryStatus,
   latestCodexVersion,
   onlineCount,
   profiles,
@@ -2123,6 +2173,7 @@ function DashboardView({
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
+  inventoryStatus: SkillInventoryStatus;
   latestCodexVersion: LatestCodexVersion | null;
   onlineCount: number;
   profiles: Profile[];
@@ -2148,6 +2199,7 @@ function DashboardView({
         copy={copy}
         hostBusy={hostBusy}
         hosts={hosts}
+        inventoryStatus={inventoryStatus}
         latestCodexVersion={latestCodexVersion}
         profileById={profileById}
         sshConfigHosts={sshConfigHosts}
@@ -2188,6 +2240,7 @@ function ServerMatrix({
   copy,
   hostBusy,
   hosts,
+  inventoryStatus,
   latestCodexVersion,
   profileById,
   sshConfigHosts,
@@ -2198,6 +2251,7 @@ function ServerMatrix({
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
+  inventoryStatus: SkillInventoryStatus;
   latestCodexVersion: LatestCodexVersion | null;
   profileById: Map<string, Profile>;
   sshConfigHosts: SshConfigHost[];
@@ -2207,6 +2261,7 @@ function ServerMatrix({
 }) {
   const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
   const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
+  const hostInventoryByAlias = new Map(inventoryStatus.hostInventories.map((inventory) => [inventory.hostAlias.toLowerCase(), inventory]));
 
   return (
     <section className="panel spanWide">
@@ -2229,9 +2284,18 @@ function ServerMatrix({
           {hosts.map((host) => {
             const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
             const systemLabel = hostSystemLabel(host, copy);
-            const skillPackLabel = host.skillPackIds.length > 0
+            const inventory = hostInventoryByAlias.get(host.hostAlias.toLowerCase());
+            const installedNames = inventory?.ok ? installedSkillNames(inventory.skills) : [];
+            const legacySkillPackLabel = host.skillPackIds.length > 0
               ? host.skillPackIds.map((id) => skillPackById.get(id)?.name ?? id).join(", ")
-              : copy.dashboard.noSkillPacks;
+              : "";
+            const skillCountLabel = typeof host.skillsCount === "number" && host.skillsCount > 0
+              ? `${copy.hosts.skillsCount}: ${host.skillsCount}`
+              : "";
+            const skillPackLabel = installedNames.length > 0
+              ? installedNames.join(", ")
+              : legacySkillPackLabel || skillCountLabel || copy.dashboard.noSkillPacks;
+            const skillPackTone = installedNames.length > 0 || legacySkillPackLabel || skillCountLabel ? "blue" : "gray";
             return (
             <article className="hostCard" key={host.id}>
               <div className="hostHeader">
@@ -2265,7 +2329,7 @@ function ServerMatrix({
                 </div>
                 <div>
                   <dt>{copy.hosts.skills}</dt>
-                  <dd><Badge tone={host.skillPackIds.length > 0 ? "blue" : "gray"}>{skillPackLabel}</Badge></dd>
+                  <dd><Badge tone={skillPackTone}>{skillPackLabel}</Badge></dd>
                 </div>
               </dl>
             </article>
@@ -3603,75 +3667,50 @@ function profileApplyTone(status: ProfileApplyBatchResult["results"][number]["st
 function SkillsView({
   copy,
   hosts,
+  inventoryStatus,
   skillPacks,
-  onCloneSkillRepo,
-  onDeleteRemoteSkill,
+  onDeleteLibrarySkill,
+  onDetectInstalledSkills,
+  onDownloadGithubSkill,
+  onGetSkillTargets,
   onImportSkillDirectory,
-  onInstallRemoteSkills,
-  onListRemoteSkills,
-  onPreviewRemoteSkillInstall,
-  onSearchOnlineSkills,
-  onViewTasks
+  onInstallSkillTargets,
+  onRefreshSkillLibrary,
+  onUninstallSkillTargets,
+  onUpdateLibrarySkillAbout
 }: {
   copy: UICopy;
   hosts: Host[];
+  inventoryStatus: SkillInventoryStatus;
   skillPacks: SkillPack[];
-  onCloneSkillRepo: (repoUrl: string) => Promise<SkillImportResult>;
-  onDeleteRemoteSkill: (
-    hostAlias: string,
-    skillName: string,
-    scope: RemoteSkillScope,
-    projectPath: string | undefined,
-    confirmName: string
-  ) => Promise<RemoteSkillDeleteResult>;
+  onDeleteLibrarySkill: (skillId: string, uninstallFirst: boolean) => Promise<SkillTargetOperationResult>;
+  onDetectInstalledSkills: (includeHosts: boolean) => Promise<SkillDetectionResult>;
+  onDownloadGithubSkill: (repoUrl: string) => Promise<SkillImportResult>;
+  onGetSkillTargets: (skillId: string) => Promise<SkillTargetsResult>;
   onImportSkillDirectory: () => Promise<SkillImportResult | null>;
-  onInstallRemoteSkills: (
-    hostAliases: string[],
-    skillId: string,
-    scope: RemoteSkillScope,
-    projectPath: string | undefined,
-    conflictPolicy: SkillConflictPolicy
-  ) => Promise<RemoteSkillBatchInstallResult>;
-  onListRemoteSkills: (hostAlias: string) => Promise<RemoteSkillListResult>;
-  onPreviewRemoteSkillInstall: (
-    hostAlias: string,
-    skillId: string,
-    scope: RemoteSkillScope,
-    projectPath?: string
-  ) => Promise<RemoteSkillInstallPreview>;
-  onSearchOnlineSkills: (query: string) => Promise<OnlineSkillSearchResult>;
-  onViewTasks: () => void;
+  onInstallSkillTargets: (skillId: string, targets: SkillTargetRequest[]) => Promise<SkillTargetOperationResult>;
+  onRefreshSkillLibrary: () => Promise<unknown>;
+  onUninstallSkillTargets: (skillId: string, targets: SkillTargetRequest[]) => Promise<SkillTargetOperationResult>;
+  onUpdateLibrarySkillAbout: (skillId: string, about: string) => Promise<SkillPack | null>;
 }) {
-  const [selectedSkillId, setSelectedSkillId] = useState(skillPacks[0]?.id ?? "");
-  const [selectedHostAliases, setSelectedHostAliases] = useState<string[]>([]);
-  const [remoteHostAlias, setRemoteHostAlias] = useState(hosts[0]?.hostAlias ?? "");
-  const [scope, setScope] = useState<RemoteSkillScope>("user");
-  const [projectPath, setProjectPath] = useState("");
-  const [conflictPolicy, setConflictPolicy] = useState<SkillConflictPolicy>("backup");
-  const [query, setQuery] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
-  const [searchResult, setSearchResult] = useState<OnlineSkillSearchResult | null>(null);
-  const [remoteList, setRemoteList] = useState<RemoteSkillListResult | null>(null);
-  const [preview, setPreview] = useState<RemoteSkillInstallPreview | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<Record<string, string>>({});
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const [firstScanOpen, setFirstScanOpen] = useState(false);
+  const [previewSkill, setPreviewSkill] = useState<SkillPack | null>(null);
+  const [targetMode, setTargetMode] = useState<"install" | "uninstall" | null>(null);
+  const [targetSkill, setTargetSkill] = useState<SkillPack | null>(null);
+  const [targetResult, setTargetResult] = useState<SkillTargetsResult | null>(null);
+  const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>([]);
+  const [deleteSkill, setDeleteSkill] = useState<SkillPack | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-
-  const selectedSkill = skillPacks.find((skill) => skill.id === selectedSkillId) ?? skillPacks[0];
-  const installProjectPath = scope === "project" ? projectPath.trim() : undefined;
-  const canUseProjectScope = scope === "user" || Boolean(installProjectPath);
-  const canInstall = Boolean(selectedSkill && selectedHostAliases.length > 0 && canUseProjectScope && !busy);
-  const canPreview = Boolean(selectedSkill && selectedHostAliases[0] && canUseProjectScope && !busy);
-
-  useEffect(() => {
-    if (!selectedSkillId && skillPacks[0]) setSelectedSkillId(skillPacks[0].id);
-    if (selectedSkillId && !skillPacks.some((skill) => skill.id === selectedSkillId)) setSelectedSkillId(skillPacks[0]?.id ?? "");
-  }, [selectedSkillId, skillPacks]);
-
-  useEffect(() => {
-    if (!remoteHostAlias && hosts[0]) setRemoteHostAlias(hosts[0].hostAlias);
-    setSelectedHostAliases((current) => current.filter((alias) => hosts.some((host) => host.hostAlias === alias)));
-  }, [hosts, remoteHostAlias]);
+  const installedSkillRows = useMemo(
+    () => buildInstalledSkillRows(copy, hosts, inventoryStatus),
+    [copy, hosts, inventoryStatus]
+  );
+  const installedSkillNames = useMemo(
+    () => Array.from(new Set(installedSkillRows.flatMap((row) => row.skills))).sort((left, right) => left.localeCompare(right)),
+    [installedSkillRows]
+  );
 
   const runBusy = async <T,>(key: string, action: () => Promise<T>) => {
     setBusy(key);
@@ -3688,76 +3727,114 @@ function SkillsView({
     }
   };
 
-  const toggleHost = (alias: string) => {
-    setSelectedHostAliases((current) =>
-      current.includes(alias) ? current.filter((item) => item !== alias) : [...current, alias]
-    );
+  const handleDetect = async (includeHosts: boolean) => {
+    await runBusy("detect", () => onDetectInstalledSkills(includeHosts));
+    setMessage(copy.skills.detected);
   };
 
-  const handleSearch = async () => {
-    const result = await runBusy("search", () => onSearchOnlineSkills(query));
-    setSearchResult(result);
-    setMessage(result.message);
-  };
-
-  const handleClone = async (url: string) => {
-    const result = await runBusy(`clone-${url}`, () => onCloneSkillRepo(url));
-    setSelectedSkillId(result.imported[0]?.id ?? selectedSkillId);
-    setMessage(result.message);
+  const handleDetectClick = () => {
+    void handleDetect(true).catch(() => undefined);
   };
 
   const handleImport = async () => {
     const result = await runBusy("import", onImportSkillDirectory);
-    if (result?.imported[0]) setSelectedSkillId(result.imported[0].id);
     if (result) setMessage(result.message);
   };
 
-  const handlePreview = async () => {
-    if (!selectedSkill || !selectedHostAliases[0]) return;
-    const result = await runBusy("preview", () =>
-      onPreviewRemoteSkillInstall(selectedHostAliases[0], selectedSkill.id, scope, installProjectPath)
+  const handleRefresh = async () => {
+    await runBusy("refresh", onRefreshSkillLibrary);
+    setMessage(copy.skills.refreshed);
+  };
+
+  const handleDownload = async (repoUrl: string) => {
+    await runBusy("download", () => onDownloadGithubSkill(repoUrl));
+    setDownloadOpen(false);
+    setMessage(copy.skills.downloaded);
+  };
+
+  const openTargets = async (skill: SkillPack, mode: "install" | "uninstall") => {
+    setTargetSkill(skill);
+    setTargetMode(mode);
+    setTargetResult(null);
+    setSelectedTargetKeys([]);
+    try {
+      const result = await runBusy(`targets-${skill.id}`, () => onGetSkillTargets(skill.id));
+      setTargetResult(result);
+      setSelectedTargetKeys([]);
+    } catch {
+      setTargetMode(null);
+      setTargetSkill(null);
+    }
+  };
+
+  const submitTargets = async () => {
+    if (!targetSkill || !targetMode || !targetResult) return;
+    const requests = targetResult.targets
+      .filter((target) => selectedTargetKeys.includes(skillTargetKey(target)))
+      .map(skillTargetRequest);
+    const result = await runBusy(`${targetMode}-${targetSkill.id}`, () =>
+      targetMode === "install"
+        ? onInstallSkillTargets(targetSkill.id, requests)
+        : onUninstallSkillTargets(targetSkill.id, requests)
     );
-    setPreview(result);
+    setTargetMode(null);
+    setTargetSkill(null);
+    setTargetResult(null);
+    setSelectedTargetKeys([]);
+    setMessage(
+      result.message === "install-success"
+        ? copy.skills.installSuccess
+        : result.message === "install-partial-failure"
+          ? copy.skills.installPartialFailure
+          : result.message === "uninstall-success"
+            ? copy.skills.uninstallSuccess
+            : result.message === "uninstall-partial-failure"
+              ? copy.skills.uninstallPartialFailure
+          : result.message
+    );
+  };
+
+  const selectAllTargets = () => {
+    if (!targetMode || !targetResult) return;
+    const selectable = targetResult.targets
+      .filter((target) => (targetMode === "install" ? target.canInstall : target.canUninstall))
+      .map(skillTargetKey);
+    setSelectedTargetKeys(selectable);
+  };
+
+  const submitDelete = async (uninstallFirst: boolean) => {
+    if (!deleteSkill) return;
+    const result = await runBusy(`delete-${deleteSkill.id}`, () => onDeleteLibrarySkill(deleteSkill.id, uninstallFirst));
+    setDeleteSkill(null);
     setMessage(result.message);
   };
 
-  const handleInstall = async () => {
-    if (!selectedSkill || !canInstall) return;
-    const result = await runBusy("install", () =>
-      onInstallRemoteSkills(selectedHostAliases, selectedSkill.id, scope, installProjectPath, conflictPolicy)
+  const toggleTarget = (target: SkillTarget) => {
+    const key = skillTargetKey(target);
+    setSelectedTargetKeys((current) =>
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
     );
-    setMessage(copy.skills.installed(result.results.length));
-  };
-
-  const handleListRemote = async () => {
-    if (!remoteHostAlias) return;
-    const result = await runBusy("remote-list", () => onListRemoteSkills(remoteHostAlias));
-    setRemoteList(result);
-    setMessage(copy.skills.remoteListed(result.count));
-  };
-
-  const handleDeleteRemote = async (skillName: string) => {
-    if (!remoteHostAlias) return;
-    const result = await runBusy(`delete-${skillName}`, () =>
-      onDeleteRemoteSkill(remoteHostAlias, skillName, scope, installProjectPath, deleteConfirm[skillName] ?? "")
-    );
-    setMessage(result.message);
-    setDeleteConfirm((current) => ({ ...current, [skillName]: "" }));
-    await handleListRemote();
   };
 
   return (
     <div className="skillsStack">
       <section className="panel spanWide">
-        <div className="panelHeader">
-          <div>
-            <div className="eyebrow">{copy.skills.library}</div>
-            <h2>{copy.skills.localSkills}</h2>
-            <p>{copy.skills.libraryBody}</p>
+        <div className="panelHeader compact">
+          <h2>{copy.skills.library}</h2>
+          <div className="skillLibraryActions">
+            <button className="secondaryButton" disabled={busy === "detect"} type="button" onClick={handleDetectClick}>
+              {busy === "detect" ? copy.skills.detecting : copy.skills.detect}
+            </button>
+            <button className="secondaryButton" disabled={busy === "refresh"} type="button" onClick={() => void handleRefresh().catch(() => undefined)}>
+              {busy === "refresh" ? copy.skills.refreshing : copy.skills.refresh}
+            </button>
+            <button className="secondaryButton" disabled={busy === "import"} type="button" onClick={() => void handleImport().catch(() => undefined)}>
+              {copy.skills.importDirectory}
+            </button>
+            <button className="primaryButton" disabled={busy === "download"} type="button" onClick={() => setDownloadOpen(true)}>
+              {copy.skills.download}
+            </button>
           </div>
-          <button className="primaryButton" disabled={busy === "import"} type="button" onClick={() => void handleImport()}>
-            {busy === "import" ? copy.hosts.saving : copy.skills.importDirectory}
-          </button>
         </div>
 
         {skillPacks.length === 0 ? (
@@ -3767,206 +3844,573 @@ function SkillsView({
             <table className="skillsTable">
               <thead>
                 <tr>
-                  <th>{copy.skills.selectSkill}</th>
-                  <th>{copy.skills.sourceType}</th>
+                  <th>{copy.skills.skill}</th>
                   <th>{copy.skills.source}</th>
-                  <th>{copy.skills.updated}</th>
+                  <th>{copy.skills.addedAt}</th>
+                  <th>{copy.skills.applications}</th>
+                  <th>{copy.skills.actions}</th>
                 </tr>
               </thead>
               <tbody>
                 {skillPacks.map((skill) => (
-                  <tr className="selectableRow" data-selected={selectedSkill?.id === skill.id} key={skill.id} onClick={() => setSelectedSkillId(skill.id)}>
+                  <tr key={skill.id}>
                     <td>
                       <strong>{skill.name}</strong>
-                      <span>{skill.description || skill.id}</span>
                     </td>
-                    <td><Badge tone={skill.hasSkillMd ? "green" : "red"}>{skill.sourceType}</Badge></td>
-                    <td>{skill.source}</td>
-                    <td>{skill.updatedAt}</td>
+                    <td>
+                      <Badge tone={skill.sourceType === "github" ? "blue" : "gray"}>
+                        {skill.sourceType === "github" ? copy.skills.sourceGithub : copy.skills.sourceLocal}
+                      </Badge>
+                    </td>
+                    <td>{skill.addedAt || "-"}</td>
+                    <td>
+                      <div className="skillApplicationTags">
+                        {skill.applications.length > 0 ? (
+                          skill.applications.map((application) => (
+                            <Badge
+                              key={`${application.targetType}-${application.hostAlias ?? "local"}`}
+                              tone={application.hasSkillMd ? "green" : "yellow"}
+                              title={application.path}
+                            >
+                              {skillApplicationLabel(application, copy)}
+                            </Badge>
+                          ))
+                        ) : (
+                          <Badge tone="gray">{copy.skills.unapplied}</Badge>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div className="skillRowActions">
+                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => setPreviewSkill(skill)}>
+                          {copy.skills.preview}
+                        </button>
+                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => void openTargets(skill, "install")}>
+                          {copy.skills.install}
+                        </button>
+                        <button className="miniButton" disabled={Boolean(busy) || skill.applications.length === 0} type="button" onClick={() => void openTargets(skill, "uninstall")}>
+                          {copy.skills.uninstall}
+                        </button>
+                        <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={() => setDeleteSkill(skill)}>
+                          {copy.skills.delete}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {message ? <p className="skillMessage">{message}</p> : null}
       </section>
 
       <section className="panel spanWide">
         <div className="panelHeader compact">
-          <div>
-            <div className="eyebrow">{copy.skills.candidates}</div>
-            <h2>{copy.skills.cloneRepo}</h2>
-          </div>
+          <h2>{copy.skills.installedLibrary}</h2>
         </div>
-        <div className="skillSearchBar">
-          <input value={query} placeholder={copy.skills.searchPlaceholder} onChange={(event) => setQuery(event.target.value)} />
-          <button className="secondaryButton" disabled={!query.trim() || busy === "search"} type="button" onClick={() => void handleSearch()}>
-            {copy.skills.search}
-          </button>
-          <input value={repoUrl} placeholder={copy.skills.repoUrl} onChange={(event) => setRepoUrl(event.target.value)} />
-          <button className="secondaryButton" disabled={!repoUrl.trim() || busy === `clone-${repoUrl}`} type="button" onClick={() => void handleClone(repoUrl)}>
-            {copy.skills.clone}
-          </button>
+        <div className="tableWrap">
+          <table className="installedSkillsTable">
+            <thead>
+              <tr>
+                <th>{copy.hosts.alias}</th>
+                <th>{copy.hosts.source}</th>
+                <th>{copy.skills.hostIp}</th>
+                <th>{copy.skills.installedSkills}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {installedSkillRows.map((row) => (
+                <tr key={row.key}>
+                  <td><strong>{row.alias}</strong></td>
+                  <td><Badge tone={row.sourceTone}>{row.source}</Badge></td>
+                  <td>{row.hostIp}</td>
+                  <td>
+                    <div className="installedSkillTags">
+                      {row.skills.length > 0 ? (
+                        row.skills.map((skillName) => (
+                          <span className="installedSkillTag" key={skillName} style={installedSkillTagStyle(skillName, installedSkillNames)}>
+                            {skillName}
+                          </span>
+                        ))
+                      ) : row.unknownSkillCount ? (
+                        <Badge tone="blue">{`${copy.hosts.skillsCount}: ${row.unknownSkillCount}`}</Badge>
+                      ) : (
+                        <Badge tone="gray">{copy.skills.noInstalledSkills}</Badge>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        {searchResult ? (
-          searchResult.candidates.length > 0 ? (
-            <div className="tableWrap">
-              <table className="skillsTable">
-                <thead>
-                  <tr>
-                    <th>{copy.skills.repoUrl}</th>
-                    <th>Stars</th>
-                    <th>{copy.skills.updated}</th>
-                    <th>{copy.hosts.actions}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {searchResult.candidates.map((candidate) => (
-                    <tr key={candidate.repoUrl}>
-                      <td>
-                        <strong>{candidate.fullName}</strong>
-                        <span>{candidate.description || candidate.repoUrl}</span>
-                      </td>
-                      <td>{candidate.stars}</td>
-                      <td>{candidate.updatedAt}</td>
-                      <td>
-                        <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => void handleClone(candidate.repoUrl)}>
-                          {copy.skills.clone}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="skillMessage">{copy.skills.noResults}</p>
-          )
-        ) : null}
       </section>
 
-      <section className="panel skillInstallPanel">
-        <div className="panelHeader compact">
+      {firstScanOpen ? (
+        <SkillFirstScanModal
+          busy={busy === "detect"}
+          copy={copy}
+          onClose={() => setFirstScanOpen(false)}
+          onConfirm={() => void handleDetect(true).then(() => setFirstScanOpen(false)).catch(() => undefined)}
+        />
+      ) : null}
+      {downloadOpen ? (
+        <SkillDownloadModal
+          busy={busy === "download"}
+          copy={copy}
+          onClose={() => setDownloadOpen(false)}
+          onDownload={(repoUrl) => void handleDownload(repoUrl).catch(() => undefined)}
+        />
+      ) : null}
+      {previewSkill ? (
+        <SkillPreviewModal
+          copy={copy}
+          skill={previewSkill}
+          onClose={() => setPreviewSkill(null)}
+          onSaveAbout={async (about) => {
+            const updated = await onUpdateLibrarySkillAbout(previewSkill.id, about);
+            if (updated) setPreviewSkill(updated);
+          }}
+        />
+      ) : null}
+      {targetMode && targetSkill ? (
+        <SkillTargetsModal
+          busy={Boolean(busy)}
+          copy={copy}
+          mode={targetMode}
+          selectedKeys={selectedTargetKeys}
+          skill={targetSkill}
+          targets={targetResult?.targets ?? []}
+          onClose={() => {
+            setTargetMode(null);
+            setTargetSkill(null);
+            setTargetResult(null);
+            setSelectedTargetKeys([]);
+          }}
+          onSelectAll={selectAllTargets}
+          onSubmit={() => void submitTargets().catch(() => undefined)}
+          onToggle={toggleTarget}
+        />
+      ) : null}
+      {deleteSkill ? (
+        <SkillDeleteModal
+          busy={Boolean(busy)}
+          copy={copy}
+          skill={deleteSkill}
+          onClose={() => setDeleteSkill(null)}
+          onDelete={(uninstallFirst) => void submitDelete(uninstallFirst).catch(() => undefined)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+type InstalledSkillLibraryRow = {
+  key: string;
+  alias: string;
+  source: string;
+  sourceTone: BadgeTone;
+  hostIp: string;
+  skills: string[];
+  unknownSkillCount?: number;
+};
+
+function installedSkillNames(skills: SkillInventoryStatus["localSkills"]) {
+  return Array.from(
+    new Set(
+      skills
+        .filter((skill) => skill.hasSkillMd !== false)
+        .map((skill) => skill.name.trim())
+        .filter(Boolean)
+    )
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function buildInstalledSkillRows(copy: UICopy, hosts: Host[], status: SkillInventoryStatus): InstalledSkillLibraryRow[] {
+  const hostInventoryByAlias = new Map(status.hostInventories.map((inventory) => [inventory.hostAlias.toLowerCase(), inventory]));
+  return [
+    {
+      key: "local",
+      alias: copy.skills.localMachine,
+      source: copy.skills.localMachine,
+      sourceTone: "green",
+      hostIp: "127.0.0.1",
+      skills: installedSkillNames(status.localSkills)
+    },
+    ...hosts.map((host) => {
+      const inventory = hostInventoryByAlias.get(host.hostAlias.toLowerCase());
+      return {
+        key: `host-${host.hostAlias}`,
+        alias: host.hostAlias,
+        source: hostSourceLabel(copy, host),
+        sourceTone: host.source === "managed" ? "blue" as const : "gray" as const,
+        hostIp: host.address || "-",
+        skills: inventory?.ok ? installedSkillNames(inventory.skills) : [],
+        unknownSkillCount: !inventory?.ok && typeof host.skillsCount === "number" && host.skillsCount > 0
+          ? host.skillsCount
+          : undefined
+      };
+    })
+  ];
+}
+
+function installedSkillColor(skillName: string, allSkillNames: string[]) {
+  if (allSkillNames.length <= 1) return "hsl(205 74% 42%)";
+  const index = Math.max(0, allSkillNames.indexOf(skillName));
+  const hue = Math.round((index / Math.max(1, allSkillNames.length - 1)) * 310);
+  return `hsl(${hue} 72% 42%)`;
+}
+
+function installedSkillTagStyle(skillName: string, allSkillNames: string[]): CSSProperties {
+  return {
+    "--skill-color": installedSkillColor(skillName, allSkillNames)
+  } as CSSProperties;
+}
+
+function skillTargetKey(target: Pick<SkillTarget, "targetType" | "hostAlias" | "label">) {
+  const identity = target.targetType === "local" ? "local" : target.hostAlias ?? target.label;
+  return `${target.targetType}:${identity}`;
+}
+
+function skillTargetRequest(target: SkillTarget): SkillTargetRequest {
+  return {
+    targetType: target.targetType,
+    hostAlias: target.targetType === "host" ? target.hostAlias : null
+  };
+}
+
+function skillApplicationLabel(application: SkillApplication, copy: UICopy) {
+  if (application.targetType === "local") return copy.skills.localMachine;
+  return application.hostAlias || application.label || copy.hosts.unknown;
+}
+
+function skillTargetStatusLabel(target: SkillTarget, copy: UICopy) {
+  if (target.installed) return copy.skills.installedTarget;
+  if (target.canInstall || target.canUninstall) return copy.skills.available;
+  return copy.skills.unavailableTarget;
+}
+
+function skillTargetTone(target: SkillTarget): BadgeTone {
+  if (target.installed) return "green";
+  if (target.canInstall || target.canUninstall) return "blue";
+  return target.status === "offline" || target.status === "error" || target.status === "failed" ? "red" : "gray";
+}
+
+function SkillFirstScanModal({
+  busy,
+  copy,
+  onClose,
+  onConfirm
+}: {
+  busy: boolean;
+  copy: UICopy;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-first-scan-title">
+        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
           <div>
-            <div className="eyebrow">{copy.skills.remoteInstall}</div>
-            <h2>{selectedSkill?.name ?? copy.skills.selectSkill}</h2>
+            <h2 id="skill-first-scan-title">{copy.skills.firstScanTitle}</h2>
+            <p>{copy.skills.firstScanBody}</p>
           </div>
-          <Badge tone={canInstall ? "green" : "gray"}>{selectedHostAliases.length}</Badge>
         </div>
+        <div className="modalActions">
+          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+            {copy.hosts.cancel}
+          </button>
+          <button className="primaryButton" disabled={busy} type="button" onClick={onConfirm}>
+            {busy ? copy.skills.detecting : copy.skills.firstScanAction}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
-        <div className="skillControls">
-          <label>
-            <span>{copy.skills.selectSkill}</span>
-            <select value={selectedSkill?.id ?? ""} onChange={(event) => setSelectedSkillId(event.target.value)}>
-              {skillPacks.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
-            </select>
-          </label>
-          <label>
-            <span>{copy.skills.projectPath}</span>
-            <input disabled={scope === "user"} value={projectPath} placeholder="~/project" onChange={(event) => setProjectPath(event.target.value)} />
-          </label>
-        </div>
+function SkillDownloadModal({
+  busy,
+  copy,
+  onClose,
+  onDownload
+}: {
+  busy: boolean;
+  copy: UICopy;
+  onClose: () => void;
+  onDownload: (repoUrl: string) => void;
+}) {
+  const [repoUrl, setRepoUrl] = useState("");
+  const canSubmit = repoUrl.trim().length > 0 && !busy;
 
-        <div className="segmentedControl skillSegment">
-          <button data-active={scope === "user"} type="button" onClick={() => setScope("user")}>{copy.skills.userScope}</button>
-          <button data-active={scope === "project"} type="button" onClick={() => setScope("project")}>{copy.skills.projectScope}</button>
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    onDownload(repoUrl.trim());
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-download-title">
+        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="skill-download-title">{copy.skills.downloadTitle}</h2>
+          </div>
         </div>
-        <div className="segmentedControl skillSegment">
-          {(["backup", "skip", "overwrite"] as SkillConflictPolicy[]).map((policy) => (
-            <button data-active={conflictPolicy === policy} key={policy} type="button" onClick={() => setConflictPolicy(policy)}>
-              {copy.skills[policy]}
+        <form className="skillDownloadForm" onSubmit={handleSubmit}>
+          <label className="fieldGroup">
+            <span>{copy.skills.githubUrl}</span>
+            <input
+              autoFocus
+              disabled={busy}
+              inputMode="url"
+              onChange={(event) => setRepoUrl(event.target.value)}
+              placeholder="https://github.com/owner/repo"
+              required
+              type="url"
+              value={repoUrl}
+            />
+          </label>
+          <div className="modalActions">
+            <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+              {copy.hosts.cancel}
             </button>
-          ))}
-        </div>
+            <button className="primaryButton" disabled={!canSubmit} type="submit">
+              {busy ? copy.common.loading : copy.skills.downloadAction}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
 
-        <div className="profileSubhead">
-          <strong>{copy.skills.selectHosts}</strong>
-          <button
-            className="linkButton"
-            type="button"
-            onClick={() => setSelectedHostAliases(selectedHostAliases.length === hosts.length ? [] : hosts.map((host) => host.hostAlias))}
-          >
-            {copy.skills.selectAllHosts}
-          </button>
+function SkillPreviewModal({
+  copy,
+  skill,
+  onClose,
+  onSaveAbout
+}: {
+  copy: UICopy;
+  skill: SkillPack;
+  onClose: () => void;
+  onSaveAbout: (about: string) => Promise<void>;
+}) {
+  const skillDescription = skill.description?.trim() ?? "";
+  const about = skillDescription || skill.about?.trim() || copy.skills.aboutFallback;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(about);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(about);
+    setEditing(false);
+    setError(null);
+  }, [about, skill.id]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSaveAbout(draft);
+      setEditing(false);
+    } catch (saveError) {
+      setError(formatError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal skillPreviewModal" role="dialog" aria-modal="true" aria-labelledby="skill-preview-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.setupGuide.close}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="skill-preview-title">{skill.name}</h2>
+          </div>
+          <div className="skillPreviewBadge">
+            <Badge tone={skill.sourceType === "github" ? "blue" : "gray"}>
+              {skill.sourceType === "github" ? copy.skills.sourceGithub : copy.skills.sourceLocal}
+            </Badge>
+          </div>
         </div>
-        {hosts.length === 0 ? (
-          <EmptyListState copy={copy} message={copy.emptyLists.skillHosts} variant="hosts" />
-        ) : (
-          <div className="skillHostList">
-            {hosts.map((host) => (
-              <button className="profileHostSelectRow" data-selected={selectedHostAliases.includes(host.hostAlias)} key={host.id} type="button" onClick={() => toggleHost(host.hostAlias)}>
-                <input checked={selectedHostAliases.includes(host.hostAlias)} readOnly type="checkbox" />
-                <strong>{host.name}<small>{host.hostAlias}</small></strong>
-                <Badge tone={host.status === "online" ? "green" : "gray"}>{host.status}</Badge>
+        <div className="taskLogModalMeta skillPreviewMeta">
+          <div>
+            <span>{copy.skills.addedAt}</span>
+            <strong>{skill.addedAt || "-"}</strong>
+          </div>
+          <div>
+            <span>{copy.skills.path}</span>
+            <strong>{skill.managedPath || skill.originalPath || "-"}</strong>
+          </div>
+        </div>
+        <section className="skillPreviewDetails">
+          <span>{copy.skills.details}</span>
+          {editing ? (
+            <textarea
+              autoFocus
+              disabled={saving}
+              onChange={(event) => setDraft(event.target.value)}
+              value={draft}
+            />
+          ) : (
+            <p>{about}</p>
+          )}
+        </section>
+        {error ? <p className="skillMessage">{error}</p> : null}
+        <div className="modalActions">
+          {editing ? (
+            <>
+              <button className="secondaryButton" disabled={saving} type="button" onClick={() => {
+                setDraft(about);
+                setEditing(false);
+                setError(null);
+              }}>
+                {copy.hosts.cancel}
               </button>
-            ))}
-          </div>
-        )}
-
-        {preview ? (
-          <dl className="settingsList skillPreview">
-            <div><dt>{copy.skills.target}</dt><dd>{preview.targetPath}</dd></div>
-            <div><dt>{copy.skills.exists}</dt><dd>{formatBoolean(preview.exists, copy)}</dd></div>
-            <div><dt>SKILL.md</dt><dd>{preview.hasSkillMd ? copy.skills.valid : copy.skills.invalid}</dd></div>
-          </dl>
-        ) : null}
-
-        <div className="modalActions skillActions">
-          <button className="secondaryButton" disabled={!canPreview} type="button" onClick={() => void handlePreview()}>{copy.skills.preview}</button>
-          <button className="primaryButton" disabled={!canInstall} type="button" onClick={() => void handleInstall()}>{copy.skills.installSelected}</button>
+              <button className="primaryButton" disabled={saving} type="button" onClick={() => void handleSave()}>
+                {copy.skills.save}
+              </button>
+            </>
+          ) : (
+            <button className="primaryButton" type="button" onClick={() => setEditing(true)}>
+              {copy.skills.edit}
+            </button>
+          )}
         </div>
       </section>
+    </div>
+  );
+}
 
-      <section className="panel skillRemotePanel">
-        <div className="panelHeader compact">
+function SkillTargetsModal({
+  busy,
+  copy,
+  mode,
+  selectedKeys,
+  skill,
+  targets,
+  onClose,
+  onSelectAll,
+  onSubmit,
+  onToggle
+}: {
+  busy: boolean;
+  copy: UICopy;
+  mode: "install" | "uninstall";
+  selectedKeys: string[];
+  skill: SkillPack;
+  targets: SkillTarget[];
+  onClose: () => void;
+  onSelectAll: () => void;
+  onSubmit: () => void;
+  onToggle: (target: SkillTarget) => void;
+}) {
+  const actionLabel = mode === "install" ? copy.skills.install : copy.skills.uninstall;
+  const hint = mode === "install" ? copy.skills.installHint : copy.skills.uninstallHint;
+  const selectedCount = selectedKeys.length;
+  const hasTargets = targets.length > 0;
+  const selectableCount = targets.filter((target) => (mode === "install" ? target.canInstall : target.canUninstall)).length;
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-targets-title">
+        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
           <div>
-            <div className="eyebrow">{copy.skills.remoteView}</div>
-            <h2>{copy.skills.listRemote}</h2>
+            <h2 id="skill-targets-title">{`${actionLabel}: ${skill.name}`}</h2>
+            <p>{hint}</p>
           </div>
-          <button className="secondaryButton" disabled={!remoteHostAlias || busy === "remote-list"} type="button" onClick={() => void handleListRemote()}>
-            {copy.skills.listRemote}
+        </div>
+        <div className="skillTargetList">
+          {hasTargets ? (
+            targets.map((target) => {
+              const key = skillTargetKey(target);
+              const selectable = mode === "install" ? target.canInstall : target.canUninstall;
+              const detailText = mode === "install" ? target.message : target.path || target.message;
+              const secondaryText = mode === "install" ? "" : target.path && target.message ? target.message : "";
+              return (
+                <label className="skillTargetRow" data-disabled={!selectable} key={key}>
+                  <input
+                    checked={selectedKeys.includes(key)}
+                    disabled={!selectable || busy}
+                    onChange={() => onToggle(target)}
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>{target.targetType === "local" ? copy.skills.localMachine : target.label}</strong>
+                    {detailText ? <span>{detailText}</span> : null}
+                    {secondaryText ? <small>{secondaryText}</small> : null}
+                  </div>
+                  <Badge tone={skillTargetTone(target)}>{skillTargetStatusLabel(target, copy)}</Badge>
+                </label>
+              );
+            })
+          ) : (
+            <EmptyListState copy={copy} message={busy ? copy.common.loading : copy.skills.noTargets} variant="skills" />
+          )}
+        </div>
+        <div className="modalActions">
+          <button className="secondaryButton" disabled={busy || selectableCount === 0} type="button" onClick={onSelectAll}>
+            {copy.skills.selectAll}
+          </button>
+          <button className="primaryButton" disabled={busy || selectedCount === 0} type="button" onClick={onSubmit}>
+            {actionLabel}
           </button>
         </div>
-        <label className="skillRemoteHost">
-          <span>{copy.tasks.host}</span>
-          <select value={remoteHostAlias} onChange={(event) => setRemoteHostAlias(event.target.value)}>
-            {hosts.map((host) => <option key={host.id} value={host.hostAlias}>{host.name} ({host.hostAlias})</option>)}
-          </select>
-        </label>
-
-        {remoteList ? (
-          <div className="skillRemoteList">
-            <div className="profileSubhead">
-              <strong>{remoteList.rootPath}</strong>
-              <Badge tone={remoteList.invalidCount > 0 ? "yellow" : "green"}>{remoteList.count}</Badge>
-            </div>
-            {remoteList.skills.map((skill) => (
-              <div className="profileStatusList skillRemoteRow" key={skill.path}>
-                <div>
-                  <Badge tone={skill.hasSkillMd ? "green" : "red"}>{skill.hasSkillMd ? copy.skills.valid : copy.skills.invalid}</Badge>
-                  <strong>{skill.name}</strong>
-                  <span>{skill.path}</span>
-                </div>
-                <div className="skillDeleteRow">
-                  <input value={deleteConfirm[skill.name] ?? ""} placeholder={copy.skills.confirmName} onChange={(event) => setDeleteConfirm((current) => ({ ...current, [skill.name]: event.target.value }))} />
-                  <button className="miniButton danger" disabled={(deleteConfirm[skill.name] ?? "") !== skill.name || Boolean(busy)} type="button" onClick={() => void handleDeleteRemote(skill.name)}>
-                    {copy.skills.deleteRemote}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : null}
       </section>
+    </div>
+  );
+}
 
-      <section className="panel spanWide">
-        <div className="panelHeader compact">
+function SkillDeleteModal({
+  busy,
+  copy,
+  skill,
+  onClose,
+  onDelete
+}: {
+  busy: boolean;
+  copy: UICopy;
+  skill: SkillPack;
+  onClose: () => void;
+  onDelete: (uninstallFirst: boolean) => void;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-delete-title">
+        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
           <div>
-            <div className="eyebrow">{copy.tasks.taskLog}</div>
-            <h2>{copy.skills.viewTasks}</h2>
-            <p>{message ?? copy.tasks.noLogs}</p>
+            <h2 id="skill-delete-title">{`${copy.skills.deleteTitle}: ${skill.name}`}</h2>
+            <p>{copy.skills.deleteBody}</p>
           </div>
-          <button className="secondaryButton" type="button" onClick={onViewTasks}>{copy.skills.viewTasks}</button>
+        </div>
+        <div className="modalActions skillDeleteActions">
+          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+            {copy.hosts.cancel}
+          </button>
+          <button className="secondaryButton dangerButton" disabled={busy} type="button" onClick={() => onDelete(false)}>
+            {copy.skills.directDelete}
+          </button>
+          <button className="primaryButton" disabled={busy} type="button" onClick={() => onDelete(true)}>
+            {copy.skills.uninstallAndDelete}
+          </button>
         </div>
       </section>
     </div>
@@ -4156,16 +4600,16 @@ function SettingsView({
             </div>
           </div>
 
-          <label className="settingSelectRow">
+          <div className="settingControlRow">
             <span>{copy.settings.font}</span>
-            <select value={settings.fontPreset} onChange={(event) => onFontPresetChange(event.target.value as FontPreset)}>
+            <div className="segmentedControl" data-options="2" role="group" aria-label={copy.settings.font}>
               {(Object.keys(fontPresets) as FontPreset[]).map((preset) => (
-                <option key={preset} value={preset}>
+                <button data-active={settings.fontPreset === preset} key={preset} onClick={() => onFontPresetChange(preset)} type="button">
                   {fontPresets[preset].label}
-                </option>
+                </button>
               ))}
-            </select>
-          </label>
+            </div>
+          </div>
         </div>
       </section>
 

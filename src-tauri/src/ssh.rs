@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -878,16 +879,31 @@ pub fn run_ssh_script(
     script: &str,
     timeout_ms: u64,
 ) -> Result<SshCommandOutput, String> {
-    // OpenSSH sends the remote command through the user's login shell. Passing
-    // the whole script as one process argument preserves spaces such as
-    // `uname -m`; splitting it here would make the remote shell see only the
-    // first token as the command.
-    run_ssh_command(
+    // Windows OpenSSH can lose shell quotes when an entire script is passed as
+    // the remote command argument. Send scripts through stdin so POSIX shell
+    // parsing happens only on the remote side.
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let extra_options = Vec::new();
+    let (host_alias, connect_timeout_secs, args) = build_ssh_args(
         host_alias,
-        vec![script.into()],
+        vec!["sh".into(), "-s".into()],
         timeout_ms,
-        script,
-        Vec::new(),
+        extra_options.clone(),
+    )?;
+    let command = format!(
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} sh -s",
+        connect_timeout_secs,
+        display_extra_options(&extra_options),
+        host_alias
+    );
+    let stdin_input = script_stdin(script);
+    run_process_with_timeout_input_env(
+        "ssh",
+        &args,
+        &command,
+        timeout_ms,
+        stdin_input.as_ref(),
+        &[],
     )
 }
 
@@ -900,14 +916,38 @@ pub fn run_ssh_script_streaming<F>(
 where
     F: FnMut(ProcessStreamEvent),
 {
-    run_ssh_command_streaming(
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let extra_options = Vec::new();
+    let (host_alias, connect_timeout_secs, args) = build_ssh_args(
         host_alias,
-        vec![script.into()],
+        vec!["sh".into(), "-s".into()],
         timeout_ms,
-        script,
-        Vec::new(),
+        extra_options.clone(),
+    )?;
+    let command = format!(
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} sh -s",
+        connect_timeout_secs,
+        display_extra_options(&extra_options),
+        host_alias
+    );
+    let stdin_input = script_stdin(script);
+    run_process_with_timeout_streaming(
+        "ssh",
+        &args,
+        &command,
+        timeout_ms,
+        stdin_input.as_ref(),
+        &[],
         on_event,
     )
+}
+
+fn script_stdin(script: &str) -> Cow<'_, str> {
+    if script.ends_with('\n') {
+        Cow::Borrowed(script)
+    } else {
+        Cow::Owned(format!("{script}\n"))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1053,31 +1093,6 @@ fn run_ssh_command(
         display_remote_command
     );
     run_process_with_timeout("ssh", &args, &command, timeout_ms)
-}
-
-fn run_ssh_command_streaming<F>(
-    host_alias: &str,
-    remote_args: Vec<String>,
-    timeout_ms: u64,
-    display_remote_command: &str,
-    extra_options: Vec<(String, String)>,
-    on_event: F,
-) -> Result<SshCommandOutput, String>
-where
-    F: FnMut(ProcessStreamEvent),
-{
-    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
-    let (host_alias, connect_timeout_secs, args) =
-        build_ssh_args(host_alias, remote_args, timeout_ms, extra_options.clone())?;
-
-    let command = format!(
-        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} {}",
-        connect_timeout_secs,
-        display_extra_options(&extra_options),
-        host_alias,
-        display_remote_command
-    );
-    run_process_with_timeout_streaming("ssh", &args, &command, timeout_ms, "", &[], on_event)
 }
 
 fn build_ssh_args(
@@ -2428,12 +2443,25 @@ mod tests {
     }
 
     #[test]
-    fn ssh_script_is_sent_as_one_remote_command_argument() {
+    fn ssh_script_invocation_uses_stdin_shell() {
         let (_, _, args) =
-            build_ssh_args("lab", vec!["uname -m".into()], 10_000, Vec::new()).expect("build args");
+            build_ssh_args("lab", vec!["sh".into(), "-s".into()], 10_000, Vec::new())
+                .expect("build args");
 
-        assert_eq!(args.last().map(String::as_str), Some("uname -m"));
-        assert!(!args.iter().any(|arg| arg == "sh" || arg == "-lc"));
+        let tail = args
+            .iter()
+            .rev()
+            .take(2)
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(tail, vec!["-s", "sh"]);
+        assert!(!args.iter().any(|arg| arg == "uname -m"));
+    }
+
+    #[test]
+    fn ssh_script_stdin_adds_trailing_newline() {
+        assert_eq!(script_stdin("printf ok").as_ref(), "printf ok\n");
+        assert_eq!(script_stdin("printf ok\n").as_ref(), "printf ok\n");
     }
 
     #[test]

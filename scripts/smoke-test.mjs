@@ -32,6 +32,7 @@ const requiredFiles = [
 ];
 
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
+const removed = (...parts) => parts.join("");
 const fail = (message) => {
   console.error(`SMOKE FAIL: ${message}`);
   process.exit(1);
@@ -128,15 +129,17 @@ const requiredText = [
   [architecture, "env_key"],
   [architecture, "apiKeyEnvVar"],
   [architecture, "credentialStored"],
-  [architecture, "search_online_skills"],
-  [architecture, "install_remote_skill_batch"],
+  [architecture, "download_github_skill"],
+  [architecture, "update_library_skill_about"],
+  [architecture, "tree/<branch>/<skill-path>"],
+  [architecture, "install_skill_targets"],
   [architecture, "Skill Management"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
-  [mvp, "Window 6: local skill import"],
+  [mvp, "Window 6: single-card local skill library"],
   [mvp, "Writing local credential-store key names or API key values into remote Codex config"],
   [limitations, "Profiles /"],
-  [limitations, "GitHub repository search only"],
+  [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "The optional stored local credential key is never written to remote"],
   [limitations, "CodexHub must not write Codex App private state"]
 ];
@@ -186,16 +189,27 @@ for (const command of [
   "import_cc_switch_profiles",
   "list_local_skills",
   "import_local_skill",
-  "search_online_skills",
-  "clone_skill_repo",
-  "list_remote_skills",
-  "preview_remote_skill_install",
-  "install_remote_skill",
-  "install_remote_skill_batch",
-  "delete_remote_skill",
+  "update_library_skill_about",
+  "get_skill_inventory_status",
+  "detect_installed_skills",
+  "download_github_skill",
+  "get_skill_targets",
+  "install_skill_targets",
+  "uninstall_skill_targets",
+  "delete_library_skill",
   "list_tasks"
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
+}
+for (const removedCommand of [
+  removed("search", "_online", "_skills"),
+  removed("clone", "_skill", "_repo"),
+  removed("list", "_remote", "_skills"),
+  removed("preview", "_remote", "_skill", "_install"),
+  removed("install", "_remote", "_skill", "_batch"),
+  removed("delete", "_remote", "_skill")
+]) {
+  if (rustLib.includes(removedCommand)) fail(`removed public Skills command should not remain: ${removedCommand}`);
 }
 const listHostsMatch = rustLib.match(/fn list_hosts[\s\S]*?\n}\r?\n\r?\n#\[tauri::command\]\r?\nfn refresh_discovered_hosts/);
 if (!listHostsMatch) fail("could not locate list_hosts function boundary");
@@ -207,13 +221,12 @@ for (const asyncCommand of [
   "async fn remote_probe_codex",
   "async fn remote_manage_codex",
   "async fn refresh_latest_codex_version",
-  "async fn search_online_skills",
-  "async fn clone_skill_repo",
-  "async fn list_remote_skills",
-  "async fn preview_remote_skill_install",
-  "async fn install_remote_skill",
-  "async fn install_remote_skill_batch",
-  "async fn delete_remote_skill"
+  "async fn detect_installed_skills",
+  "async fn download_github_skill",
+  "async fn get_skill_targets",
+  "async fn install_skill_targets",
+  "async fn uninstall_skill_targets",
+  "async fn delete_library_skill"
 ]) {
   if (!rustLib.includes(asyncCommand)) fail(`long remote command must stay async: ${asyncCommand}`);
 }
@@ -221,22 +234,48 @@ if (!rustLib.includes("spawn_blocking(command)")) fail("long remote commands sho
 for (const token of [
   "tauri_plugin_dialog::init()",
   "SkillImportResult",
-  "OnlineSkillSearchResult",
+  "SkillInventoryStatus",
+  "SkillDetectionResult",
+  "SkillTargetsResult",
+  "SkillTargetOperationResult",
   "RemoteSkillListResult",
-  "SkillConflictPolicy",
   "managed_skills_dir",
+  "skill_inventory_path",
+  "local_skills",
+  "update_local_inventory_skill",
+  "apply_skill_inventory_to_hosts",
+  "Loaded cached skill targets.",
+  "installed_skill_candidate_dirs",
   "skill_candidate_dirs",
   "parse_skill_metadata",
-  "parse_github_skill_search",
+  "is_allowed_github_repo_url",
+  "parse_github_skill_url",
   "write_skill_archive",
+  "remote_skill_count_script",
+  "remote_skill_list_script",
   "remote_skill_install_script",
   "remote_skill_delete_script",
   "validate_remote_skill_dir_name",
+  "$HOME/.codex/superpowers/skills",
+  '"$root"/.[!.]*',
+  '"$root"/..?*',
+  '"$dir"/.[!.]*',
+  '"$dir"/..?*',
   "CODEXHUB_SKILL_BACKUP",
   "CODEXHUB_SKILL_SKIPPED",
   "tar is required on the remote host"
 ]) {
   if (!rustLib.includes(token)) fail(`missing Window 6 Skills backend token: ${token}`);
+}
+if (rustLib.includes('find "$HOME/.codex/skills" -mindepth 1 -maxdepth 1')) {
+  fail("remote skill probes must not count only first-level ~/.codex/skills directories");
+}
+const getSkillTargetsMatch = rustLib.match(/fn run_get_skill_targets[\s\S]*?\n}\r?\n\r?\nfn run_install_skill_targets/);
+if (!getSkillTargetsMatch) fail("could not locate run_get_skill_targets function boundary");
+for (const liveProbeToken of ["run_remote_skill_install_preview", "run_remote_skill_list"]) {
+  if (getSkillTargetsMatch[0].includes(liveProbeToken)) {
+    fail(`get_skill_targets must use cached inventory instead of live remote probing: ${liveProbeToken}`);
+  }
 }
 for (const token of ["LatestCodexVersion", "parse_npm_latest_metadata", "latest_codex_cache_is_fresh", "CODEX_LATEST_REFRESH_HOUR", "https://registry.npmjs.org/@openai/codex", "codex-latest.json"]) {
   if (!rustLib.includes(token)) fail(`missing latest Codex version backend token: ${token}`);
@@ -328,28 +367,83 @@ for (const token of [
   "open({ directory: true",
   "function SkillsView(",
   "api.importLocalSkill",
-  "api.searchOnlineSkills",
-  "api.cloneSkillRepo",
-  "api.listRemoteSkills",
-  "api.previewRemoteSkillInstall",
-  "api.installRemoteSkillBatch",
-  "api.deleteRemoteSkill",
+  "api.getSkillInventoryStatus",
+  "api.detectInstalledSkills",
+  "api.downloadGithubSkill",
+  "api.getSkillTargets",
+  "api.installSkillTargets",
+  "api.uninstallSkillTargets",
+  "api.deleteLibrarySkill",
   "className=\"skillsStack\"",
-  "skillSearchBar",
-  "skillHostList",
-  "skillRemoteList",
-  "deleteConfirm",
-  "copy.skills.remoteInstall",
-  "copy.skills[policy]",
-  'backup: "Backup"',
-  'overwrite: "Overwrite"',
-  "copy.skills.confirmName",
+  "skillLibraryActions",
+  "skillApplicationTags",
+  "skillRowActions",
+  "installedLibrary",
+  "inventoryStatus",
+  "buildInstalledSkillRows",
+  'sourceTone: "green"',
+  "unknownSkillCount",
+  "installedSkillTagStyle",
+  "installedSkillsTable",
+  "installedSkillTag",
+  "SkillFirstScanModal",
+  "SkillDownloadModal",
+  "SkillPreviewModal",
+  "const about = skillDescription || skill.about?.trim() || copy.skills.aboutFallback",
+  "className=\"taskLogModalMeta skillPreviewMeta\"",
+  "SkillTargetsModal",
+  "onRefreshSkillLibrary",
+  "copy.skills.refresh",
+  "copy.skills.refreshed",
+  'selectAll: "Select all"',
+  'selectAll: "全选"',
+  'setSelectedTargetKeys([])',
+  '"install-success"',
+  '"install-partial-failure"',
+  '"uninstall-success"',
+  '"uninstall-partial-failure"',
+  "copy.skills.installSuccess",
+  "copy.skills.installPartialFailure",
+  "copy.skills.uninstallSuccess",
+  "copy.skills.uninstallPartialFailure",
+  'skill.sourceType === "github" ? "blue" : "gray"',
+  'mode === "install" ? target.message : target.path || target.message',
+  "SkillDeleteModal",
+  "copy.skills.firstScanTitle",
+  "void handleDetect(true).catch",
+  "handleRefresh",
+  'importDirectory: "Import"',
+  'importDirectory: "导入"',
+  "copy.skills.githubUrl",
   "List remote skills",
   "Preview skill install",
   "Install skill",
   "Delete skill"
 ]) {
   if (!app.includes(token)) fail(`missing Window 6 Skills UI token: ${token}`);
+}
+if (app.includes("void handleDetect(false).catch")) fail("manual skill detection must refresh host inventories, not local-only cache");
+for (const removedToken of [
+  removed("api.search", "Online", "Skills"),
+  removed("api.clone", "SkillRepo"),
+  removed("api.list", "RemoteSkills"),
+  removed("api.preview", "RemoteSkillInstall"),
+  removed("api.install", "RemoteSkillBatch"),
+  removed("api.delete", "RemoteSkill"),
+  removed("skill", "SearchBar"),
+  removed("skill", "RemotePanel"),
+  removed("copy.skills.remote", "Install"),
+  "copy.skills[policy]"
+]) {
+  if (app.includes(removedToken)) fail(`removed Skills UI token should not remain: ${removedToken}`);
+}
+for (const removedInstallToken of [
+  "Installed skill on {} of {} selected target(s).",
+  "Installed skill on ",
+  "Uninstalled skill from {} of {} selected target(s).",
+  "Uninstalled skill from "
+]) {
+  if (rustLib.includes(removedInstallToken)) fail(`old skill operation success message should not remain: ${removedInstallToken}`);
 }
 for (const token of [
   'label: "Dashboard"',
@@ -664,23 +758,44 @@ for (const token of [
   "list_local_skills",
   "importLocalSkill",
   "import_local_skill",
-  "searchOnlineSkills",
-  "search_online_skills",
-  "cloneSkillRepo",
-  "clone_skill_repo",
-  "listRemoteSkills",
-  "list_remote_skills",
-  "previewRemoteSkillInstall",
-  "preview_remote_skill_install",
-  "installRemoteSkillBatch",
-  "install_remote_skill_batch",
-  "deleteRemoteSkill",
-  "delete_remote_skill",
-  "mockRemoteSkillList",
-  "mockRemoteSkillInstallBatch",
-  "mockRemoteSkillDelete"
+  "updateLibrarySkillAbout",
+  "update_library_skill_about",
+  "getSkillInventoryStatus",
+  "get_skill_inventory_status",
+  "detectInstalledSkills",
+  "detect_installed_skills",
+  "downloadGithubSkill",
+  "download_github_skill",
+  "getSkillTargets",
+  "get_skill_targets",
+  "installSkillTargets",
+  "install_skill_targets",
+  "uninstallSkillTargets",
+  "uninstall_skill_targets",
+  "deleteLibrarySkill",
+  "delete_library_skill",
+  "mockDetectInstalledSkills",
+  "mockUpdateLibrarySkillAbout",
+  "mockSkillTargetOperation",
+  "mockDeleteLibrarySkill",
+  "uninstall-success"
 ]) {
   if (!api.includes(token)) fail(`missing Window 6 Skills API token: ${token}`);
+}
+for (const removedToken of [
+  removed("search", "Online", "Skills"),
+  removed("search", "_online", "_skills"),
+  removed("clone", "SkillRepo"),
+  removed("clone", "_skill", "_repo"),
+  removed("list", "RemoteSkills"),
+  removed("preview", "RemoteSkillInstall"),
+  removed("install", "RemoteSkillBatch"),
+  removed("delete", "RemoteSkill"),
+  removed("mock", "RemoteSkillList"),
+  removed("mock", "RemoteSkillInstallBatch"),
+  removed("mock", "RemoteSkillDelete")
+]) {
+  if (api.includes(removedToken)) fail(`removed Skills API token should not remain: ${removedToken}`);
 }
 
 const models = read("src/models.ts");
@@ -701,19 +816,34 @@ for (const token of ["apiConfigName", "apiConfigSource"]) {
 }
 for (const token of [
   "SkillImportResult",
-  "OnlineSkillCandidate",
-  "OnlineSkillSearchResult",
-  "RemoteSkillScope",
-  "SkillConflictPolicy",
+  "SkillApplication",
+  "SkillInventoryStatus",
+  "SkillDetectionResult",
+  "SkillTargetRequest",
+  "SkillTarget",
+  "SkillTargetsResult",
+  "SkillTargetOperationResult",
   "RemoteSkillListResult",
-  "RemoteSkillInstallPreview",
-  "RemoteSkillBatchInstallResult",
-  "RemoteSkillDeleteResult",
+  "localSkills",
   "sourceType",
+  "about",
+  "addedAt",
+  "applications",
   "managedPath",
   "hasSkillMd"
 ]) {
   if (!models.includes(token)) fail(`missing Window 6 Skills model token: ${token}`);
+}
+for (const removedToken of [
+  removed("Online", "SkillCandidate"),
+  removed("Online", "SkillSearchResult"),
+  removed("Remote", "SkillScope"),
+  removed("Skill", "ConflictPolicy"),
+  removed("Remote", "SkillInstallPreview"),
+  removed("Remote", "SkillBatchInstallResult"),
+  removed("Remote", "SkillDeleteResult")
+]) {
+  if (models.includes(removedToken)) fail(`removed Skills model token should not remain: ${removedToken}`);
 }
 
 const forbiddenApiKeyTokens = [
@@ -746,6 +876,11 @@ const styles = read("src/styles.css");
 for (const token of ["--font-ui", "--font-mono", "--app-content-max: 1220px", "--content-max: var(--app-content-max)", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
 }
+for (const token of ['aria-label={copy.settings.font}', 'data-options="2"', "onFontPresetChange(preset)"]) {
+  if (!app.includes(token)) fail(`missing segmented font setting token: ${token}`);
+}
+if (app.includes("<select value={settings.fontPreset}")) fail("font setting should use the same segmented module style as theme");
+if (!styles.includes('.segmentedControl[data-options="2"]')) fail("missing two-option segmented control style");
 for (const token of ["navIcon", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
   if (!styles.includes(token)) fail(`missing dashboard home polish style token: ${token}`);
 }
@@ -770,19 +905,36 @@ for (const token of ["profilesStack", "profileLibraryActions", "ccSwitchActionBu
 for (const token of [
   "skillsStack",
   "skillsTable",
-  "skillSearchBar",
-  "skillControls",
-  "skillSegment",
-  "skillHostList",
-  "skillPreview",
-  "skillRemotePanel",
-  "skillRemoteHost",
-  "skillRemoteList",
-  "skillRemoteRow",
-  "skillDeleteRow",
-  "skillMessage"
+  "skillLibraryActions",
+  "skillApplicationTags",
+  "skillRowActions",
+  "skillDownloadForm",
+  "skillPreviewModal",
+  ".taskLogModalMeta.skillPreviewMeta",
+  "skillPreviewDetails",
+  "skillTargetList",
+  "skillTargetRow",
+  "skillDeleteActions",
+  "skillMessage",
+  "installedSkillsTable",
+  "installedSkillTags",
+  "installedSkillTag",
+  "--skill-color"
 ]) {
   if (!styles.includes(token)) fail(`missing Window 6 Skills style token: ${token}`);
+}
+for (const removedToken of [
+  removed("skill", "SearchBar"),
+  removed("skill", "Controls"),
+  removed("skill", "Segment"),
+  removed("skill", "HostList"),
+  removed("skill", "RemotePanel"),
+  removed("skill", "RemoteHost"),
+  removed("skill", "RemoteList"),
+  removed("skill", "RemoteRow"),
+  removed("skill", "DeleteRow")
+]) {
+  if (styles.includes(removedToken)) fail(`removed Skills style token should not remain: ${removedToken}`);
 }
 const ccSwitchActionButtonStyle = styles.match(/\.ccSwitchActionButton\s*\{[^}]*\}/)?.[0] ?? "";
 for (const token of ["flex: 0 0 168px", "width: 168px", "height: 38px", "white-space: nowrap"]) {

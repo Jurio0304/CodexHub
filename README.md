@@ -103,16 +103,17 @@ The desktop app currently exposes these Rust commands:
 - `import_cc_switch_profiles`
 - `list_local_skills`
 - `import_local_skill`
-- `search_online_skills`
-- `clone_skill_repo`
-- `list_remote_skills`
-- `preview_remote_skill_install`
-- `install_remote_skill`
-- `install_remote_skill_batch`
-- `delete_remote_skill`
+- `update_library_skill_about`
+- `get_skill_inventory_status`
+- `detect_installed_skills`
+- `download_github_skill`
+- `get_skill_targets`
+- `install_skill_targets`
+- `uninstall_skill_targets`
+- `delete_library_skill`
 - `list_tasks`
 
-The Skills page uses Tauri dialog directory selection in desktop mode and keeps web/mock fallbacks for UI development. `list_skill_packs` remains as a compatibility alias for `list_local_skills`.
+The Skills page is a single local skill library. It uses Tauri dialog directory selection for local imports, accepts GitHub repository URLs and `tree/<branch>/<skill-path>` skill subdirectory URLs for download/import, detects installed local and host skills under `~/.codex/skills` and `~/.codex/superpowers/skills`, and keeps web/mock fallbacks for UI development. The Skills page Refresh action reloads local cache state without remote probing. `list_skill_packs` remains as a compatibility alias for `list_local_skills`.
 
 The SSH key and SSH config commands are real Windows local filesystem operations. They never read private key contents; public key text is the only key material returned to the UI. New CodexHub-managed hosts use a one-time password connection flow: log in to the remote host, install the local public key into `~/.ssh/authorized_keys`, set SSH permissions, write only a managed SSH config block, and verify with `ssh <HostAlias> echo ok`. The password is not stored or written to task logs.
 

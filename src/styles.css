@@ -950,7 +950,7 @@ tr:last-child td {
 
 .skillsStack {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   width: 100%;
   max-width: var(--app-content-max);
@@ -963,37 +963,102 @@ tr:last-child td {
 }
 
 .skillsTable {
-  min-width: 840px;
-  table-layout: auto;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .skillsTable th,
 .skillsTable td {
+  padding: 11px 10px;
   overflow-wrap: anywhere;
 }
 
+.skillsTable th:nth-child(1),
+.skillsTable td:nth-child(1) {
+  width: 20%;
+}
+
+.skillsTable th:nth-child(2),
+.skillsTable td:nth-child(2) {
+  width: 12%;
+}
+
+.skillsTable th:nth-child(3),
+.skillsTable td:nth-child(3) {
+  width: 14%;
+}
+
+.skillsTable th:nth-child(4),
+.skillsTable td:nth-child(4) {
+  width: 22%;
+}
+
+.skillsTable th:nth-child(5),
+.skillsTable td:nth-child(5) {
+  width: 32%;
+}
+
 .skillsTable td:first-child {
-  min-width: 220px;
+  min-width: 0;
 }
 
-.skillsTable td:first-child span {
-  display: block;
-  margin-top: 3px;
-  line-height: 1.35;
-}
-
-.skillSearchBar {
-  display: grid;
-  grid-template-columns: minmax(170px, 0.9fr) auto minmax(220px, 1.1fr) auto;
-  gap: 10px;
+.skillLibraryActions,
+.skillRowActions,
+.skillApplicationTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
 }
 
-.skillSearchBar input,
-.skillControls input,
-.skillControls select,
-.skillRemoteHost select,
-.skillDeleteRow input {
+.skillLibraryActions {
+  justify-content: flex-end;
+}
+
+.skillRowActions {
+  width: 100%;
+  min-width: 0;
+}
+
+.skillRowActions .miniButton {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 4px 7px;
+  font-size: 0.76rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.skillApplicationTags .badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.skillModal {
+  width: min(620px, 100%);
+}
+
+.skillDownloadForm {
+  display: grid;
+  gap: 14px;
+}
+
+.skillDownloadForm .fieldGroup {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.skillDownloadForm .fieldGroup > span {
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.skillDownloadForm input {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border-strong);
@@ -1004,107 +1069,180 @@ tr:last-child td {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
 }
 
-.skillControls {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+.skillPreviewModal {
+  width: min(700px, 100%);
 }
 
-.skillControls label,
-.skillRemoteHost {
-  display: grid;
-  gap: 5px;
+.skillPreviewBadge {
+  display: flex;
   min-width: 0;
+  max-width: 42%;
+  justify-content: flex-end;
 }
 
-.skillControls label > span,
-.skillRemoteHost > span {
-  color: var(--text);
-  font-size: 0.86rem;
-  font-weight: 750;
+.skillPreviewBadge .badge {
+  max-width: 100%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: none;
 }
 
-.skillSegment {
-  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+.taskLogModalMeta.skillPreviewMeta {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 7fr);
 }
 
-.skillInstallPanel,
-.skillRemotePanel {
-  align-self: start;
-}
-
-.skillInstallPanel .profileSubhead {
-  margin-top: 12px;
-}
-
-.skillHostList {
+.skillPreviewDetails {
   display: grid;
   gap: 8px;
-  max-height: 290px;
-  overflow: auto;
-  padding-right: 2px;
-}
-
-.skillHostList .profileHostSelectRow {
-  width: 100%;
-  text-align: left;
-}
-
-.skillHostList small {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-faint);
-  font-size: 0.76rem;
-}
-
-.skillPreview {
-  grid-template-columns: 1fr;
-  margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 12px;
   background: var(--surface-muted);
 }
 
-.skillActions {
-  margin-top: 12px;
+.skillPreviewDetails > span {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
-.skillRemoteHost {
-  margin-bottom: 12px;
+.skillPreviewDetails p {
+  color: var(--text);
+  line-height: 1.58;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.skillRemoteList {
+.skillPreviewDetails textarea {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  line-height: 1.5;
+  background: var(--surface-solid);
+}
+
+.skillTargetList {
   display: grid;
-  gap: 10px;
-}
-
-.skillRemoteRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.8fr);
-  gap: 10px;
-  align-items: center;
-}
-
-.skillRemoteRow > div:first-child {
-  grid-template-columns: auto minmax(90px, 0.5fr) minmax(0, 1fr);
-}
-
-.skillRemoteRow > .skillDeleteRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+  max-height: min(380px, 48vh);
+  overflow: auto;
+}
+
+.skillTargetRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: center;
-  border: 0;
-  padding: 0;
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  background: var(--surface-muted);
+}
+
+.skillTargetRow[data-disabled="true"] {
+  opacity: 0.64;
+}
+
+.skillTargetRow input {
+  width: 16px;
+  height: 16px;
+}
+
+.skillTargetRow div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.skillTargetRow strong,
+.skillTargetRow span,
+.skillTargetRow small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.skillTargetRow span,
+.skillTargetRow small {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.skillDeleteActions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dangerButton {
+  color: var(--red);
 }
 
 .skillMessage {
   color: var(--text-muted);
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.installedSkillsTable {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.installedSkillsTable th,
+.installedSkillsTable td {
+  padding: 11px 10px;
+  overflow-wrap: anywhere;
+}
+
+.installedSkillsTable th:nth-child(1),
+.installedSkillsTable td:nth-child(1) {
+  width: 18%;
+}
+
+.installedSkillsTable th:nth-child(2),
+.installedSkillsTable td:nth-child(2) {
+  width: 14%;
+}
+
+.installedSkillsTable th:nth-child(3),
+.installedSkillsTable td:nth-child(3) {
+  width: 18%;
+}
+
+.installedSkillsTable th:nth-child(4),
+.installedSkillsTable td:nth-child(4) {
+  width: 50%;
+}
+
+.installedSkillTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.installedSkillTag {
+  --skill-color: var(--blue);
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px solid color-mix(in srgb, var(--skill-color) 70%, var(--border));
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: color-mix(in srgb, var(--skill-color) 76%, var(--text));
+  font-size: 0.74rem;
+  font-weight: 760;
+  line-height: 1;
+  background: color-mix(in srgb, var(--skill-color) 13%, transparent);
+  overflow-wrap: anywhere;
 }
 
 .tasksGrid .spanWide {
@@ -1399,6 +1537,10 @@ tr:last-child td {
   background: var(--surface-muted);
 }
 
+.segmentedControl[data-options="2"] {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .settingControlRow .segmentedControl {
   margin: 0;
 }
@@ -1584,24 +1726,22 @@ tr:last-child td {
   .profileApplyRow,
   .profileHostSelectRow,
   .hostCheckRow,
-  .skillSearchBar,
-  .skillControls,
-  .skillRemoteRow,
-  .skillRemoteRow > div:first-child,
-  .skillRemoteRow > .skillDeleteRow,
+  .skillTargetRow,
+  .skillDownloadForm .fieldGroup,
+  .taskLogModalMeta.skillPreviewMeta,
   .profileTargetList div,
   .profileStatusList div {
     grid-template-columns: 1fr;
   }
 
   .profileCredentialRow,
-  .profileRowActions {
+  .profileRowActions,
+  .skillLibraryActions {
     align-items: stretch;
   }
 
   .profileRowActions .miniButton,
-  .profileApplyRow .miniButton,
-  .skillDeleteRow .miniButton {
+  .profileApplyRow .miniButton {
     width: fit-content;
   }
 
@@ -2336,6 +2476,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
   padding-top: 2px;
 }
 

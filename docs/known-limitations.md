@@ -29,7 +29,7 @@ Long SSH, probe, install, and update operations are dispatched through backend b
 
 OpenAI public docs currently show both `.agents/skills` style paths and `~/.codex/skills` references in different Codex pages. MVP follows the product requirement and manages `~/.codex/skills/`, but the backend keeps the skill root configurable and should later detect path support per host.
 
-Window 6 online skill discovery uses GitHub repository search only. Search results are candidates until a selected repository is cloned and validated for `SKILL.md` in the repository root or immediate child directories. Remote skill install assumes Linux SSH/SCP targets with `tar`; missing tools are reported in the task log.
+Window 6 online skill discovery accepts direct GitHub repository URLs and GitHub `tree/<branch>/<skill-path>` subdirectory URLs. The repository is downloaded only after the URL passes the `https://github.com/<owner>/<repo>` allowlist and the clone is validated for `SKILL.md` in the repository root, selected tree subdirectory, or immediate child directories. Remote skill install assumes Linux SSH/SCP targets with `tar`; missing tools are reported in the task log.
 
 ## Local Toolchain
 

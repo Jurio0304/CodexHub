@@ -15,19 +15,17 @@ import type {
   ProfileDraft,
   ProfileImportExport,
   ProfilePatch,
-  OnlineSkillSearchResult,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
   RemoteProbeResult,
-  RemoteSkillBatchInstallResult,
-  RemoteSkillDeleteResult,
-  RemoteSkillInstallPreview,
-  RemoteSkillListResult,
-  RemoteSkillScope,
-  SkillConflictPolicy,
+  SkillDetectionResult,
+  SkillInventoryStatus,
   SkillImportResult,
   SkillPack,
+  SkillTargetOperationResult,
+  SkillTargetRequest,
+  SkillTargetsResult,
   SshBootstrapProgressEvent,
   SshBootstrapResult,
   SshCheckResult,
@@ -122,9 +120,20 @@ function formatInvokeError(error: unknown) {
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 let mockProfiles = clone(fallbackProfiles);
+let mockSkillPacks = clone(fallbackSkillPacks);
+let mockSkillInventoryStatus: SkillInventoryStatus = {
+  firstHostScanCompleted: false,
+  localSkillRoot: "%USERPROFILE%\\.codex\\skills",
+  localSkills: [],
+  hostInventories: []
+};
 
 function nowStamp() {
   return new Date().toISOString().slice(0, 16).replace("T", " ");
+}
+
+function todayStamp() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function slugifyProfileName(name: string) {
@@ -686,6 +695,7 @@ function mockImportSkill(path: string): SkillImportResult {
     name,
     version: "mock",
     description: `Imported from ${path}.`,
+    about: `Imported from ${path}.`,
     sourceType: "local",
     source: path,
     originalPath: path,
@@ -693,50 +703,36 @@ function mockImportSkill(path: string): SkillImportResult {
     hasSkillMd: true,
     skillCount: 1,
     enabled: true,
-    updatedAt: nowStamp()
+    addedAt: todayStamp(),
+    updatedAt: nowStamp(),
+    applications: []
   };
+  mockSkillPacks = [...mockSkillPacks.filter((item) => item.id !== skill.id), skill];
   return { imported: [skill], skipped: [], message: `Mock imported ${name}.` };
 }
 
-function mockSearchOnlineSkills(query: string): OnlineSkillSearchResult {
-  const normalized = query.trim() || "codex skills";
-  return {
-    query: normalized,
-    message: `Mock GitHub search returned candidates for ${normalized}.`,
-    candidates: [
-      {
-        id: "github-example-skill",
-        fullName: "openai-community/example-skill",
-        name: "example-skill",
-        description: "Mock searchable Codex skill repository.",
-        repoUrl: "https://github.com/openai-community/example-skill.git",
-        htmlUrl: "https://github.com/openai-community/example-skill",
-        stars: 128,
-        updatedAt: nowStamp(),
-        source: "github"
-      }
-    ]
-  };
-}
-
-function mockCloneSkillRepo(repoUrl: string): SkillImportResult {
+function mockDownloadGithubSkill(repoUrl: string): SkillImportResult {
   const name = repoUrl.split("/").pop()?.replace(/\.git$/, "") || "github-skill";
   const id = slugifyProfileName(name);
   const skill: SkillPack = {
     id,
     name,
-    version: "git",
+    version: "github",
     description: `Mock cloned from ${repoUrl}.`,
-    sourceType: "git",
+    about: `Mock GitHub About for ${repoUrl}.`,
+    sourceType: "github",
     source: repoUrl,
     originalPath: repoUrl,
     managedPath: `%APPDATA%\\CodexHub\\skills\\${id}`,
     hasSkillMd: true,
     skillCount: 1,
     enabled: true,
-    updatedAt: nowStamp()
+    addedAt: todayStamp(),
+    updatedAt: nowStamp(),
+    applications: []
   };
-  return { imported: [skill], skipped: [], message: `Mock cloned ${name}.` };
+  mockSkillPacks = [...mockSkillPacks.filter((item) => item.id !== skill.id), skill];
+  return { imported: [skill], skipped: [], message: `Mock downloaded ${name}.` };
 }
 
 function mockSkillTask(hostAlias: string, action: string, summary: string, ok = true): TaskRun {
@@ -768,84 +764,188 @@ function mockSkillTask(hostAlias: string, action: string, summary: string, ok = 
   };
 }
 
-function mockRemoteSkillList(hostAlias: string): RemoteSkillListResult {
-  const task = mockSkillTask(hostAlias, "List remote skills", `Mock listed remote skills on ${hostAlias}.`);
-  const skills = [
-    { name: "example-skill", path: "~/.codex/skills/example-skill", hasSkillMd: true, status: "valid" },
-    { name: "invalid-skill", path: "~/.codex/skills/invalid-skill", hasSkillMd: false, status: "missing-skill-md" }
-  ];
+function mockDetectInstalledSkills(includeHosts: boolean): SkillDetectionResult {
+  const detected = mockSkillPacks[0] ?? mockImportSkill("%USERPROFILE%\\.codex\\skills\\example-skill").imported[0];
+  mockSkillPacks = mockSkillPacks.map((skill) =>
+    skill.id === detected.id
+      ? {
+          ...skill,
+          applications: [
+            ...skill.applications.filter((application) => application.targetType !== "local"),
+            {
+              targetType: "local",
+              label: "local",
+              hostAlias: null,
+              path: `%USERPROFILE%\\.codex\\skills\\${skill.id}`,
+              detectedAt: nowStamp(),
+              hasSkillMd: true
+            }
+          ]
+        }
+      : skill
+  );
+  mockSkillInventoryStatus = {
+    ...mockSkillInventoryStatus,
+    firstHostScanCompleted: includeHosts ? true : mockSkillInventoryStatus.firstHostScanCompleted,
+    localSkills: mockSkillPacks
+      .filter((skill) => skill.applications.some((application) => application.targetType === "local"))
+      .map((skill) => ({
+        name: skill.id,
+        path: `%USERPROFILE%\\.codex\\skills\\${skill.id}`,
+        hasSkillMd: true,
+        status: "valid"
+      }))
+  };
   return {
-    hostAlias,
-    rootPath: "~/.codex/skills",
-    count: skills.length,
-    validCount: 1,
-    invalidCount: 1,
-    skills,
-    task
+    skills: clone(mockSkillPacks),
+    status: clone(mockSkillInventoryStatus),
+    tasks: [],
+    message: includeHosts ? "Mock detected local and host skills." : "Mock detected local skills."
   };
 }
 
-function mockRemoteSkillPreview(
-  hostAlias: string,
-  skillId: string,
-  scope: RemoteSkillScope,
-  projectPath?: string
-): RemoteSkillInstallPreview {
-  const targetRoot = scope === "project" ? `${projectPath || "~/project"}/.codex/skills` : "~/.codex/skills";
-  const task = mockSkillTask(hostAlias, "Preview skill install", `Mock previewed ${skillId} on ${hostAlias}.`);
+function mockGetSkillTargets(skillId: string): SkillTargetsResult {
+  const skill = mockSkillPacks.find((item) => item.id === skillId) ?? mockSkillPacks[0];
+  const localInstalled = Boolean(skill?.applications.some((application) => application.targetType === "local"));
   return {
-    hostAlias,
-    skillId,
-    skillName: skillId,
-    scope,
-    targetPath: `${targetRoot}/${skillId}`,
-    exists: false,
-    hasSkillMd: false,
-    backupExpected: false,
-    message: `Mock ${skillId} can be installed to ${targetRoot}/${skillId}.`,
-    task
+    skillId: skill?.id ?? skillId,
+    skillName: skill?.name ?? skillId,
+    targets: [
+      {
+        targetType: "local",
+        label: "local",
+        hostAlias: null,
+        path: `%USERPROFILE%\\.codex\\skills\\${skill?.id ?? skillId}`,
+        installed: localInstalled,
+        canInstall: !localInstalled,
+        canUninstall: localInstalled,
+        status: localInstalled ? "installed" : "available",
+        message: localInstalled ? "Mock local skill is installed." : "Mock local install target is available."
+      }
+    ],
+    tasks: [],
+    message: "Mock checked skill targets."
   };
 }
 
-function mockRemoteSkillInstallBatch(
-  hostAliases: string[],
-  skillId: string,
-  scope: RemoteSkillScope,
-  projectPath: string | undefined,
-  conflictPolicy: SkillConflictPolicy
-): RemoteSkillBatchInstallResult {
-  const results = hostAliases.map((hostAlias): RemoteSkillBatchInstallResult["results"][number] => {
-    const preview = mockRemoteSkillPreview(hostAlias, skillId, scope, projectPath);
-    const task = mockSkillTask(hostAlias, "Install skill", `Mock installed ${skillId} on ${hostAlias} with ${conflictPolicy}.`);
+function mockSkillTargetOperation(skillId: string, targets: SkillTargetRequest[], action: "install" | "uninstall"): SkillTargetOperationResult {
+  const skill = mockSkillPacks.find((item) => item.id === skillId);
+  if (!skill) throw new Error(`Skill ${skillId} was not found.`);
+  const results = targets.map((target) => {
+    const label = target.targetType === "local" ? "local" : target.hostAlias ?? "unknown";
     return {
-      hostAlias,
+      targetType: target.targetType,
+      label,
+      hostAlias: target.hostAlias ?? null,
       ok: true,
-      skillId,
-      skillName: skillId,
-      scope,
-      targetPath: preview.targetPath,
-      backupPath: conflictPolicy === "backup" ? `${preview.targetPath}.codexhub.bak.mock` : null,
-      skipped: conflictPolicy === "skip",
-      message: task.summary,
-      task
+      message: `Mock ${action}ed ${skill.name} on ${label}.`,
+      task: null
     };
   });
-  return { ok: true, tasks: results.map((result) => result.task), results };
+  mockSkillPacks = mockSkillPacks.map((item) => {
+    if (item.id !== skill.id) return item;
+    if (action === "install") {
+      const applications = targets.map((target) => ({
+        targetType: target.targetType,
+        label: target.targetType === "local" ? "local" : target.hostAlias ?? "unknown",
+        hostAlias: target.hostAlias ?? null,
+        path: target.targetType === "local" ? `%USERPROFILE%\\.codex\\skills\\${skill.id}` : `~/.codex/skills/${skill.id}`,
+        detectedAt: nowStamp(),
+        hasSkillMd: true
+      }));
+      return {
+        ...item,
+        applications: [
+          ...item.applications.filter(
+            (application) => !applications.some((next) => next.targetType === application.targetType && next.hostAlias === application.hostAlias)
+          ),
+          ...applications
+        ]
+      };
+    }
+    return {
+      ...item,
+      applications: item.applications.filter(
+        (application) => !targets.some((target) => target.targetType === application.targetType && (target.hostAlias ?? null) === application.hostAlias)
+      )
+    };
+  });
+  const timestamp = nowStamp();
+  const localTargets = targets.filter((target) => target.targetType === "local");
+  const hostTargets = targets.filter((target) => target.targetType === "host" && target.hostAlias);
+  if (localTargets.length > 0) {
+    mockSkillInventoryStatus = {
+      ...mockSkillInventoryStatus,
+      localSkills: action === "install"
+        ? [
+            ...mockSkillInventoryStatus.localSkills.filter((item) => item.name !== skill.id),
+            {
+              name: skill.id,
+              path: `%USERPROFILE%\\.codex\\skills\\${skill.id}`,
+              hasSkillMd: true,
+              status: "valid"
+            }
+          ].sort((left, right) => left.name.localeCompare(right.name))
+        : mockSkillInventoryStatus.localSkills.filter((item) => item.name !== skill.id)
+    };
+  }
+  if (hostTargets.length > 0) {
+    const nextInventories = mockSkillInventoryStatus.hostInventories.slice();
+    for (const target of hostTargets) {
+      const hostAlias = target.hostAlias ?? "unknown";
+      const existing = nextInventories.find((inventory) => inventory.hostAlias === hostAlias);
+      const base = existing ?? {
+        hostAlias,
+        scannedAt: timestamp,
+        ok: true,
+        message: "Updated from mock skill operation.",
+        skills: []
+      };
+      base.scannedAt = timestamp;
+      base.ok = true;
+      base.skills = base.skills.filter((item) => item.name !== skill.id);
+      if (action === "install") {
+        base.skills.push({
+          name: skill.id,
+          path: `~/.codex/skills/${skill.id}`,
+          hasSkillMd: true,
+          status: "valid"
+        });
+        base.skills.sort((left, right) => left.name.localeCompare(right.name));
+      }
+      if (!existing) nextInventories.push(base);
+    }
+    mockSkillInventoryStatus = {
+      ...mockSkillInventoryStatus,
+      hostInventories: nextInventories.sort((left, right) => left.hostAlias.localeCompare(right.hostAlias))
+    };
+  }
+  return {
+    ok: true,
+    skills: clone(mockSkillPacks),
+    tasks: [],
+    results,
+    message: action === "install" ? "install-success" : "uninstall-success"
+  };
 }
 
-function mockRemoteSkillDelete(hostAlias: string, skillName: string, scope: RemoteSkillScope, projectPath?: string): RemoteSkillDeleteResult {
-  const targetRoot = scope === "project" ? `${projectPath || "~/project"}/.codex/skills` : "~/.codex/skills";
-  const targetPath = `${targetRoot}/${skillName}`;
-  const task = mockSkillTask(hostAlias, "Delete skill", `Mock moved ${skillName} to a backup on ${hostAlias}.`);
+function mockDeleteLibrarySkill(skillId: string): SkillTargetOperationResult {
+  const skill = mockSkillPacks.find((item) => item.id === skillId);
+  mockSkillPacks = mockSkillPacks.filter((item) => item.id !== skillId);
   return {
-    hostAlias,
     ok: true,
-    skillName,
-    targetPath,
-    backupPath: `${targetPath}.codexhub.deleted.mock`,
-    message: task.summary,
-    task
+    skills: clone(mockSkillPacks),
+    tasks: [],
+    results: [],
+    message: `Mock removed ${skill?.name ?? skillId} from the local skill library.`
   };
+}
+
+function mockUpdateLibrarySkillAbout(skillId: string, about: string): SkillPack[] {
+  mockSkillPacks = mockSkillPacks.map((skill) =>
+    skill.id === skillId ? { ...skill, about, description: about.trim(), updatedAt: nowStamp() } : skill
+  );
+  return clone(mockSkillPacks);
 }
 
 export const api = {
@@ -1097,75 +1197,74 @@ export const api = {
       mockProfiles = [...mockProfiles, ...imported];
       return { schemaVersion: 1, exportedAt: nowStamp(), profiles: clone(imported) };
     }).then((result) => ({ ...result, profiles: result.profiles.map(normalizeProfile) })),
-  listSkillPacks: () => safeInvoke<SkillPack[]>("list_local_skills", undefined, () => clone(fallbackSkillPacks)),
+  listSkillPacks: () => safeInvoke<SkillPack[]>("list_local_skills", undefined, () => clone(mockSkillPacks)),
+  getSkillInventoryStatus: () =>
+    safeInvoke<SkillInventoryStatus>("get_skill_inventory_status", undefined, () => clone(mockSkillInventoryStatus)),
+  detectInstalledSkills: async (includeHosts: boolean, timeoutMs = 120000) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillDetectionResult>("detect_installed_skills", { includeHosts, timeoutMs });
+    }
+    return mockDetectInstalledSkills(includeHosts);
+  },
   importLocalSkill: async (path: string) => {
     if (hasTauriRuntime()) {
       return requiredInvoke<SkillImportResult>("import_local_skill", { path });
     }
     return mockImportSkill(path);
   },
-  searchOnlineSkills: (query: string, limit = 10, timeoutMs = 30000) =>
-    safeInvoke<OnlineSkillSearchResult>("search_online_skills", { query, limit, timeoutMs }, () => mockSearchOnlineSkills(query)),
-  cloneSkillRepo: async (repoUrl: string, timeoutMs = 120000) => {
+  downloadGithubSkill: async (repoUrl: string, timeoutMs = 120000) => {
     if (hasTauriRuntime()) {
-      return requiredInvoke<SkillImportResult>("clone_skill_repo", { repoUrl, timeoutMs });
+      return requiredInvoke<SkillImportResult>("download_github_skill", { repoUrl, timeoutMs });
     }
-    return mockCloneSkillRepo(repoUrl);
+    return mockDownloadGithubSkill(repoUrl);
   },
-  listRemoteSkills: (hostAlias: string, timeoutMs = 30000) =>
-    safeInvoke<RemoteSkillListResult>("list_remote_skills", { hostAlias, timeoutMs }, () => mockRemoteSkillList(hostAlias)),
-  previewRemoteSkillInstall: (
-    hostAlias: string,
-    skillId: string,
-    scope: RemoteSkillScope,
-    projectPath?: string,
-    timeoutMs = 30000
-  ) =>
-    safeInvoke<RemoteSkillInstallPreview>(
-      "preview_remote_skill_install",
-      { hostAlias, skillId, scope, projectPath, timeoutMs },
-      () => mockRemoteSkillPreview(hostAlias, skillId, scope, projectPath)
-    ),
-  installRemoteSkillBatch: async (
-    hostAliases: string[],
-    skillId: string,
-    scope: RemoteSkillScope,
-    projectPath: string | undefined,
-    conflictPolicy: SkillConflictPolicy,
-    timeoutMs = 120000
-  ) => {
+  getSkillTargets: async (skillId: string, timeoutMs = 30000) => {
     if (hasTauriRuntime()) {
-      return requiredInvoke<RemoteSkillBatchInstallResult>("install_remote_skill_batch", {
-        hostAliases,
+      return requiredInvoke<SkillTargetsResult>("get_skill_targets", { skillId, timeoutMs });
+    }
+    return mockGetSkillTargets(skillId);
+  },
+  installSkillTargets: async (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillTargetOperationResult>("install_skill_targets", {
         skillId,
-        scope,
-        projectPath,
-        conflictPolicy,
+        targets,
         timeoutMs
       });
     }
-    return mockRemoteSkillInstallBatch(hostAliases, skillId, scope, projectPath, conflictPolicy);
+    return mockSkillTargetOperation(skillId, targets, "install");
   },
-  deleteRemoteSkill: async (
-    hostAlias: string,
-    skillName: string,
-    scope: RemoteSkillScope,
-    projectPath: string | undefined,
-    confirmName: string,
-    timeoutMs = 30000
-  ) => {
+  uninstallSkillTargets: async (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000) => {
     if (hasTauriRuntime()) {
-      return requiredInvoke<RemoteSkillDeleteResult>("delete_remote_skill", {
-        hostAlias,
-        skillName,
-        scope,
-        projectPath,
-        confirmName,
+      return requiredInvoke<SkillTargetOperationResult>("uninstall_skill_targets", {
+        skillId,
+        targets,
         timeoutMs
       });
     }
-    if (confirmName !== skillName) throw new Error(`Confirmation must exactly match ${skillName}.`);
-    return mockRemoteSkillDelete(hostAlias, skillName, scope, projectPath);
+    return mockSkillTargetOperation(skillId, targets, "uninstall");
+  },
+  deleteLibrarySkill: async (skillId: string, uninstallFirst: boolean, timeoutMs = 120000) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillTargetOperationResult>("delete_library_skill", { skillId, uninstallFirst, timeoutMs });
+    }
+    if (uninstallFirst) {
+      const skill = mockSkillPacks.find((item) => item.id === skillId);
+      if (skill) {
+        mockSkillTargetOperation(
+          skillId,
+          skill.applications.map((application) => ({ targetType: application.targetType, hostAlias: application.hostAlias })),
+          "uninstall"
+        );
+      }
+    }
+    return mockDeleteLibrarySkill(skillId);
+  },
+  updateLibrarySkillAbout: async (skillId: string, about: string) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillPack[]>("update_library_skill_about", { skillId, about });
+    }
+    return mockUpdateLibrarySkillAbout(skillId, about);
   },
   listTasks: () => safeInvoke<TaskRun[]>("list_tasks", undefined, () => clone(fallbackTasks))
 };
