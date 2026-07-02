@@ -37,5 +37,10 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": ""
+    }
   }
 }

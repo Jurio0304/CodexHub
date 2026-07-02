@@ -84,6 +84,9 @@ if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
 if (devTauriConfig.identifier?.endsWith(".app")) fail("Dev Tauri identifier should not end with .app");
+if (tauriConfig.plugins?.updater?.pubkey !== "") {
+  fail("stable updater plugin needs an empty pubkey placeholder so startup config deserializes before build-time config is injected");
+}
 if (tauriConfig.bundle?.targets === "all") fail("Tauri bundle targets must not default to all installers");
 if (Array.isArray(tauriConfig.bundle?.targets) && tauriConfig.bundle.targets.includes("msi")) {
   fail("MSI bundling should be an explicit command, not a default target");
