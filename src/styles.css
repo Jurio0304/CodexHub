@@ -1597,21 +1597,27 @@ tr:last-child td {
 
 .appUpdatePanel .topActions {
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .versionInfoTableWrap {
   margin-top: 2px;
+  overflow-x: hidden;
 }
 
 .versionInfoTable {
-  min-width: 820px;
+  min-width: 0;
   table-layout: fixed;
 }
 
 .versionInfoTable th,
 .versionInfoTable td {
-  white-space: nowrap;
-  overflow-wrap: normal;
+  padding: 10px 8px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  hyphens: auto;
 }
 
 .versionInfoTable th:nth-child(1),
@@ -1650,15 +1656,6 @@ tr:last-child td {
   color: var(--text);
   background: var(--surface-solid);
   box-shadow: var(--shadow-soft);
-}
-
-.codexCliDetails {
-  grid-template-columns: minmax(160px, 0.45fr) minmax(0, 1fr);
-}
-
-.codexCliDetails dd {
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .commandGrid {

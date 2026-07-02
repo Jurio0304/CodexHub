@@ -11,13 +11,13 @@ This document records the internal updater foundation. Public user-facing instal
 - `dev` never auto-updates. It remains limited to local source builds, preview packages, and test artifacts.
 - The Rust backend initializes `tauri-plugin-updater` and exposes `get_app_update_status`, `check_stable_update`, and `install_stable_update`.
 - Settings shows a compact `Version info` table below Local keys with software name, current version, install time, latest version, and last update-check time.
-- The check button is disabled unless the app is on `stable` and both build-time updater values are present.
+- The check button is available on `stable` builds. If the feed or public key is absent, the backend returns `pending-configuration` instead of pretending a real update check ran.
 - The install button is disabled unless the latest stable check returns `available`; it uses Tauri signature verification before launching the Windows installer.
-- Channel, feed, and signing state remain backend status fields used for gating; they are not exposed as noisy end-user rows in the compact Settings card.
+- Channel, feed, and signing state remain backend status fields used for status and install gating; they are not exposed as noisy end-user rows in the compact Settings card.
 
 ## Pending Configuration
 
-Real stable update checks remain pending until all of these are configured outside git:
+Real feed-backed stable update checks remain pending until all of these are configured outside git:
 
 - `CODEXHUB_STABLE_UPDATE_ENDPOINT`: stable update feed URL injected at build time.
 - `CODEXHUB_STABLE_UPDATER_PUBKEY`: Tauri updater public signing key injected at build time.
@@ -26,6 +26,8 @@ Real stable update checks remain pending until all of these are configured outsi
 - A signed feed such as `latest.json` with valid version, URL, and signature fields for the Windows stable target.
 
 Do not commit tokens, private feed URLs, signing private keys, `.env` files, generated signatures with private context, or release credentials.
+
+Until these values exist in the signed stable build environment, clicking Settings > Version info > Check should keep the UI honest by reporting the pending configuration state. The Update button must remain disabled.
 
 ## Publisher Flow
 

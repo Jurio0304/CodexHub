@@ -61,7 +61,7 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 - The owner has manually tested the built app end to end.
 - The summary lists the stable executable, portable zip, and `SHA256SUMS.txt` artifact paths.
 - If stable updater publication is enabled, the build environment injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; the private signing key stays outside git and outside app files.
-- If stable updater publication is not enabled, Settings must show pending/disabled updater state rather than pretending updates are available or installable.
+- If stable updater publication is not enabled, Settings Check may be clicked but must report pending configuration; the Update action must remain disabled rather than pretending updates are available or installable.
 - `pnpm audit:public` passes and reports no secrets, private hosts, local app state, personal IDs, local home paths, workstation names, or build-output leaks.
 - The portable zip contains `CodexHub.exe`, user-facing docs, license, and security notes only.
 - The portable zip does not contain dev-only docs, release checklists, local app state, SSH config, known hosts, private keys, `.env*`, logs, databases, `dist/`, `src-tauri/target/`, or installer cache.

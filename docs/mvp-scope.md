@@ -4,18 +4,18 @@ Date: 2026-06-26
 
 ## MVP Goal
 
-Build a Windows desktop app that helps a user manage Codex App SSH multi-server workflows safely. The first version is a control plane for remote Codex config and skills, not a replacement for Codex App.
+Build a desktop app that helps a user manage Codex App SSH multi-server workflows safely. The first version is a control plane for remote Codex config and skills, not a replacement for Codex App.
 
 ## In Scope
 
 - Tauri 2 + React + TypeScript + Vite desktop skeleton.
-- Windows-first UI and local smoke/mock mode.
+- Desktop UI and local smoke/mock mode.
 - Local server inventory model.
-- Read-only parsing of `%USERPROFILE%\.ssh\config`.
+- Read-only parsing of the local SSH config path for the current platform.
 - Read-only auto-import of safe existing SSH `Host` aliases into CodexHub inventory.
 - Optional SSH host-block generator.
 - Optional append/update of CodexHub-managed SSH config blocks with backup.
-- SSH connectivity check through Windows OpenSSH.
+- SSH connectivity check through the system OpenSSH client.
 - Remote system and Codex probe: OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
 - Single-host remote Codex CLI maintenance: Test, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is the compact readiness surface on the Profiles / 配置 page, with Dashboard shortcuts allowed.
 - Idempotent remote PATH repair for `~/.local/bin` in `~/.bashrc` or `~/.zshrc` with backup-before-write and task-log evidence.

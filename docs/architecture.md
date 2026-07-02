@@ -1,7 +1,7 @@
 # CodexHub Architecture
 
 Date: 2026-07-01
-Target: Windows-first desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with macOS release-build support.
+Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows and macOS release-build support.
 
 ## Architecture Principle
 
@@ -163,7 +163,7 @@ See [release channel details](release-channels.md).
 
 CodexHub wires Tauri 2 updater checks only for `stable`. The backend initializes `tauri-plugin-updater` and exposes `get_app_update_status()`, `check_stable_update()`, and gated `install_stable_update()` commands so Settings can display a compact Version info table and a manual install action only after a signed update is discovered.
 
-The stable updater is pending until the signed release build injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`. `dev` stays non-updating and is handled by local builds, preview packages, or test artifacts. Installer/download actions remain disabled unless the real feed, signatures, and publisher workflow are approved and the latest check returns `available`.
+The stable updater is pending until the signed release build injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`. The stable Check button can still be clicked so Settings reports `pending-configuration` honestly when those values are absent. `dev` stays non-updating and is handled by local builds, preview packages, or test artifacts. Installer/download actions remain disabled unless the real feed, signatures, and publisher workflow are approved and the latest check returns `available`.
 
 See [stable updater details](stable-updater.md).
 

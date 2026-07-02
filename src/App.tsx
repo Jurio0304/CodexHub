@@ -9,7 +9,6 @@ import type {
   Host,
   HostStatus,
   LatestCodexVersion,
-  LocalCodexStatus,
   Profile,
   ProfileApiKeyResult,
   ProfileApplyBatchResult,
@@ -469,14 +468,6 @@ const uiCopy = {
       sshConfig: "SSH config",
       desktopBackendRequired: "desktop backend required",
       localSsh: "Local keys",
-      localCodexCli: "Local Codex CLI",
-      localCodexDetected: "Detected",
-      localCodexMissing: "Not detected",
-      codexStatus: "Status",
-      codexVersion: "Version",
-      codexPath: "Path",
-      codexSearchPaths: "Search order",
-      codexInstallHint: "Install hint",
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
       appUpdates: "Version info",
@@ -936,14 +927,6 @@ const uiCopy = {
       sshConfig: "SSH 配置",
       desktopBackendRequired: "需要桌面后端",
       localSsh: "本地密钥",
-      localCodexCli: "本地 Codex CLI",
-      localCodexDetected: "已检测到",
-      localCodexMissing: "未检测到",
-      codexStatus: "状态",
-      codexVersion: "版本",
-      codexPath: "路径",
-      codexSearchPaths: "搜索顺序",
-      codexInstallHint: "安装提示",
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
       appUpdates: "版本信息",
@@ -1034,10 +1017,8 @@ function App() {
   const [sshStatus, setSshStatus] = useState<SshStatus | null>(null);
   const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
   const [latestCodexVersion, setLatestCodexVersion] = useState<LatestCodexVersion | null>(null);
-  const [localCodexStatus, setLocalCodexStatus] = useState<LocalCodexStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [sshBusy, setSshBusy] = useState(false);
-  const [localCodexBusy, setLocalCodexBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
   const [hostModalOpen, setHostModalOpen] = useState(false);
   const [newProfileRequest, setNewProfileRequest] = useState(0);
@@ -1163,17 +1144,6 @@ function App() {
     }
   };
 
-  const refreshLocalCodexStatus = async () => {
-    setLocalCodexBusy(true);
-    try {
-      const status = await api.getLocalCodexStatus();
-      setLocalCodexStatus(status);
-      return status;
-    } finally {
-      setLocalCodexBusy(false);
-    }
-  };
-
   useEffect(() => {
     let mounted = true;
 
@@ -1185,10 +1155,9 @@ function App() {
       api.listProfiles(),
       api.listSkillPacks(),
       api.getSkillInventoryStatus(),
-      api.listTasks(),
-      api.getLocalCodexStatus()
+      api.listTasks()
     ])
-      .then(([nextSettings, nextHealth, nextAppUpdateStatus, nextHosts, nextProfiles, nextSkillPacks, nextSkillInventoryStatus, nextTasks, nextLocalCodexStatus]) => {
+      .then(([nextSettings, nextHealth, nextAppUpdateStatus, nextHosts, nextProfiles, nextSkillPacks, nextSkillInventoryStatus, nextTasks]) => {
         if (!mounted) return;
         setSettings(nextSettings);
         setHealth(nextHealth);
@@ -1198,7 +1167,6 @@ function App() {
         setSkillPacks(nextSkillPacks);
         setSkillInventoryStatus(nextSkillInventoryStatus);
         setTasks(normalizeTaskRunsForUi(nextTasks));
-        setLocalCodexStatus(nextLocalCodexStatus);
         setSetupGuideStep("language");
         setSetupGuideOpen(!nextSettings.setupGuideDismissed);
         if (nextSettings.setupGuideDismissed || nextHosts.length > 0) {
@@ -1969,8 +1937,6 @@ function App() {
             appUpdateInstalling={appUpdateInstalling}
             appUpdateStatus={appUpdateStatus}
             copy={copy}
-            localCodexBusy={localCodexBusy}
-            localCodexStatus={localCodexStatus}
             settings={settings}
             sshBusy={sshBusy}
             sshStatus={sshStatus}
@@ -1980,7 +1946,6 @@ function App() {
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
             onGenerateEd25519Key={handleGenerateEd25519Key}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
-            onRefreshLocalCodex={() => refreshLocalCodexStatus()}
             onRefreshSsh={async () => {
               await refreshSshState();
             }}
@@ -4919,8 +4884,6 @@ function SettingsView({
   appUpdateInstalling,
   appUpdateStatus,
   copy,
-  localCodexBusy,
-  localCodexStatus,
   settings,
   sshBusy,
   sshStatus,
@@ -4930,7 +4893,6 @@ function SettingsView({
   onFontPresetChange,
   onGenerateEd25519Key,
   onPlatformAppearanceChange,
-  onRefreshLocalCodex,
   onRefreshSsh,
   onThemeChange
 }: {
@@ -4938,8 +4900,6 @@ function SettingsView({
   appUpdateInstalling: boolean;
   appUpdateStatus: AppUpdateStatus;
   copy: UICopy;
-  localCodexBusy: boolean;
-  localCodexStatus: LocalCodexStatus | null;
   settings: AppSettings;
   sshBusy: boolean;
   sshStatus: SshStatus | null;
@@ -4949,14 +4909,13 @@ function SettingsView({
   onFontPresetChange: (fontPreset: FontPreset) => void;
   onGenerateEd25519Key: () => Promise<void>;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
-  onRefreshLocalCodex: () => Promise<LocalCodexStatus>;
   onRefreshSsh: () => Promise<void>;
   onThemeChange: (theme: ThemeChoice) => void;
 }) {
   const publicKey = sshStatus?.ed25519.publicKey ?? sshStatus?.rsa.publicKey ?? "";
   const canGenerateEd25519 = Boolean(sshStatus?.sshKeygenAvailable && !sshStatus.ed25519.privateExists && !sshStatus.ed25519.publicExists);
   const appUpdateBusy = appUpdateChecking || appUpdateInstalling;
-  const canCheckStableUpdate = appUpdateStatus.channel === "stable" && appUpdateStatus.configured && !appUpdateBusy;
+  const canCheckStableUpdate = appUpdateStatus.channel === "stable" && !appUpdateBusy;
   const canInstallStableUpdate =
     appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy;
   const [publicKeyCopied, setPublicKeyCopied] = useState(false);
@@ -5011,45 +4970,6 @@ function SettingsView({
                 </button>
               ))}
             </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="panel spanWide">
-        <div className="panelHeader compact">
-          <div>
-            <h2>{copy.settings.localCodexCli}</h2>
-          </div>
-          <div className="topActions">
-            <button className="secondaryButton" disabled={localCodexBusy} type="button" onClick={() => void onRefreshLocalCodex()}>
-              {copy.settings.refresh}
-            </button>
-          </div>
-        </div>
-        <div className="detailGrid codexCliDetails">
-          <div>
-            <dt>{copy.settings.codexStatus}</dt>
-            <dd>
-              <Badge tone={localCodexStatus?.detected ? "green" : "yellow"}>
-                {localCodexStatus?.detected ? copy.settings.localCodexDetected : copy.settings.localCodexMissing}
-              </Badge>
-            </dd>
-          </div>
-          <div>
-            <dt>{copy.settings.codexVersion}</dt>
-            <dd>{localCodexStatus?.version ?? copy.settings.unknown}</dd>
-          </div>
-          <div>
-            <dt>{copy.settings.codexPath}</dt>
-            <dd className="monospace">{localCodexStatus?.path ?? copy.settings.unknown}</dd>
-          </div>
-          <div>
-            <dt>{copy.settings.codexSearchPaths}</dt>
-            <dd className="monospace">{localCodexStatus?.searchPaths.join(" -> ") ?? copy.settings.unknown}</dd>
-          </div>
-          <div>
-            <dt>{copy.settings.codexInstallHint}</dt>
-            <dd>{localCodexStatus?.installHint ?? copy.settings.unknown}</dd>
           </div>
         </div>
       </section>

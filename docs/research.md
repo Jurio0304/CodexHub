@@ -97,7 +97,7 @@ MVP product decision: CodexHub manages remote `~/.codex/skills/` directly, becau
 
 ## Windows OpenSSH Notes
 
-CodexHub is Windows-first, so SSH behavior must be predictable on a standard Windows machine:
+For Windows builds, SSH behavior must be predictable on a standard Windows machine:
 
 - Prefer the Windows OpenSSH client (`ssh.exe`, `scp.exe`, `sftp.exe`) instead of bundling a custom SSH stack in MVP.
 - Default user SSH config path is `%USERPROFILE%\.ssh\config`.

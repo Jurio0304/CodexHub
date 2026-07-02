@@ -524,6 +524,12 @@ for (const label of ["Version info", "版本信息", "Software", "软件名", "I
 for (const token of ["canInstallStableUpdate", "appUpdateStatus.state === \"available\"", "onInstallStableUpdate", "api.installStableUpdate"]) {
   if (!app.includes(token)) fail(`stable updater install UI must stay gated by available update: ${token}`);
 }
+if (!app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "stable" && !appUpdateBusy')) {
+  fail("Stable update Check button should remain clickable even when feed/signing configuration is pending");
+}
+if (app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "stable" && appUpdateStatus.configured')) {
+  fail("Stable update Check button must not be disabled solely because updater feed/signing is pending");
+}
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
   if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
 }
@@ -1121,14 +1127,23 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
-for (const token of ["appUpdatePanel", "versionInfoTable", "table-layout: fixed", "white-space: nowrap"]) {
+for (const token of ["appUpdatePanel", "versionInfoTable", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
   if (!styles.includes(token)) fail(`missing stable updater Settings style token: ${token}`);
+}
+const versionInfoTableStyle = styles.match(/\.versionInfoTable\s*\{[^}]*\}/)?.[0] ?? "";
+if (!versionInfoTableStyle.includes("min-width: 0")) fail("Version info table should shrink inside the Settings card");
+const versionInfoCellStyle = styles.match(/\.versionInfoTable th,\s*\.versionInfoTable td\s*\{[^}]*\}/)?.[0] ?? "";
+if (!versionInfoCellStyle.includes("white-space: normal") || !versionInfoCellStyle.includes("overflow-wrap: anywhere")) {
+  fail("Version info table cells should wrap internally instead of forcing horizontal overflow");
 }
 for (const token of ["--font-ui", "--font-mono", "--app-content-max: 1220px", "--content-max: var(--app-content-max)", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
 }
-for (const token of ['aria-label={copy.settings.font}', 'aria-label={copy.settings.platformAppearance}', 'data-options="2"', "onFontPresetChange(preset)", "onPlatformAppearanceChange(choice)", "localCodexStatus", "copy.settings.localCodexCli"]) {
+for (const token of ['aria-label={copy.settings.font}', 'aria-label={copy.settings.platformAppearance}', 'data-options="2"', "onFontPresetChange(preset)", "onPlatformAppearanceChange(choice)"]) {
   if (!app.includes(token)) fail(`missing segmented font setting token: ${token}`);
+}
+for (const removedToken of ["localCodexStatus", "localCodexBusy", "onRefreshLocalCodex", "copy.settings.localCodexCli", "localCodexCli", "localCodexDetected", "localCodexMissing", "codexSearchPaths", "codexInstallHint", "codexCliDetails"]) {
+  if (app.includes(removedToken) || styles.includes(removedToken)) fail(`Local Codex CLI Settings card should be removed: ${removedToken}`);
 }
 if (app.includes("<select value={settings.fontPreset}")) fail("font setting should use the same segmented module style as theme");
 if (!styles.includes('.segmentedControl[data-options="2"]')) fail("missing two-option segmented control style");
