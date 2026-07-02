@@ -452,8 +452,11 @@ const app = read("src/App.tsx");
 for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "Local keys", "本地密钥", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.updateInstallDisabled", "formatAppUpdateState", "appUpdateTone"]) {
+for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appUpdateStatus.latestVersion ?? copy.settings.notChecked", "appUpdateStatus.checkedAt ?? copy.settings.notChecked"]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
+}
+for (const label of ["Version info", "版本信息", "Software", "软件名", "Installed at", "安装时间", "Updated at", "更新时间"]) {
+  if (!app.includes(label)) fail(`missing version info UI label: ${label}`);
 }
 for (const token of ["canInstallStableUpdate", "appUpdateStatus.state === \"available\"", "onInstallStableUpdate", "api.installStableUpdate"]) {
   if (!app.includes(token)) fail(`stable updater install UI must stay gated by available update: ${token}`);
@@ -1055,7 +1058,9 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
-if (!styles.includes("appUpdatePanel")) fail("missing stable updater Settings style token");
+for (const token of ["appUpdatePanel", "versionInfoTable", "table-layout: fixed", "white-space: nowrap"]) {
+  if (!styles.includes(token)) fail(`missing stable updater Settings style token: ${token}`);
+}
 for (const token of ["--font-ui", "--font-mono", "--app-content-max: 1220px", "--content-max: var(--app-content-max)", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
 }

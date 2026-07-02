@@ -50,8 +50,10 @@ export const fallbackHealth: Health = {
 };
 
 export const fallbackAppUpdateStatus: AppUpdateStatus = {
+  softwareName: "CodexHub Dev",
   channel: "dev",
   currentVersion: "0.2.0",
+  installedAt: null,
   state: "disabled",
   configured: false,
   feedConfigured: false,

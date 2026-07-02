@@ -50,8 +50,10 @@ enum AppUpdateState {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AppUpdateStatus {
+    software_name: String,
     channel: String,
     current_version: String,
+    installed_at: Option<String>,
     state: AppUpdateState,
     configured: bool,
     feed_configured: bool,
@@ -1660,8 +1662,10 @@ fn app_update_status(
     message: String,
 ) -> AppUpdateStatus {
     AppUpdateStatus {
+        software_name: app_name_for_channel(channel).into(),
         channel: channel.into(),
         current_version: current_version.into(),
+        installed_at: current_app_installed_at(),
         configured: stable_updater_configured(config),
         feed_configured: config.endpoint.is_some(),
         signing_configured: config.pubkey.is_some(),
@@ -1669,6 +1673,13 @@ fn app_update_status(
         checked_at,
         state,
         message,
+    }
+}
+
+fn app_name_for_channel(channel: &'static str) -> &'static str {
+    match channel {
+        "dev" => "CodexHub Dev",
+        _ => "CodexHub",
     }
 }
 
@@ -1692,7 +1703,20 @@ fn app_update_message(channel: &'static str, state: &AppUpdateState) -> String {
 }
 
 fn update_checked_at() -> String {
-    Local::now().fixed_offset().to_rfc3339()
+    Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+fn current_app_installed_at() -> Option<String> {
+    env::current_exe()
+        .ok()
+        .and_then(|path| fs::metadata(path).ok())
+        .and_then(|metadata| metadata.created().or_else(|_| metadata.modified()).ok())
+        .map(format_system_time)
+}
+
+fn format_system_time(time: SystemTime) -> String {
+    let local: DateTime<Local> = time.into();
+    local.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 async fn run_blocking_command<T, F>(label: &'static str, command: F) -> Result<T, String>

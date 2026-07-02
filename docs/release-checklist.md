@@ -92,5 +92,5 @@ The owner must test at least:
 - Remote Codex install/update status and redacted task logs.
 - Profile create/edit/import, API env-var selection, preview apply, and apply result.
 - Skill import/download, target preview, install/uninstall, and task evidence.
-- Settings app version/channel, stable updater pending/checked state, and gated install behavior.
+- Settings Version info table placement below Local keys, date-time formatting, stable check behavior, and gated update install behavior.
 - Codex App fallback instructions for `Settings > Codex > Connections`.

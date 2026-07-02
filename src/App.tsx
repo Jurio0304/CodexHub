@@ -3,7 +3,6 @@ import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
 import type {
-  AppUpdateState,
   AppUpdateStatus,
   DeleteOperationResult,
   Health,
@@ -470,34 +469,17 @@ const uiCopy = {
       localSsh: "Local keys",
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
-      appUpdates: "Stable updates",
+      appUpdates: "Version info",
+      softwareName: "Software",
       currentVersion: "Current version",
-      channel: "Channel",
-      updateState: "Update state",
+      installedAt: "Installed at",
       latestVersion: "Latest version",
-      lastChecked: "Last checked",
+      updatedAt: "Updated at",
       notChecked: "Not checked",
-      checkStableUpdate: "Check stable update",
+      checkStableUpdate: "Check",
       updateChecking: "Checking...",
-      installStableUpdate: "Install update",
+      installStableUpdate: "Update",
       updateInstalling: "Installing...",
-      feedConfigured: "Feed configured",
-      signingConfigured: "Signing configured",
-      updateInstallDisabled: "Install is enabled only after a signed stable update is available. Windows will close CodexHub while applying it.",
-      channelLabels: {
-        stable: "stable",
-        dev: "dev"
-      },
-      updateStates: {
-        disabled: "dev disabled",
-        "pending-configuration": "pending configuration",
-        ready: "ready",
-        checking: "checking",
-        installing: "installing",
-        "up-to-date": "up to date",
-        available: "available",
-        error: "error"
-      },
       refresh: "Refresh",
       generating: "Generating...",
       generateEd25519: "Generate Ed25519",
@@ -940,34 +922,17 @@ const uiCopy = {
       localSsh: "本地密钥",
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
-      appUpdates: "Stable 更新",
+      appUpdates: "版本信息",
+      softwareName: "软件名",
       currentVersion: "当前版本",
-      channel: "通道",
-      updateState: "更新状态",
+      installedAt: "安装时间",
       latestVersion: "最新版本",
-      lastChecked: "上次检查",
+      updatedAt: "更新时间",
       notChecked: "未检查",
-      checkStableUpdate: "检查 stable 更新",
+      checkStableUpdate: "检查",
       updateChecking: "检查中...",
-      installStableUpdate: "安装更新",
+      installStableUpdate: "更新",
       updateInstalling: "安装中...",
-      feedConfigured: "Feed 已配置",
-      signingConfigured: "签名已配置",
-      updateInstallDisabled: "仅在发现已签名 stable 更新后启用安装；Windows 应用更新时会关闭 CodexHub。",
-      channelLabels: {
-        stable: "stable",
-        dev: "dev"
-      },
-      updateStates: {
-        disabled: "dev 已禁用",
-        "pending-configuration": "等待配置",
-        ready: "可检查",
-        checking: "检查中",
-        installing: "安装中",
-        "up-to-date": "已是最新",
-        available: "有更新",
-        error: "错误"
-      },
       refresh: "刷新",
       generating: "生成中...",
       generateEd25519: "生成 Ed25519",
@@ -4983,59 +4948,6 @@ function SettingsView({
         </div>
       </section>
 
-      <section className="panel spanWide appUpdatePanel">
-        <div className="panelHeader compact">
-          <div>
-            <h2>{copy.settings.appUpdates}</h2>
-          </div>
-          <div className="topActions">
-            <button className="secondaryButton" disabled={!canCheckStableUpdate} type="button" onClick={() => void onCheckStableUpdate()}>
-              {appUpdateChecking ? copy.settings.updateChecking : copy.settings.checkStableUpdate}
-            </button>
-            <button className="primaryButton" disabled={!canInstallStableUpdate} type="button" onClick={() => void onInstallStableUpdate()}>
-              {appUpdateInstalling ? copy.settings.updateInstalling : copy.settings.installStableUpdate}
-            </button>
-          </div>
-        </div>
-
-        <div className="settingsRows">
-          <div className="settingControlRow">
-            <span>{copy.settings.currentVersion}</span>
-            <Badge tone="blue">{appUpdateStatus.currentVersion}</Badge>
-          </div>
-          <div className="settingControlRow">
-            <span>{copy.settings.channel}</span>
-            <Badge tone={appUpdateStatus.channel === "stable" ? "green" : "gray"}>
-              {formatAppUpdateChannel(copy, appUpdateStatus.channel)}
-            </Badge>
-          </div>
-          <div className="settingControlRow">
-            <span>{copy.settings.updateState}</span>
-            <Badge tone={appUpdateTone(appUpdateStatus.state)}>
-              {formatAppUpdateState(copy, appUpdateStatus.state)}
-            </Badge>
-          </div>
-          <div className="settingControlRow">
-            <span>{copy.settings.latestVersion}</span>
-            <Badge tone={appUpdateStatus.latestVersion ? "blue" : "gray"}>{appUpdateStatus.latestVersion ?? copy.settings.notChecked}</Badge>
-          </div>
-          <div className="settingControlRow">
-            <span>{copy.settings.lastChecked}</span>
-            <span className="mutedText">{appUpdateStatus.checkedAt ?? copy.settings.notChecked}</span>
-          </div>
-          <div className="settingControlRow">
-            <span>{copy.settings.feedConfigured}</span>
-            <Badge tone={appUpdateStatus.feedConfigured ? "green" : "gray"}>{appUpdateStatus.feedConfigured ? copy.settings.available : copy.settings.missing}</Badge>
-          </div>
-          <div className="settingControlRow">
-            <span>{copy.settings.signingConfigured}</span>
-            <Badge tone={appUpdateStatus.signingConfigured ? "green" : "gray"}>{appUpdateStatus.signingConfigured ? copy.settings.available : copy.settings.missing}</Badge>
-          </div>
-        </div>
-        <p className="mutedText">{appUpdateStatus.message}</p>
-        <p className="mutedText">{copy.settings.updateInstallDisabled}</p>
-      </section>
-
       <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
@@ -5055,6 +4967,45 @@ function SettingsView({
         <div className="keyStatusGrid">
           <KeyStatusCard copy={copy} keyInfo={sshStatus?.ed25519} title="Ed25519" />
           <KeyStatusCard copy={copy} keyInfo={sshStatus?.rsa} title="RSA" />
+        </div>
+      </section>
+
+      <section className="panel spanWide appUpdatePanel">
+        <div className="panelHeader compact">
+          <div>
+            <h2>{copy.settings.appUpdates}</h2>
+          </div>
+          <div className="topActions">
+            <button className="secondaryButton" disabled={!canCheckStableUpdate} type="button" onClick={() => void onCheckStableUpdate()}>
+              {appUpdateChecking ? copy.settings.updateChecking : copy.settings.checkStableUpdate}
+            </button>
+            <button className="primaryButton" disabled={!canInstallStableUpdate} type="button" onClick={() => void onInstallStableUpdate()}>
+              {appUpdateInstalling ? copy.settings.updateInstalling : copy.settings.installStableUpdate}
+            </button>
+          </div>
+        </div>
+
+        <div className="tableWrap versionInfoTableWrap">
+          <table className="sshHostsTable versionInfoTable">
+            <thead>
+              <tr>
+                <th>{copy.settings.softwareName}</th>
+                <th>{copy.settings.currentVersion}</th>
+                <th>{copy.settings.installedAt}</th>
+                <th>{copy.settings.latestVersion}</th>
+                <th>{copy.settings.updatedAt}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>{appUpdateStatus.softwareName}</strong></td>
+                <td>{appUpdateStatus.currentVersion}</td>
+                <td>{appUpdateStatus.installedAt ?? copy.settings.unknown}</td>
+                <td>{appUpdateStatus.latestVersion ?? copy.settings.notChecked}</td>
+                <td>{appUpdateStatus.checkedAt ?? copy.settings.notChecked}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
     </div>
@@ -5081,22 +5032,6 @@ function Badge({ children, tone, title }: { children: ReactNode; tone: BadgeTone
 
 function StatusBadge({ copy, status }: { copy: UICopy; status: HostStatus }) {
   return <Badge tone={hostStatusTone(status)}>{copy.status.host[status]}</Badge>;
-}
-
-function formatAppUpdateChannel(copy: UICopy, channel: string) {
-  if (channel === "stable" || channel === "dev") return copy.settings.channelLabels[channel];
-  return channel;
-}
-
-function formatAppUpdateState(copy: UICopy, state: AppUpdateState) {
-  return copy.settings.updateStates[state];
-}
-
-function appUpdateTone(state: AppUpdateState): BadgeTone {
-  if (state === "up-to-date" || state === "available" || state === "ready") return "green";
-  if (state === "checking" || state === "installing" || state === "pending-configuration") return "yellow";
-  if (state === "error") return "red";
-  return "gray";
 }
 
 function HostDetailValueBadge({ label, tone }: { label: string; tone: BadgeTone }) {

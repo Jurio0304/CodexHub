@@ -17,8 +17,10 @@ export type AppUpdateState =
   | "error";
 
 export type AppUpdateStatus = {
+  softwareName: string;
   channel: AppReleaseChannel;
   currentVersion: string;
+  installedAt: string | null;
   state: AppUpdateState;
   configured: boolean;
   feedConfigured: boolean;

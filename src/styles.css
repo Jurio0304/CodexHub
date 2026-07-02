@@ -1577,8 +1577,46 @@ tr:last-child td {
   margin: 0;
 }
 
-.appUpdatePanel .mutedText {
-  margin: 10px 0 0;
+.appUpdatePanel .panelHeader {
+  align-items: center;
+}
+
+.appUpdatePanel .topActions {
+  flex: 0 0 auto;
+}
+
+.versionInfoTableWrap {
+  margin-top: 2px;
+}
+
+.versionInfoTable {
+  min-width: 820px;
+  table-layout: fixed;
+}
+
+.versionInfoTable th,
+.versionInfoTable td {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.versionInfoTable th:nth-child(1),
+.versionInfoTable td:nth-child(1) {
+  width: 20%;
+}
+
+.versionInfoTable th:nth-child(2),
+.versionInfoTable td:nth-child(2),
+.versionInfoTable th:nth-child(4),
+.versionInfoTable td:nth-child(4) {
+  width: 16%;
+}
+
+.versionInfoTable th:nth-child(3),
+.versionInfoTable td:nth-child(3),
+.versionInfoTable th:nth-child(5),
+.versionInfoTable td:nth-child(5) {
+  width: 24%;
 }
 
 .settingControlRow > .badge {

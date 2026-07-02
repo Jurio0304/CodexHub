@@ -10,9 +10,10 @@ This document records the internal updater foundation. Public user-facing instal
 - `stable` is the only channel eligible for Tauri updater checks.
 - `dev` never auto-updates. It remains limited to local source builds, preview packages, and test artifacts.
 - The Rust backend initializes `tauri-plugin-updater` and exposes `get_app_update_status`, `check_stable_update`, and `install_stable_update`.
-- Settings shows the current version, channel, feed/signing configuration state, latest version when known, and a stable check button.
+- Settings shows a compact `Version info` table below Local keys with software name, current version, install time, latest version, and last update-check time.
 - The check button is disabled unless the app is on `stable` and both build-time updater values are present.
 - The install button is disabled unless the latest stable check returns `available`; it uses Tauri signature verification before launching the Windows installer.
+- Channel, feed, and signing state remain backend status fields used for gating; they are not exposed as noisy end-user rows in the compact Settings card.
 
 ## Pending Configuration
 
