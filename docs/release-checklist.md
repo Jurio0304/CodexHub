@@ -1,102 +1,82 @@
-# CodexHub v0.2.0 Release Checklist
+# CodexHub Release Checklist
 
-Use this checklist before creating a public GitHub Release. Do not create a release from the `dev` channel, and do not publish `stable` until the user explicitly approves public availability.
+Date: 2026-07-02
+Version baseline: v0.2.0
 
-## Channel Gate
+Use this checklist before any public `stable` release. The checklist is a gate for local validation and owner acceptance only; it does not upload, tag, push, or create a GitHub Release.
+
+## Channels
 
 CodexHub has exactly two channels:
 
-- `stable`: public release candidate after validation and explicit user approval.
-- `dev`: development, testing, preview, and manual acceptance.
+- `dev`: development acceptance and preview from source. It is for the project owner only and must not be published as a public artifact.
+- `stable`: public release candidate only after automated validation, a release build, portable packaging, and full owner manual testing.
 
 Channel identities:
 
-| Channel | productName | identifier | Window title | Local config directory | Local cache directory |
-| --- | --- | --- | --- | --- | --- |
-| `stable` | `CodexHub` | `com.jurio.codexhub` | `CodexHub` | `%APPDATA%\com.jurio.codexhub` | `%LOCALAPPDATA%\com.jurio.codexhub` |
-| `dev` | `CodexHub Dev` | `dev.codexhub.desktop` | `CodexHub Dev` | `%APPDATA%\dev.codexhub.desktop` | `%LOCALAPPDATA%\dev.codexhub.desktop` |
+| Channel | productName | identifier | Window title |
+| --- | --- | --- | --- |
+| `stable` | `CodexHub` | `app.codexhub.desktop` | `CodexHub` |
+| `dev` | `CodexHub Dev` | `dev.codexhub.desktop` | `CodexHub Dev` |
 
-The directory split comes from Tauri `app_config_dir()` and `app_cache_dir()` resolving under the OS roots plus the bundle identifier. This isolates app-owned local state only. It does not automatically isolate `%USERPROFILE%\.ssh\config`, local SSH keys, remote `~/.codex/config.toml`, remote `~/.codex/skills/`, or remote shell files.
+Runtime state must use Tauri app-scoped config/cache paths from `app_config_dir()` and `app_cache_dir()`. Do not hand-build paths that include a developer name, local user name, workstation name, or workspace path.
 
-## Automated Checks
+## Dev Validation
 
-Run from the repository root:
-
-```powershell
-pnpm smoke
-pnpm smoke:mock
-pnpm typecheck
-pnpm build:web
-cargo test --manifest-path src-tauri/Cargo.toml
-git diff --check
-```
-
-Stable release packaging checks:
+Dev validation is for local acceptance only. It may open the app from source for manual testing, but it must not build or publish release artifacts.
 
 ```powershell
-pnpm build:tauri
-pnpm audit:public
-pnpm release:portable
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-release-exe.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-release.ps1 -Channel dev -SkipTauriBuild -SkipPortable -NoLive
 ```
 
-Optional dev preview packaging:
+Optional owner preview from source:
 
 ```powershell
-pnpm build:tauri:dev
-pnpm release:portable:dev
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-release.ps1 -Channel dev -SkipTauriBuild -SkipPortable -NoLive -OpenApp
 ```
 
-Expected result:
+## Stable Validation
 
-- Web build succeeds.
-- Rust tests pass.
-- Tauri stable release exe builds with `--no-bundle`.
-- Portable stable zip and SHA256 checksums are created under ignored `release-artifacts/`.
-- Public audit reports no secret, host, local state, or build-output leaks.
-- The release exe starts with temporary app data and does not exit during the startup check.
-- `dev` artifacts are clearly named `CodexHub Dev` or `CodexHub-Dev-*` and are not published as stable releases.
+Stable validation is stricter. It must include owner acceptance, a stable Tauri release build, portable packaging, public leak audit, and startup checking before anything is published.
 
-## Package Review
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-release.ps1 -Channel stable -UserTested -NoLive
+```
 
-Inspect `release-artifacts/CodexHub-v0.2.0-windows-x64-portable.zip`:
+Run live SSH acceptance only when a sanitized test alias is explicitly provided:
 
-- Includes `CodexHub.exe`.
-- Includes README, license, security notes, known limitations, public scope, release checklist, release channel docs, and Chinese README.
-- Does not include local app state.
-- Does not include SSH config, known hosts, private keys, `.env*`, logs, local databases, or installer cache.
-- SHA256 checksum matches `release-artifacts/SHA256SUMS.txt`.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-release.ps1 -Channel stable -UserTested -LiveSshAlias <test-alias>
+```
 
-If a dev preview package is created, inspect `release-artifacts/CodexHub-Dev-v0.2.0-windows-x64-portable.zip` and confirm it contains `CodexHub Dev.exe`.
+The stable script must fail if `-SkipTauriBuild`, `-SkipPortable`, or missing `-UserTested` would allow a publishable build to bypass release gates.
 
 ## Live SSH Acceptance
 
-Run this only with an explicit test host. Do not use production secrets or personal hosts in public logs.
+Do not run live SSH acceptance by default. It requires an explicit sanitized test alias and must not use production secrets, personal hosts, or public logs containing private host details.
 
-1. Start from an isolated Windows profile or confirm existing SSH keys are preserved.
-2. If no suitable key exists, generate Ed25519 key in CodexHub.
-3. Add SSH host with one-time password setup.
-4. Confirm the local SSH config write is limited to one CodexHub-managed block.
-5. Run `ssh <alias> echo ok` from CodexHub and optionally from PowerShell.
-6. Probe the remote host.
-7. Install or update remote Codex.
-8. Confirm the remote command is the real `codex`.
-9. Create a profile.
-10. Preview profile apply.
-11. Apply profile and confirm backup/no-change behavior.
-12. Import a local or GitHub skill.
-13. Install the skill to a selected target.
-14. Open Tasks and inspect redacted stdout/stderr.
-15. In Codex App, open `Settings > Codex > Connections`.
-16. Add or enable the verified SSH alias manually.
+## Stable Pre-Publish Checklist
 
-## Release Notes
+- `scripts/validate-release.ps1 -Channel stable -UserTested` completes with zero failures.
+- The owner has manually tested the built app end to end.
+- The summary lists the stable executable, portable zip, and `SHA256SUMS.txt` artifact paths.
+- `pnpm audit:public` passes and reports no secrets, private hosts, local app state, personal IDs, local home paths, workstation names, or build-output leaks.
+- The portable zip contains `CodexHub.exe`, user-facing docs, license, and security notes only.
+- The portable zip does not contain dev-only docs, release checklists, local app state, SSH config, known hosts, private keys, `.env*`, logs, databases, `dist/`, `src-tauri/target/`, or installer cache.
+- `scripts/check-release-exe.ps1` starts the release executable with temporary app data and confirms it stays running through the startup window.
+- Any live SSH acceptance evidence uses a sanitized test host and no production secrets or personal host names.
+- No GitHub tag, upload, or GitHub Release is created until the owner explicitly approves publication.
 
-Mention these v0.2.0 boundaries:
+## Manual Acceptance Items
 
-- Stable keeps the user-visible brand `CodexHub`.
-- Dev is branded `CodexHub Dev` and uses a separate identifier and app data/cache directories.
-- Portable zip is the primary Windows artifact.
-- MSI packaging requires WiX and may need network/cache preparation.
-- CodexHub does not write Codex App private state.
-- Live SSH acceptance is host-specific and should be recorded with sanitized evidence only.
+The owner must test at least:
+
+- First-run guide and settings persistence.
+- Local SSH status and public-key display without exposing private-key paths.
+- Add Server / bootstrap flow with one-time password handling on a safe test host.
+- Managed SSH config preview/write/rollback boundaries.
+- SSH alias test and remote Codex probe.
+- Remote Codex install/update status and redacted task logs.
+- Profile create/edit/import, API env-var selection, preview apply, and apply result.
+- Skill import/download, target preview, install/uninstall, and task evidence.
+- Codex App fallback instructions for `Settings > Codex > Connections`.

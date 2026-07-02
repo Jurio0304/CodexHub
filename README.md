@@ -9,7 +9,7 @@
   <p>
     <a href="docs/zh-CN/README.md">简体中文</a>
     ·
-    <a href="https://github.com/Jurio0304/CodexHub/releases/latest">Download</a>
+    <a href="#-install">Install</a>
     ·
     <a href="docs/known-limitations.md">Known Limitations</a>
     ·
@@ -17,8 +17,8 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/github/v/release/Jurio0304/CodexHub?label=release" />
-    <img alt="License" src="https://img.shields.io/github/license/Jurio0304/CodexHub" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.0-2563eb" />
+    <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
@@ -90,7 +90,7 @@ For building from source:
 
 ## 🚀 Install
 
-For everyday use, download the latest Windows build from [GitHub Releases](https://github.com/Jurio0304/CodexHub/releases/latest).
+For everyday use, download the latest Windows build from this repository's Releases page.
 
 * Installer: download and run the Windows x64 setup `.exe`.
 * Portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.

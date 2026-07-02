@@ -23,6 +23,8 @@
     "audit:public": "node ./scripts/audit-public-scope.mjs",
     "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1",
     "release:portable:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1 -Channel dev",
+    "validate:release": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-release.ps1",
+    "validate:release:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-release.ps1 -Channel dev -SkipTauriBuild -SkipPortable -NoLive",
     "test": "pnpm smoke && pnpm smoke:mock && pnpm typecheck"
   },
   "dependencies": {

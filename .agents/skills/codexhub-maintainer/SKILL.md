@@ -9,7 +9,7 @@ description: Use this project skill when developing, reviewing, testing, or main
 
 CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的 SSH 多服务器工作流。MVP 以 Tauri 2 + React + TypeScript + Vite + Rust 实现，通过 Windows OpenSSH/SSH/SFTP 管理远端 Codex 配置和技能目录，而不是替代 Codex App。
 
-当前进展：Window 2 已有桌面 UI 壳、本地外观设置持久化、本地 SSH key 状态检测、非覆盖式 Ed25519 key 生成，以及 `%USERPROFILE%\.ssh\config` 中 CodexHub 托管与本地 Host 块的统一增删改查。主机页已经收敛远端 Codex 探测、安装、更新入口；配置页保留为空壳。远端 SSH/SFTP 配置读写、profile apply、skill sync 仍以 mock/预留命令为主。
+当前进展：v0.2.0 已有桌面 UI、本地设置持久化、本地 SSH 状态检测、非覆盖式 Ed25519 key 生成、CodexHub 托管 SSH Host 块增删改查、远端 Codex 探测/安装/更新、profile/API config 管理、远端 config preview/apply、skill 本地库与安装目标管理、任务日志脱敏，以及 `dev`/`stable` 发布通道和发布前总控验证脚本。
 
 ## 开发优先级
 
@@ -41,8 +41,10 @@ CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的
 ## 发布通道边界
 
 - v0.2.0 起只保留 `dev` 和 `stable` 两个通道；不要新增 alpha、beta、nightly、staging、rc 或 preview 通道。
-- `stable` 使用 `src-tauri/tauri.conf.json`，保持用户可见品牌 `CodexHub`，identifier 为 `com.jurio.codexhub`，窗口标题为 `CodexHub`；它只代表测试通过且用户明确允许公开上线的版本。
+- `stable` 使用 `src-tauri/tauri.conf.json`，保持用户可见品牌 `CodexHub`，identifier 为 `app.codexhub.desktop`，窗口标题为 `CodexHub`；它只代表测试通过、无个人/本机信息泄漏且用户明确允许公开上线的版本。
 - `dev` 使用 `src-tauri/tauri.dev.conf.json`，品牌为 `CodexHub Dev`，identifier 为 `dev.codexhub.desktop`，窗口标题为 `CodexHub Dev`；开发、测试、预览和人工验收都走 dev。
+- 发布前总控使用 `scripts/validate-release.ps1`；`dev` 只做本地开发验收和源码预览，不生成公开 release artifact，`stable` 必须带 `-UserTested` 且完成 release build、portable packaging、public audit 和启动检查。
+- 不运行 live SSH acceptance，除非用户明确提供测试 alias；不 push、不打 tag、不创建 GitHub Release，除非用户另行明确要求。
 - 本地 app 数据隔离依赖 Tauri `app_config_dir()` / `app_cache_dir()` 按 bundle identifier 分目录；不要改成手写 `%APPDATA%` 路径。
 - 通道隔离不自动隔离 `%USERPROFILE%\.ssh\config`、本地 SSH key、远端 `~/.codex/config.toml`、远端 `~/.codex/skills/` 或远端 shell 文件；这些共享面仍必须遵守预览、备份、幂等和脱敏日志规则。
 - README 面向普通用户；开发、测试、发布、通道和数据隔离细节写入 `docs/`，尤其是 `docs/release-channels.md` 和 `docs/release-checklist.md`。
@@ -61,6 +63,7 @@ CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的
 优先按改动范围选择最小验证集：
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-release.ps1 -Channel dev -SkipTauriBuild -SkipPortable -NoLive
 pnpm smoke
 pnpm smoke:mock
 pnpm typecheck

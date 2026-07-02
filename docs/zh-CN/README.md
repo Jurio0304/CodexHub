@@ -9,7 +9,7 @@
   <p>
     <a href="../../README.md">English README</a>
     ·
-    <a href="https://github.com/Jurio0304/CodexHub/releases/latest">下载</a>
+    <a href="#-安装">安装</a>
     ·
     <a href="../known-limitations.md">已知限制</a>
     ·
@@ -17,8 +17,8 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/github/v/release/Jurio0304/CodexHub?label=release" />
-    <img alt="License" src="https://img.shields.io/github/license/Jurio0304/CodexHub" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.0-2563eb" />
+    <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
@@ -88,7 +88,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 上的 Codex App 更安全、可
 
 ## 🚀 安装
 
-日常使用建议从 [GitHub Releases](https://github.com/Jurio0304/CodexHub/releases/latest) 下载最新版。
+日常使用建议从本仓库的 Releases 页面下载最新 Windows 构建。
 
 - 安装包：下载并运行 Windows x64 setup `.exe`。
 - 便携包：解压 Windows x64 portable `.zip`，然后运行 `CodexHub.exe`。

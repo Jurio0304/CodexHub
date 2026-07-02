@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const root = process.cwd();
@@ -57,6 +58,10 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const auditScriptPath = "scripts/audit-public-scope.mjs";
+
 const gitFiles = () => {
   const result = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
     cwd: root,
@@ -89,6 +94,37 @@ const artifactFiles = () => {
 
 const uniqueFiles = [...new Set([...gitFiles(), ...artifactFiles()])].sort();
 
+const personalChecks = [
+  {
+    name: "personal repository or user identifier",
+    pattern: /\bjurio(?:0304)?\b/i
+  },
+  {
+    name: "personal Windows profile path",
+    pattern: /[A-Z]:[\\/]Users[\\/](?:PC|[^\\/\s]*jurio[^\\/\s]*)\b/i
+  },
+  {
+    name: "personal workspace path",
+    pattern: /[A-Z]:[\\/][^\r\n]*\bjurio\b[^\r\n]*/i
+  }
+];
+
+const localHome = os.homedir();
+if (localHome) {
+  personalChecks.push({
+    name: "local home directory",
+    pattern: new RegExp(escapeRegExp(localHome), "i")
+  });
+}
+
+const localMachine = process.env.COMPUTERNAME;
+if (localMachine && localMachine.length >= 3) {
+  personalChecks.push({
+    name: "local machine name",
+    pattern: new RegExp(`\\b${escapeRegExp(localMachine)}\\b`, "i")
+  });
+}
+
 for (const file of uniqueFiles) {
   const normalized = file.replaceAll("\\", "/");
   for (const pattern of forbiddenPathPatterns) {
@@ -110,6 +146,11 @@ for (const file of uniqueFiles) {
   lines.forEach((line, index) => {
     for (const check of contentChecks) {
       if (check.pattern.test(line) && !check.allow(normalized, line)) {
+        fail(`${check.name} in ${file}:${index + 1}`);
+      }
+    }
+    for (const check of personalChecks) {
+      if (check.pattern.test(line) && normalized !== auditScriptPath) {
         fail(`${check.name} in ${file}:${index + 1}`);
       }
     }

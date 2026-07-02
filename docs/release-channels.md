@@ -9,7 +9,7 @@ CodexHub uses exactly two release channels: `dev` and `stable`.
 
 | Channel | Purpose | Tauri config | productName | identifier | Window title |
 | --- | --- | --- | --- | --- | --- |
-| `stable` | Public release candidate only after the requested validation passes and the user explicitly approves public availability. | `src-tauri/tauri.conf.json` | `CodexHub` | `com.jurio.codexhub` | `CodexHub` |
+| `stable` | Public release candidate only after the requested validation passes and the user explicitly approves public availability. | `src-tauri/tauri.conf.json` | `CodexHub` | `app.codexhub.desktop` | `CodexHub` |
 | `dev` | Development, test runs, previews, and manual acceptance before promotion. | `src-tauri/tauri.dev.conf.json` | `CodexHub Dev` | `dev.codexhub.desktop` | `CodexHub Dev` |
 
 Do not add extra channels such as alpha, beta, nightly, staging, rc, or preview. Preview and manual acceptance builds belong to `dev`.
@@ -26,7 +26,7 @@ On Windows, this means:
 
 | Channel | Config directory | Cache directory |
 | --- | --- | --- |
-| `stable` | `%APPDATA%\com.jurio.codexhub` | `%LOCALAPPDATA%\com.jurio.codexhub` |
+| `stable` | `%APPDATA%\app.codexhub.desktop` | `%LOCALAPPDATA%\app.codexhub.desktop` |
 | `dev` | `%APPDATA%\dev.codexhub.desktop` | `%LOCALAPPDATA%\dev.codexhub.desktop` |
 
 The persisted files under those directories include `settings.json`, `hosts.json`, `profiles.json`, `skills.json`, `skills-inventory.json`, `codex-latest.json`, managed skill copies, profile-apply temp files, and cloned skill cache.

@@ -2258,25 +2258,25 @@ mod tests {
             host_name: "example.com".into(),
             port: 2222,
             user: "codex".into(),
-            identity_file: r"C:\Users\PC\.ssh\id_ed25519".into(),
+            identity_file: r"C:\Users\Example User\.ssh\id_ed25519".into(),
         }
     }
 
     #[test]
     fn parser_returns_managed_hosts_and_preserves_unmanaged_blocks() {
-        let content = "Host github.com\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User jurio\n    IdentityFile C:\\Users\\PC\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\n";
+        let content = "Host github.com\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User codex\n    IdentityFile C:\\Users\\Example User\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\n";
 
         let hosts = parse_managed_hosts(content).expect("parse hosts");
 
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].alias, "lab");
         assert_eq!(hosts[0].host_name, "10.0.0.5");
-        assert_eq!(hosts[0].identity_file, r"C:\Users\PC\.ssh\id_ed25519");
+        assert_eq!(hosts[0].identity_file, r"C:\Users\Example User\.ssh\id_ed25519");
     }
 
     #[test]
     fn parser_returns_managed_and_local_hosts() {
-        let content = "Host github.com *.example.com *\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User jurio\n    IdentityFile C:\\Users\\PC\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\nHost runner\n    HostName 10.0.0.6\n    User codex\n";
+        let content = "Host github.com *.example.com *\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User codex\n    IdentityFile C:\\Users\\Example User\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\nHost runner\n    HostName 10.0.0.6\n    User codex\n";
 
         let hosts = parse_all_ssh_config_hosts(content).expect("parse all hosts");
 
@@ -2381,7 +2381,7 @@ mod tests {
 
         assert!(next.contains("    # keep this comment\r\n"));
         assert!(next.contains("    HostName new.example\r\n"));
-        assert!(next.contains("    IdentityFile C:\\Users\\PC\\.ssh\\id_ed25519\r\n"));
+        assert!(next.contains("    IdentityFile C:\\Users\\Example User\\.ssh\\id_ed25519\r\n"));
         assert!(!next.contains("old.example"));
     }
 

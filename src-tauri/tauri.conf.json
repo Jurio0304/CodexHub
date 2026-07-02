@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "CodexHub",
   "version": "0.2.0",
-  "identifier": "com.jurio.codexhub",
+  "identifier": "app.codexhub.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
     "devUrl": "http://127.0.0.1:1420",

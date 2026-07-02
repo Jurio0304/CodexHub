@@ -88,9 +88,6 @@ foreach ($relativePath in @(
   "LICENSE",
   "SECURITY.md",
   "docs\known-limitations.md",
-  "docs\public-scope.md",
-  "docs\release-checklist.md",
-  "docs\release-channels.md",
   "docs\zh-CN\README.md"
 )) {
   $source = Join-Path $Root $relativePath
@@ -112,7 +109,7 @@ Run $($SelectedChannel.ExeName) to start the desktop app.
 This archive intentionally does not include local app state, SSH config, hosts,
 profiles, task logs, private keys, tokens, or generated installer files.
 
-See README.md and docs/release-checklist.md for setup and verification.
+See README.md and docs\known-limitations.md for setup and current boundaries.
 "@
 Set-Content -LiteralPath (Join-Path $StageDir "PORTABLE_README.txt") -Value $portableReadme -Encoding UTF8
 
