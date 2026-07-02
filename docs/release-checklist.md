@@ -1,6 +1,22 @@
-# CodexHub v1 Release Checklist
+# CodexHub v0.2.0 Release Checklist
 
-Use this checklist before creating a public GitHub release.
+Use this checklist before creating a public GitHub Release. Do not create a release from the `dev` channel, and do not publish `stable` until the user explicitly approves public availability.
+
+## Channel Gate
+
+CodexHub has exactly two channels:
+
+- `stable`: public release candidate after validation and explicit user approval.
+- `dev`: development, testing, preview, and manual acceptance.
+
+Channel identities:
+
+| Channel | productName | identifier | Window title | Local config directory | Local cache directory |
+| --- | --- | --- | --- | --- | --- |
+| `stable` | `CodexHub` | `com.jurio.codexhub` | `CodexHub` | `%APPDATA%\com.jurio.codexhub` | `%LOCALAPPDATA%\com.jurio.codexhub` |
+| `dev` | `CodexHub Dev` | `dev.codexhub.desktop` | `CodexHub Dev` | `%APPDATA%\dev.codexhub.desktop` | `%LOCALAPPDATA%\dev.codexhub.desktop` |
+
+The directory split comes from Tauri `app_config_dir()` and `app_cache_dir()` resolving under the OS roots plus the bundle identifier. This isolates app-owned local state only. It does not automatically isolate `%USERPROFILE%\.ssh\config`, local SSH keys, remote `~/.codex/config.toml`, remote `~/.codex/skills/`, or remote shell files.
 
 ## Automated Checks
 
@@ -10,33 +26,48 @@ Run from the repository root:
 pnpm smoke
 pnpm smoke:mock
 pnpm typecheck
-cargo test --manifest-path src-tauri/Cargo.toml
 pnpm build:web
+cargo test --manifest-path src-tauri/Cargo.toml
+git diff --check
+```
+
+Stable release packaging checks:
+
+```powershell
 pnpm build:tauri
 pnpm audit:public
 pnpm release:portable
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-release-exe.ps1
-git diff --check
+```
+
+Optional dev preview packaging:
+
+```powershell
+pnpm build:tauri:dev
+pnpm release:portable:dev
 ```
 
 Expected result:
 
 - Web build succeeds.
 - Rust tests pass.
-- Tauri release exe builds with `--no-bundle`.
-- Portable zip and SHA256 checksums are created under ignored `release-artifacts/`.
+- Tauri stable release exe builds with `--no-bundle`.
+- Portable stable zip and SHA256 checksums are created under ignored `release-artifacts/`.
 - Public audit reports no secret, host, local state, or build-output leaks.
 - The release exe starts with temporary app data and does not exit during the startup check.
+- `dev` artifacts are clearly named `CodexHub Dev` or `CodexHub-Dev-*` and are not published as stable releases.
 
 ## Package Review
 
-Inspect `release-artifacts/CodexHub-v0.1.0-windows-x64-portable.zip`:
+Inspect `release-artifacts/CodexHub-v0.2.0-windows-x64-portable.zip`:
 
 - Includes `CodexHub.exe`.
-- Includes README, license, security notes, known limitations, public scope, release checklist, and Chinese README.
+- Includes README, license, security notes, known limitations, public scope, release checklist, release channel docs, and Chinese README.
 - Does not include local app state.
 - Does not include SSH config, known hosts, private keys, `.env*`, logs, local databases, or installer cache.
 - SHA256 checksum matches `release-artifacts/SHA256SUMS.txt`.
+
+If a dev preview package is created, inspect `release-artifacts/CodexHub-Dev-v0.2.0-windows-x64-portable.zip` and confirm it contains `CodexHub Dev.exe`.
 
 ## Live SSH Acceptance
 
@@ -61,8 +92,10 @@ Run this only with an explicit test host. Do not use production secrets or perso
 
 ## Release Notes
 
-Mention these v1 boundaries:
+Mention these v0.2.0 boundaries:
 
+- Stable keeps the user-visible brand `CodexHub`.
+- Dev is branded `CodexHub Dev` and uses a separate identifier and app data/cache directories.
 - Portable zip is the primary Windows artifact.
 - MSI packaging requires WiX and may need network/cache preparation.
 - CodexHub does not write Codex App private state.

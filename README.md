@@ -28,7 +28,7 @@
 
 ## 🧭 At a Glance
 
-CodexHub is a small desktop hub for one practical workflow: make a Windows machine ready to work with Codex App across SSH-connected Linux hosts.
+CodexHub is a Windows-first desktop control plane for one practical workflow: make a Windows machine ready to work with Codex App across SSH-connected Linux hosts.
 
 * Manage local OpenSSH key state and CodexHub-owned SSH aliases.
 * Bootstrap new Linux hosts with a one-time password, then switch to key login.
@@ -83,12 +83,10 @@ For the full Windows desktop app:
 3. Windows OpenSSH client: `ssh.exe`, `scp.exe`, and `ssh-keygen.exe`.
 4. SSH access to Linux remote hosts where Codex App will run.
 
-For development from source:
+For building from source:
 
 1. Node.js 20+ and pnpm.
 2. Rust stable MSVC toolchain.
-
-Mock mode only needs Node.js.
 
 ## 🚀 Install
 
@@ -97,23 +95,11 @@ For everyday use, download the latest Windows build from [GitHub Releases](https
 * Installer: download and run the Windows x64 setup `.exe`.
 * Portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
 
-For source development:
+GitHub Releases should host binaries. Source builds are an advanced option:
 
 ```powershell
 pnpm install
-pnpm dev
-```
-
-Web-only UI:
-
-```powershell
-pnpm dev:web
-```
-
-Dependency-light mock server:
-
-```powershell
-pnpm dev:mock
+pnpm release:portable
 ```
 
 ## ⚡ Quick Start
@@ -161,21 +147,6 @@ pnpm dev:mock
 * CodexHub stores a managed local copy in the app config directory.
 * Target checks use cached inventory, so run detection before installing to a new host.
 * Uninstall moves local and remote skill directories to backups instead of hard-deleting them.
-
-## 🛠️ Developer Setup
-
-Common checks:
-
-```powershell
-pnpm smoke
-pnpm smoke:mock
-pnpm typecheck
-cargo test --manifest-path src-tauri/Cargo.toml
-pnpm build:web
-pnpm build:tauri
-```
-
-When the system `node` is not on `PATH`, prepend the bundled Codex runtime Node/pnpm paths before running the same commands.
 
 ## ⚠️ Known Limitations
 

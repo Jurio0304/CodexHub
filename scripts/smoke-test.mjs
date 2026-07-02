@@ -12,6 +12,7 @@ const requiredFiles = [
   "docs/known-limitations.md",
   "docs/public-scope.md",
   "docs/release-checklist.md",
+  "docs/release-channels.md",
   "docs/zh-CN/README.md",
   "package.json",
   "vite.config.mjs",
@@ -30,6 +31,7 @@ const requiredFiles = [
   "figs/app-logo.png",
   "src-tauri/Cargo.toml",
   "src-tauri/tauri.conf.json",
+  "src-tauri/tauri.dev.conf.json",
   "src-tauri/icons/32x32.png",
   "src-tauri/icons/64x64.png",
   "src-tauri/icons/128x128.png",
@@ -53,16 +55,31 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:installer:nsis", "build:installer:msi", "release:portable", "audit:public", "smoke", "smoke:mock", "test"]) {
+if (packageJson.version !== "0.2.0") fail("package version should be 0.2.0");
+for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:installer:nsis", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
 if (packageJson.scripts.build !== "pnpm build:tauri") fail("default build should use build:tauri");
+if (!packageJson.scripts.dev.includes("--config src-tauri/tauri.dev.conf.json")) fail("default dev should use the dev channel Tauri config");
 if (!packageJson.scripts["build:tauri"].includes("--no-bundle --ci")) fail("build:tauri should skip installer bundling in CI");
+if (!packageJson.scripts["build:tauri:dev"].includes("--config src-tauri/tauri.dev.conf.json")) fail("dev Tauri build should use the dev channel config");
 if (!packageJson.scripts["release:portable"].includes("package-portable.ps1")) fail("release:portable should call package-portable.ps1");
+if (!packageJson.scripts["release:portable:dev"].includes("-Channel dev")) fail("dev portable release should pass -Channel dev");
 if (!packageJson.dependencies?.["@tauri-apps/plugin-dialog"]) fail("missing Tauri dialog plugin dependency");
 
 const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
+const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
+if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
+if (tauriConfig.identifier !== "com.jurio.codexhub") fail("stable identifier should be com.jurio.codexhub");
+if (tauriConfig.version !== "0.2.0") fail("stable Tauri version should be 0.2.0");
+if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
+if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
+if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
+if (devTauriConfig.version !== "0.2.0") fail("dev Tauri version should be 0.2.0");
+if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
+if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
+if (devTauriConfig.identifier?.endsWith(".app")) fail("Dev Tauri identifier should not end with .app");
 if (tauriConfig.bundle?.targets === "all") fail("Tauri bundle targets must not default to all installers");
 if (Array.isArray(tauriConfig.bundle?.targets) && tauriConfig.bundle.targets.includes("msi")) {
   fail("MSI bundling should be an explicit command, not a default target");
@@ -151,6 +168,9 @@ const requiredText = [
   [publicScope, "source-only"],
   [publicScope, "pnpm audit:public"],
   [releaseChecklist, "Live SSH Acceptance"],
+  [releaseChecklist, "CodexHub Dev"],
+  [releaseChecklist, "com.jurio.codexhub"],
+  [releaseChecklist, "dev.codexhub.desktop"],
   [releaseChecklist, "Add or enable the verified SSH alias manually"],
   [security, "CodexHub does not write Codex App private state"],
   [research, "No public, stable API was found"],
@@ -166,6 +186,11 @@ const requiredText = [
   [architecture, "tree/<branch>/<skill-path>"],
   [architecture, "install_skill_targets"],
   [architecture, "Skill Management"],
+  [architecture, "app_config_dir()"],
+  [architecture, "app_cache_dir()"],
+  [architecture, "bundle identifier"],
+  [architecture, "com.jurio.codexhub"],
+  [architecture, "dev.codexhub.desktop"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
   [mvp, "Window 6: single-card local skill library"],
@@ -194,7 +219,7 @@ for (const staleDocToken of [
 }
 
 const portableScript = read("scripts/package-portable.ps1");
-for (const token of ["CodexHub-v$Version-windows-x64-portable", "release-artifacts", "Compress-Archive", "SHA256SUMS.txt", "pnpm audit:public"]) {
+for (const token of ["CodexHub-v$Version-windows-x64-portable", "CodexHub-Dev-v$Version-windows-x64-portable", "ValidateSet(\"stable\", \"dev\")", "release-artifacts", "Compress-Archive", "SHA256SUMS.txt", "pnpm audit:public"]) {
   if (!portableScript.includes(token)) fail(`missing portable packaging token: ${token}`);
 }
 const publicAuditScript = read("scripts/audit-public-scope.mjs");

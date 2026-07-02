@@ -71,5 +71,5 @@ Each mutating operation must have:
 - `docs/mvp-scope.md` states MVP/non-MVP boundaries.
 - `docs/known-limitations.md` states host-add/reconnect fallback limitations.
 - Tauri/React/Rust project skeleton exists.
-- README has development startup instructions.
+- README stays user-facing; development startup, validation, and release-channel details live in `docs/`.
 - Smoke test or mock mode can run without external services.

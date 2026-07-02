@@ -1,17 +1,20 @@
 {
   "name": "codexhub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "tauri": "tauri",
-    "dev": "tauri dev",
+    "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "dev:web": "vite --config vite.config.mjs --host 127.0.0.1 --port 1420",
     "dev:mock": "node ./scripts/mock-dev.mjs",
     "build": "pnpm build:tauri",
     "build:tauri": "tauri build --no-bundle --ci",
+    "build:tauri:dev": "tauri build --config src-tauri/tauri.dev.conf.json --no-bundle --ci",
     "build:installer:nsis": "tauri build --bundles nsis --ci",
+    "build:installer:nsis:dev": "tauri build --config src-tauri/tauri.dev.conf.json --bundles nsis --ci",
     "build:installer:msi": "tauri build --bundles msi --ci",
+    "build:installer:msi:dev": "tauri build --config src-tauri/tauri.dev.conf.json --bundles msi --ci",
     "build:web": "vite build --config vite.config.mjs",
     "preview": "vite preview --config vite.config.mjs",
     "typecheck": "tsc --noEmit",
@@ -19,6 +22,7 @@
     "smoke:mock": "node ./scripts/mock-smoke-test.mjs",
     "audit:public": "node ./scripts/audit-public-scope.mjs",
     "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1",
+    "release:portable:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1 -Channel dev",
     "test": "pnpm smoke && pnpm smoke:mock && pnpm typecheck"
   },
   "dependencies": {

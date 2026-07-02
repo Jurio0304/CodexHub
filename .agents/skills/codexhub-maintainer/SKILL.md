@@ -38,6 +38,15 @@ CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的
 - 用户确认合并后，再按其指定方式合并；如未指定，优先保持线性、可回滚的小提交。
 - 若发现主分支已有用户未提交改动，立即停止并询问，不要 stash、reset、checkout 或覆盖。
 
+## 发布通道边界
+
+- v0.2.0 起只保留 `dev` 和 `stable` 两个通道；不要新增 alpha、beta、nightly、staging、rc 或 preview 通道。
+- `stable` 使用 `src-tauri/tauri.conf.json`，保持用户可见品牌 `CodexHub`，identifier 为 `com.jurio.codexhub`，窗口标题为 `CodexHub`；它只代表测试通过且用户明确允许公开上线的版本。
+- `dev` 使用 `src-tauri/tauri.dev.conf.json`，品牌为 `CodexHub Dev`，identifier 为 `dev.codexhub.desktop`，窗口标题为 `CodexHub Dev`；开发、测试、预览和人工验收都走 dev。
+- 本地 app 数据隔离依赖 Tauri `app_config_dir()` / `app_cache_dir()` 按 bundle identifier 分目录；不要改成手写 `%APPDATA%` 路径。
+- 通道隔离不自动隔离 `%USERPROFILE%\.ssh\config`、本地 SSH key、远端 `~/.codex/config.toml`、远端 `~/.codex/skills/` 或远端 shell 文件；这些共享面仍必须遵守预览、备份、幂等和脱敏日志规则。
+- README 面向普通用户；开发、测试、发布、通道和数据隔离细节写入 `docs/`，尤其是 `docs/release-channels.md` 和 `docs/release-checklist.md`。
+
 ## 代码约定
 
 - 前端类型集中在 `src/models.ts`，Tauri 调用和 web/mock fallback 集中在 `src/api.ts`，设置归一化和本地 fallback 在 `src/settings.ts`。
@@ -53,9 +62,11 @@ CodexHub 是 Windows-first 桌面控制面板，用于安全管理 Codex App 的
 
 ```powershell
 pnpm smoke
+pnpm smoke:mock
 pnpm typecheck
 pnpm build:web
-cd src-tauri; cargo test
+cargo test --manifest-path src-tauri/Cargo.toml
+git diff --check
 ```
 
 如果本机 `node` 或 `pnpm` 不可用，优先使用 Codex 桌面提供的 bundled Node/pnpm 路径。完整 Tauri 桌面验证需要 Node 20+、pnpm、Rust stable MSVC、WebView2 和 Windows OpenSSH。

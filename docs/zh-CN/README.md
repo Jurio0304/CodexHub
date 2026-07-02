@@ -81,12 +81,10 @@ CodexHub 聚焦一个清晰场景：让 Windows 上的 Codex App 更安全、可
 3. Windows OpenSSH client：`ssh.exe`、`scp.exe`、`ssh-keygen.exe`。
 4. 可通过 SSH 登录的 Linux 远端主机。
 
-从源码开发还需要：
+从源码构建还需要：
 
 1. Node.js 20+ 和 pnpm。
 2. Rust stable MSVC toolchain。
-
-Mock mode 只需要 Node.js。
 
 ## 🚀 安装
 
@@ -95,23 +93,11 @@ Mock mode 只需要 Node.js。
 - 安装包：下载并运行 Windows x64 setup `.exe`。
 - 便携包：解压 Windows x64 portable `.zip`，然后运行 `CodexHub.exe`。
 
-从源码开发：
+GitHub Releases 应承载正式二进制文件。源码构建属于高级选项：
 
 ```powershell
 pnpm install
-pnpm dev
-```
-
-Web-only UI：
-
-```powershell
-pnpm dev:web
-```
-
-Mock mode：
-
-```powershell
-pnpm dev:mock
+pnpm release:portable
 ```
 
 ## ⚡ 快速开始
@@ -159,18 +145,3 @@ pnpm dev:mock
 - CodexHub 会在 app config 目录保存一份托管本地副本。
 - 目标检测使用缓存 inventory；给新主机安装前请先运行检测。
 - 卸载会把本地和远端 skill 目录移动到备份，而不是硬删除。
-
-## 🛠️ 开发命令
-
-常用检查：
-
-```powershell
-pnpm smoke
-pnpm smoke:mock
-pnpm typecheck
-cargo test --manifest-path src-tauri/Cargo.toml
-pnpm build:web
-pnpm build:tauri
-```
-
-如果系统 PATH 没有 `node`，先把 Codex bundled Node/pnpm 路径放到 PATH 前面。

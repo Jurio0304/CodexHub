@@ -1,0 +1,18 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "CodexHub Dev",
+  "version": "0.2.0",
+  "identifier": "dev.codexhub.desktop",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CodexHub Dev",
+        "width": 1080,
+        "height": 720,
+        "minWidth": 920,
+        "minHeight": 620
+      }
+    ]
+  }
+}

@@ -1,4 +1,6 @@
 param(
+  [ValidateSet("stable", "dev")]
+  [string]$Channel = "stable",
   [switch]$SkipBuild
 )
 
@@ -7,7 +9,22 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $PackageJson = Get-Content -LiteralPath (Join-Path $Root "package.json") -Raw | ConvertFrom-Json
 $Version = $PackageJson.version
-$StageName = "CodexHub-v$Version-windows-x64-portable"
+$ChannelConfig = @{
+  stable = @{
+    BuildScript = "build:tauri"
+    StageName = "CodexHub-v$Version-windows-x64-portable"
+    ExeName = "CodexHub.exe"
+    ProductName = "CodexHub"
+  }
+  dev = @{
+    BuildScript = "build:tauri:dev"
+    StageName = "CodexHub-Dev-v$Version-windows-x64-portable"
+    ExeName = "CodexHub Dev.exe"
+    ProductName = "CodexHub Dev"
+  }
+}
+$SelectedChannel = $ChannelConfig[$Channel]
+$StageName = $SelectedChannel.StageName
 $ReleaseRoot = Join-Path $Root "release-artifacts"
 $StageDir = Join-Path $ReleaseRoot $StageName
 $ZipPath = Join-Path $ReleaseRoot "$StageName.zip"
@@ -41,7 +58,7 @@ function Get-RelativeReleasePath {
 if (-not $SkipBuild) {
   Push-Location $Root
   try {
-    pnpm build:tauri
+    pnpm $($SelectedChannel.BuildScript)
   } finally {
     Pop-Location
   }
@@ -64,7 +81,7 @@ if (Test-Path -LiteralPath $ZipPath) {
 }
 
 New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
-Copy-Item -LiteralPath $ExePath -Destination (Join-Path $StageDir "CodexHub.exe")
+Copy-Item -LiteralPath $ExePath -Destination (Join-Path $StageDir $($SelectedChannel.ExeName))
 
 foreach ($relativePath in @(
   "README.md",
@@ -73,6 +90,7 @@ foreach ($relativePath in @(
   "docs\known-limitations.md",
   "docs\public-scope.md",
   "docs\release-checklist.md",
+  "docs\release-channels.md",
   "docs\zh-CN\README.md"
 )) {
   $source = Join-Path $Root $relativePath
@@ -86,8 +104,10 @@ foreach ($relativePath in @(
 $portableReadme = @"
 CodexHub portable build
 Version: $Version
+Channel: $Channel
+Product: $($SelectedChannel.ProductName)
 
-Run CodexHub.exe to start the desktop app.
+Run $($SelectedChannel.ExeName) to start the desktop app.
 
 This archive intentionally does not include local app state, SSH config, hosts,
 profiles, task logs, private keys, tokens, or generated installer files.
@@ -106,7 +126,7 @@ try {
 Compress-Archive -LiteralPath $StageDir -DestinationPath $ZipPath -Force
 
 $hashes = @(
-  Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $StageDir "CodexHub.exe")
+  Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $StageDir $($SelectedChannel.ExeName))
   Get-FileHash -Algorithm SHA256 -LiteralPath $ZipPath
 )
 $hashLines = $hashes | ForEach-Object {

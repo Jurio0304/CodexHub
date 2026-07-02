@@ -11,9 +11,9 @@ These files are expected public source:
 - `SECURITY.md`
 - `package.json`, lockfiles, and TypeScript/Vite config.
 - `src/`
-- `src-tauri/src/`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, icons, capabilities, and Tauri config.
+- `src-tauri/src/`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, icons, capabilities, and Tauri channel configs.
 - `scripts/` release, audit, smoke, and dev helpers.
-- `docs/` architecture, scope, limitations, release, and localized docs.
+- `docs/` architecture, scope, limitations, release, release-channel, and localized docs.
 - `.agents/` project-local maintainer guidance, if the project owner wants agents to reuse it.
 
 ## Do Not Commit
