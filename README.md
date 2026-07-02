@@ -3,7 +3,7 @@
 
   <h1>CodexHub</h1>
 
-  <p><strong>Windows-first desktop control plane for Codex App SSH workspaces, with macOS release builds in progress.</strong></p>
+  <p><strong>A desktop control console for Codex App SSH workspaces on Windows and macOS.</strong></p>
   <p>Prepare Linux hosts, install or update remote Codex, apply profiles, sync skills, and inspect redacted task logs without writing to Codex App private state.</p>
 
   <p>
@@ -24,13 +24,13 @@
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
-    <img alt="Rust" src="https://img.shields.io/badge/Rust-MSVC-B7410E" />
+    <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-B7410E" />
   </p>
 </div>
 
 ## 🧭 At a Glance
 
-CodexHub is a Windows-first desktop control plane for one practical workflow: make a Windows machine ready to work with Codex App across SSH-connected Linux hosts.
+CodexHub is a desktop control console for one practical workflow: prepare a Windows or macOS workstation to use Codex App across SSH-connected Linux hosts.
 
 * Manage local OpenSSH key state and CodexHub-owned SSH aliases.
 * Bootstrap new Linux hosts with a one-time password, then switch to key login.
@@ -50,10 +50,10 @@ CodexHub is a Windows-first desktop control plane for one practical workflow: ma
 
 ## ✨ Core Features
 
-* Reads local Windows OpenSSH status and public keys.
+* Reads local OpenSSH status and public keys on Windows and macOS.
 * Uses a platform adapter for local SSH and Codex paths on Windows and macOS.
 * Generates a non-overwriting Ed25519 key when no suitable key exists.
-* Imports safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode.
+* Imports safe aliases from the local SSH config in read-only mode (`%USERPROFILE%\.ssh\config` on Windows, `~/.ssh/config` on macOS).
 * Adds, updates, or deletes only CodexHub-managed SSH config blocks with timestamped backups.
 * Tests SSH with `ssh <HostAlias> echo ok`.
 * Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, `~/.codex/config.toml`, and skill counts.
@@ -79,7 +79,7 @@ More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-l
 
 ## ✅ Requirements
 
-For the released Windows desktop app:
+For the Windows desktop app:
 
 1. Windows 10/11.
 2. Microsoft WebView2 Runtime.
@@ -99,7 +99,7 @@ For everyday use, download the latest stable build from this repository's Releas
 
 * Windows installer: download and run the Windows x64 setup `.exe`.
 * Windows portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
-* macOS: download the macOS `.dmg` or `.app` release artifact when available.
+* macOS: download the macOS Apple Silicon `.dmg`; the current artifact is unsigned and may require Gatekeeper approval.
 
 ## ⚡ Quick Start
 

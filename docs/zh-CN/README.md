@@ -3,7 +3,7 @@
 
   <h1>CodexHub</h1>
 
-  <p><strong>面向 Codex App SSH 工作流的 Windows 桌面控制台。</strong></p>
+  <p><strong>面向 Codex App SSH 工作流的通用桌面控制台，支持 Windows 和 macOS。</strong></p>
   <p>准备 Linux 主机、安装或更新远端 Codex、应用 profile、同步 skills，并查看脱敏任务日志；不写入 Codex App 私有状态。</p>
 
   <p>
@@ -19,16 +19,16 @@
   <p>
     <img alt="Release" src="https://img.shields.io/badge/release-v0.2.0-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
-    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4" />
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
-    <img alt="Rust" src="https://img.shields.io/badge/Rust-MSVC-B7410E" />
+    <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-B7410E" />
   </p>
 </div>
 
 ## 🧭 快速了解
 
-CodexHub 聚焦一个清晰场景：让 Windows 上的 Codex App 更安全、可审计地使用多台 SSH Linux 主机。
+CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App 更安全、可审计地使用多台 SSH Linux 主机。
 
 - 管理本地 OpenSSH key 状态和 CodexHub 托管的 SSH alias。
 - 用一次性密码初始化新 Linux 主机，再切换到 key 登录。
@@ -48,9 +48,9 @@ CodexHub 聚焦一个清晰场景：让 Windows 上的 Codex App 更安全、可
 
 ## ✨ 核心能力
 
-- 检测 Windows OpenSSH、本地公钥和 SSH config 状态。
+- 检测 Windows 和 macOS 的本地 OpenSSH、本地公钥和 SSH config 状态。
 - 在没有合适密钥时生成不覆盖旧文件的 Ed25519 key。
-- 只读导入 `%USERPROFILE%\.ssh\config` 中安全的 Host alias。
+- 只读导入本地 SSH config 中安全的 Host alias（Windows 为 `%USERPROFILE%\.ssh\config`，macOS 为 `~/.ssh/config`）。
 - 只写入 CodexHub 托管的 SSH config block，并在写入前备份。
 - 通过 `ssh <HostAlias> echo ok` 测试连接。
 - 探测远端 Linux 主机的系统、架构、shell、PATH、Codex CLI、`~/.codex/config.toml` 和 skills 数量。
@@ -74,19 +74,27 @@ CodexHub 聚焦一个清晰场景：让 Windows 上的 Codex App 更安全、可
 
 ## ✅ 运行要求
 
-完整 Windows 桌面应用需要：
+Windows 桌面应用需要：
 
 1. Windows 10/11。
 2. Microsoft WebView2 Runtime。
 3. Windows OpenSSH client：`ssh.exe`、`scp.exe`、`ssh-keygen.exe`。
 4. 可通过 SSH 登录的 Linux 远端主机。
 
+macOS 桌面应用需要：
+
+1. 一台真实 Mac 用于 `.app` / `.dmg` 运行验证。
+2. OpenSSH client tools 和 `ssh-keygen`。
+3. 通过 OpenAI/Codex 官方指引安装 Codex CLI。
+4. 可通过 SSH 登录的 Linux 远端主机。
+
 ## 🚀 安装
 
-日常使用建议从本仓库的 Releases 页面下载最新 stable Windows 构建。
+日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- 安装包：下载并运行 Windows x64 setup `.exe`。
-- 便携包：解压 Windows x64 portable `.zip`，然后运行 `CodexHub.exe`。
+- Windows 安装包：下载并运行 Windows x64 setup `.exe`。
+- Windows 便携包：解压 Windows x64 portable `.zip`，然后运行 `CodexHub.exe`。
+- macOS：下载 macOS Apple Silicon `.dmg`；当前 artifact 未签名，可能需要通过 Gatekeeper 手动允许。
 
 ## ⚡ 快速开始
 

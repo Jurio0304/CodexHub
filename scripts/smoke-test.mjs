@@ -170,11 +170,13 @@ const publicScope = read("docs/public-scope.md");
 const releaseChecklist = read("docs/release-checklist.md");
 const stableUpdater = read("docs/stable-updater.md");
 const security = read("SECURITY.md");
+const zhReadme = read("docs/zh-CN/README.md");
 
 const requiredText = [
-  [readme, "CodexHub is a Windows-first desktop control plane"],
+  [readme, "CodexHub is a desktop control console"],
+  [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "macOS `.dmg` or `.app` release artifact"],
+  [readme, "macOS Apple Silicon `.dmg`"],
   [readme, "Settings > Codex > Connections"],
   [readme, "MIT"],
   [publicScope, "source-only"],
@@ -224,6 +226,10 @@ const requiredText = [
 
 for (const [content, phrase] of requiredText) {
   if (!content.includes(phrase)) fail(`missing required phrase: ${phrase}`);
+}
+
+if (/\bWindows-first\b/i.test(readme)) {
+  fail("README should describe CodexHub as a Windows and macOS desktop console, not Windows-first");
 }
 
 for (const staleDocToken of [
