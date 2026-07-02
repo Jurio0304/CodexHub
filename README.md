@@ -83,24 +83,12 @@ For the full Windows desktop app:
 3. Windows OpenSSH client: `ssh.exe`, `scp.exe`, and `ssh-keygen.exe`.
 4. SSH access to Linux remote hosts where Codex App will run.
 
-For building from source:
-
-1. Node.js 20+ and pnpm.
-2. Rust stable MSVC toolchain.
-
 ## 🚀 Install
 
-For everyday use, download the latest Windows build from this repository's Releases page.
+For everyday use, download the latest stable Windows build from this repository's Releases page.
 
 * Installer: download and run the Windows x64 setup `.exe`.
 * Portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
-
-GitHub Releases should host binaries. Source builds are an advanced option:
-
-```powershell
-pnpm install
-pnpm release:portable
-```
 
 ## ⚡ Quick Start
 

@@ -66,3 +66,13 @@ pnpm release:portable:dev
 ```
 
 Do not create a GitHub Release from the `dev` channel. Do not create any GitHub Release until the user explicitly approves publishing the `stable` build.
+
+## Stable Updater Boundary
+
+Only `stable` may use the Tauri updater. The current foundation wires the updater plugin, Settings status/check UI, and a gated install action. Real checks stay disabled until the stable build receives both `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; install stays disabled until a signed stable feed returns `available`.
+
+`dev` must not auto-update from any feed. Dev builds are local source runs, preview packages, or test artifacts only.
+
+Portable packages remain manual stable artifacts downloaded from Releases. Do not replace `pnpm release:portable` or its package contents with updater feed behavior.
+
+See [stable updater details](stable-updater.md).

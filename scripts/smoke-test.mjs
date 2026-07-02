@@ -13,6 +13,7 @@ const requiredFiles = [
   "docs/public-scope.md",
   "docs/release-checklist.md",
   "docs/release-channels.md",
+  "docs/stable-updater.md",
   "docs/zh-CN/README.md",
   "package.json",
   "vite.config.mjs",
@@ -160,13 +161,13 @@ const limitations = read("docs/known-limitations.md");
 const readme = read("README.md");
 const publicScope = read("docs/public-scope.md");
 const releaseChecklist = read("docs/release-checklist.md");
+const stableUpdater = read("docs/stable-updater.md");
 const security = read("SECURITY.md");
 
 const requiredText = [
   [readme, "CodexHub is a Windows-first desktop control plane"],
-  [readme, "GitHub Releases should host binaries"],
+  [readme, "latest stable Windows build"],
   [readme, "Settings > Codex > Connections"],
-  [readme, "pnpm release:portable"],
   [readme, "MIT"],
   [publicScope, "source-only"],
   [publicScope, "pnpm audit:public"],
@@ -175,7 +176,11 @@ const requiredText = [
   [releaseChecklist, "app.codexhub.desktop"],
   [releaseChecklist, "dev.codexhub.desktop"],
   [releaseChecklist, "validate-release.ps1 -Channel stable -UserTested"],
+  [releaseChecklist, "CODEXHUB_STABLE_UPDATE_ENDPOINT"],
   [releaseChecklist, "Settings > Codex > Connections"],
+  [stableUpdater, "tauri-plugin-updater"],
+  [stableUpdater, "CODEXHUB_STABLE_UPDATER_PUBKEY"],
+  [stableUpdater, "Dev And Portable Boundaries"],
   [security, "CodexHub does not write Codex App private state"],
   [research, "No public, stable API was found"],
   [research, "~/.codex/config.toml"],
@@ -195,6 +200,7 @@ const requiredText = [
   [architecture, "bundle identifier"],
   [architecture, "app.codexhub.desktop"],
   [architecture, "dev.codexhub.desktop"],
+  [architecture, "Stable Updater Foundation"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
   [mvp, "Window 6: single-card local skill library"],
@@ -242,6 +248,11 @@ for (const token of ["APPDATA", "LOCALAPPDATA", "USERPROFILE", "WindowStyle", "R
   if (!exeCheckScript.includes(token)) fail(`missing release exe check token: ${token}`);
 }
 
+const cargoToml = read("src-tauri/Cargo.toml");
+for (const token of ["tauri-plugin-updater", "url = \"2\""]) {
+  if (!cargoToml.includes(token)) fail(`missing updater Cargo dependency token: ${token}`);
+}
+
 const rustLib = read("src-tauri/src/lib.rs");
 const sshRs = read("src-tauri/src/ssh.rs");
 for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
@@ -249,6 +260,9 @@ for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-up
 }
 for (const command of [
   "app_health",
+  "get_app_update_status",
+  "check_stable_update",
+  "install_stable_update",
   "get_settings",
   "save_settings",
   "get_ssh_status",
@@ -294,6 +308,12 @@ for (const command of [
   "list_tasks"
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
+}
+for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDATE_ENDPOINT", "CODEXHUB_STABLE_UPDATER_PUBKEY", "tauri_plugin_updater::Builder::new().build()", "UpdaterExt", "stable_updater_configured"]) {
+  if (!rustLib.includes(token)) fail(`missing stable updater backend token: ${token}`);
+}
+for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)"]) {
+  if (!rustLib.includes(token)) fail(`missing gated stable updater install token: ${token}`);
 }
 if (rustLib.includes("export_profiles")) fail("Profiles export command should be removed");
 for (const removedCommand of [
@@ -428,6 +448,12 @@ for (const token of [
 const app = read("src/App.tsx");
 for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "Local keys", "本地密钥", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
+}
+for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.updateInstallDisabled", "formatAppUpdateState", "appUpdateTone"]) {
+  if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
+}
+for (const token of ["canInstallStableUpdate", "appUpdateStatus.state === \"available\"", "onInstallStableUpdate", "api.installStableUpdate"]) {
+  if (!app.includes(token)) fail(`stable updater install UI must stay gated by available update: ${token}`);
 }
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
   if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
@@ -860,6 +886,9 @@ for (const token of ["copyPublicKeyButton", "data-success={publicKeyCopied}", "c
 }
 
 const api = read("src/api.ts");
+for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "get_app_update_status", "check_stable_update", "install_stable_update"]) {
+  if (!api.includes(token)) fail(`missing stable updater API token: ${token}`);
+}
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
@@ -943,6 +972,9 @@ for (const removedToken of [
 }
 
 const models = read("src/models.ts");
+for (const token of ["AppUpdateStatus", "AppUpdateState", "pending-configuration", "up-to-date", "installing", "feedConfigured", "signingConfigured"]) {
+  if (!models.includes(token)) fail(`missing stable updater model token: ${token}`);
+}
 for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "RemoteCodexMaintenanceResult", "check-version", "password_login", "verify_alias_login"]) {
   if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
@@ -1020,6 +1052,7 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
+if (!styles.includes("appUpdatePanel")) fail("missing stable updater Settings style token");
 for (const token of ["--font-ui", "--font-mono", "--app-content-max: 1220px", "--content-max: var(--app-content-max)", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
 }

@@ -4,6 +4,30 @@
   remoteWrapperRequired: boolean;
 };
 
+export type AppReleaseChannel = "stable" | "dev" | string;
+
+export type AppUpdateState =
+  | "disabled"
+  | "pending-configuration"
+  | "ready"
+  | "checking"
+  | "installing"
+  | "up-to-date"
+  | "available"
+  | "error";
+
+export type AppUpdateStatus = {
+  channel: AppReleaseChannel;
+  currentVersion: string;
+  state: AppUpdateState;
+  configured: boolean;
+  feedConfigured: boolean;
+  signingConfigured: boolean;
+  latestVersion: string | null;
+  checkedAt: string | null;
+  message: string;
+};
+
 export type LatestCodexVersion = {
   version: string | null;
   checkedAt: string | null;

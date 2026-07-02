@@ -60,12 +60,25 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 - `scripts/validate-release.ps1 -Channel stable -UserTested` completes with zero failures.
 - The owner has manually tested the built app end to end.
 - The summary lists the stable executable, portable zip, and `SHA256SUMS.txt` artifact paths.
+- If stable updater publication is enabled, the build environment injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; the private signing key stays outside git and outside app files.
+- If stable updater publication is not enabled, Settings must show pending/disabled updater state rather than pretending updates are available or installable.
 - `pnpm audit:public` passes and reports no secrets, private hosts, local app state, personal IDs, local home paths, workstation names, or build-output leaks.
 - The portable zip contains `CodexHub.exe`, user-facing docs, license, and security notes only.
 - The portable zip does not contain dev-only docs, release checklists, local app state, SSH config, known hosts, private keys, `.env*`, logs, databases, `dist/`, `src-tauri/target/`, or installer cache.
 - `scripts/check-release-exe.ps1` starts the release executable with temporary app data and confirms it stays running through the startup window.
 - Any live SSH acceptance evidence uses a sanitized test host and no production secrets or personal host names.
-- No GitHub tag, upload, or GitHub Release is created until the owner explicitly approves publication.
+- No GitHub tag, upload, updater feed change, or GitHub Release is created until the owner explicitly approves publication.
+
+## Stable Updater Publication
+
+The updater foundation is stable-only and disabled until real signing and feed configuration exists. Before publishing a feed, verify:
+
+- `dev` builds do not auto-update and are never referenced by the stable feed.
+- The stable feed metadata points only to owner-approved stable artifacts.
+- Feed metadata includes valid Tauri signatures for the Windows stable target.
+- The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
+- Signing private keys and passwords are supplied only through the trusted release environment.
+- Portable users can still download the latest stable portable zip from Releases.
 
 ## Manual Acceptance Items
 
@@ -79,4 +92,5 @@ The owner must test at least:
 - Remote Codex install/update status and redacted task logs.
 - Profile create/edit/import, API env-var selection, preview apply, and apply result.
 - Skill import/download, target preview, install/uninstall, and task evidence.
+- Settings app version/channel, stable updater pending/checked state, and gated install behavior.
 - Codex App fallback instructions for `Settings > Codex > Connections`.

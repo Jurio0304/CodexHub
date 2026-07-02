@@ -1577,6 +1577,14 @@ tr:last-child td {
   margin: 0;
 }
 
+.appUpdatePanel .mutedText {
+  margin: 10px 0 0;
+}
+
+.settingControlRow > .badge {
+  justify-self: start;
+}
+
 .segmentedControl button {
   border-color: transparent;
   padding: 9px 10px;

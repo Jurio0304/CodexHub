@@ -81,24 +81,12 @@ CodexHub 聚焦一个清晰场景：让 Windows 上的 Codex App 更安全、可
 3. Windows OpenSSH client：`ssh.exe`、`scp.exe`、`ssh-keygen.exe`。
 4. 可通过 SSH 登录的 Linux 远端主机。
 
-从源码构建还需要：
-
-1. Node.js 20+ 和 pnpm。
-2. Rust stable MSVC toolchain。
-
 ## 🚀 安装
 
-日常使用建议从本仓库的 Releases 页面下载最新 Windows 构建。
+日常使用建议从本仓库的 Releases 页面下载最新 stable Windows 构建。
 
 - 安装包：下载并运行 Windows x64 setup `.exe`。
 - 便携包：解压 Windows x64 portable `.zip`，然后运行 `CodexHub.exe`。
-
-GitHub Releases 应承载正式二进制文件。源码构建属于高级选项：
-
-```powershell
-pnpm install
-pnpm release:portable
-```
 
 ## ⚡ 快速开始
 

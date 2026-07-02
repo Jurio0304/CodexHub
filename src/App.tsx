@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, fallbackHealth } from "./api";
+import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
 import type {
+  AppUpdateState,
+  AppUpdateStatus,
   DeleteOperationResult,
   Health,
   Host,
@@ -468,6 +470,34 @@ const uiCopy = {
       localSsh: "Local keys",
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
+      appUpdates: "Stable updates",
+      currentVersion: "Current version",
+      channel: "Channel",
+      updateState: "Update state",
+      latestVersion: "Latest version",
+      lastChecked: "Last checked",
+      notChecked: "Not checked",
+      checkStableUpdate: "Check stable update",
+      updateChecking: "Checking...",
+      installStableUpdate: "Install update",
+      updateInstalling: "Installing...",
+      feedConfigured: "Feed configured",
+      signingConfigured: "Signing configured",
+      updateInstallDisabled: "Install is enabled only after a signed stable update is available. Windows will close CodexHub while applying it.",
+      channelLabels: {
+        stable: "stable",
+        dev: "dev"
+      },
+      updateStates: {
+        disabled: "dev disabled",
+        "pending-configuration": "pending configuration",
+        ready: "ready",
+        checking: "checking",
+        installing: "installing",
+        "up-to-date": "up to date",
+        available: "available",
+        error: "error"
+      },
       refresh: "Refresh",
       generating: "Generating...",
       generateEd25519: "Generate Ed25519",
@@ -910,6 +940,34 @@ const uiCopy = {
       localSsh: "本地密钥",
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
+      appUpdates: "Stable 更新",
+      currentVersion: "当前版本",
+      channel: "通道",
+      updateState: "更新状态",
+      latestVersion: "最新版本",
+      lastChecked: "上次检查",
+      notChecked: "未检查",
+      checkStableUpdate: "检查 stable 更新",
+      updateChecking: "检查中...",
+      installStableUpdate: "安装更新",
+      updateInstalling: "安装中...",
+      feedConfigured: "Feed 已配置",
+      signingConfigured: "签名已配置",
+      updateInstallDisabled: "仅在发现已签名 stable 更新后启用安装；Windows 应用更新时会关闭 CodexHub。",
+      channelLabels: {
+        stable: "stable",
+        dev: "dev"
+      },
+      updateStates: {
+        disabled: "dev 已禁用",
+        "pending-configuration": "等待配置",
+        ready: "可检查",
+        checking: "检查中",
+        installing: "安装中",
+        "up-to-date": "已是最新",
+        available: "有更新",
+        error: "错误"
+      },
       refresh: "刷新",
       generating: "生成中...",
       generateEd25519: "生成 Ed25519",
@@ -966,6 +1024,9 @@ function App() {
   const [activeSection, setActiveSection] = useState<SectionId>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(() => loadLocalSettings());
   const [health, setHealth] = useState<Health>(fallbackHealth);
+  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus>(fallbackAppUpdateStatus);
+  const [appUpdateChecking, setAppUpdateChecking] = useState(false);
+  const [appUpdateInstalling, setAppUpdateInstalling] = useState(false);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [skillPacks, setSkillPacks] = useState<SkillPack[]>([]);
@@ -1059,22 +1120,71 @@ function App() {
     return latest;
   };
 
+  const handleCheckStableUpdate = async () => {
+    setAppUpdateChecking(true);
+    setAppUpdateStatus((current) => ({
+      ...current,
+      state: "checking",
+      message: copy.settings.updateChecking
+    }));
+    try {
+      const nextStatus = await api.checkStableUpdate();
+      setAppUpdateStatus(nextStatus);
+      setNotice(nextStatus.message);
+    } catch (error) {
+      setNotice(formatError(error));
+      setAppUpdateStatus((current) => ({
+        ...current,
+        state: "error",
+        message: formatError(error)
+      }));
+    } finally {
+      setAppUpdateChecking(false);
+    }
+  };
+
+  const handleInstallStableUpdate = async () => {
+    setAppUpdateInstalling(true);
+    setAppUpdateStatus((current) => ({
+      ...current,
+      state: "installing",
+      message: copy.settings.updateInstalling
+    }));
+    try {
+      const nextStatus = await api.installStableUpdate();
+      setAppUpdateStatus(nextStatus);
+      setNotice(nextStatus.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Stable update install failed.";
+      setAppUpdateStatus((current) => ({
+        ...current,
+        state: "error",
+        message
+      }));
+      setNotice(message);
+    } finally {
+      setAppUpdateInstalling(false);
+    }
+  };
+
   useEffect(() => {
     let mounted = true;
 
     Promise.all([
       api.getSettings(),
       api.getHealth(),
+      api.getAppUpdateStatus(),
       api.listHosts(),
       api.listProfiles(),
       api.listSkillPacks(),
       api.getSkillInventoryStatus(),
       api.listTasks()
     ])
-      .then(([nextSettings, nextHealth, nextHosts, nextProfiles, nextSkillPacks, nextSkillInventoryStatus, nextTasks]) => {
+      .then(([nextSettings, nextHealth, nextAppUpdateStatus, nextHosts, nextProfiles, nextSkillPacks, nextSkillInventoryStatus, nextTasks]) => {
         if (!mounted) return;
         setSettings(nextSettings);
         setHealth(nextHealth);
+        setAppUpdateStatus(nextAppUpdateStatus);
         setHosts(nextHosts);
         setProfiles(nextProfiles);
         setSkillPacks(nextSkillPacks);
@@ -1846,10 +1956,15 @@ function App() {
       case "settings":
         return (
           <SettingsView
+            appUpdateChecking={appUpdateChecking}
+            appUpdateInstalling={appUpdateInstalling}
+            appUpdateStatus={appUpdateStatus}
             copy={copy}
             settings={settings}
             sshBusy={sshBusy}
             sshStatus={sshStatus}
+            onCheckStableUpdate={handleCheckStableUpdate}
+            onInstallStableUpdate={handleInstallStableUpdate}
             onCopyPublicKey={handleCopyPublicKey}
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
             onGenerateEd25519Key={handleGenerateEd25519Key}
@@ -4787,20 +4902,30 @@ function TaskLogModal({ copy, now, task, onClose }: { copy: UICopy; now: number;
 }
 
 function SettingsView({
+  appUpdateChecking,
+  appUpdateInstalling,
+  appUpdateStatus,
   copy,
   settings,
   sshBusy,
   sshStatus,
+  onCheckStableUpdate,
+  onInstallStableUpdate,
   onCopyPublicKey,
   onFontPresetChange,
   onGenerateEd25519Key,
   onRefreshSsh,
   onThemeChange
 }: {
+  appUpdateChecking: boolean;
+  appUpdateInstalling: boolean;
+  appUpdateStatus: AppUpdateStatus;
   copy: UICopy;
   settings: AppSettings;
   sshBusy: boolean;
   sshStatus: SshStatus | null;
+  onCheckStableUpdate: () => Promise<void>;
+  onInstallStableUpdate: () => Promise<void>;
   onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
   onGenerateEd25519Key: () => Promise<void>;
@@ -4809,6 +4934,10 @@ function SettingsView({
 }) {
   const publicKey = sshStatus?.ed25519.publicKey ?? sshStatus?.rsa.publicKey ?? "";
   const canGenerateEd25519 = Boolean(sshStatus?.sshKeygenAvailable && !sshStatus.ed25519.privateExists && !sshStatus.ed25519.publicExists);
+  const appUpdateBusy = appUpdateChecking || appUpdateInstalling;
+  const canCheckStableUpdate = appUpdateStatus.channel === "stable" && appUpdateStatus.configured && !appUpdateBusy;
+  const canInstallStableUpdate =
+    appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy;
   const [publicKeyCopied, setPublicKeyCopied] = useState(false);
 
   useEffect(() => {
@@ -4852,6 +4981,59 @@ function SettingsView({
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="panel spanWide appUpdatePanel">
+        <div className="panelHeader compact">
+          <div>
+            <h2>{copy.settings.appUpdates}</h2>
+          </div>
+          <div className="topActions">
+            <button className="secondaryButton" disabled={!canCheckStableUpdate} type="button" onClick={() => void onCheckStableUpdate()}>
+              {appUpdateChecking ? copy.settings.updateChecking : copy.settings.checkStableUpdate}
+            </button>
+            <button className="primaryButton" disabled={!canInstallStableUpdate} type="button" onClick={() => void onInstallStableUpdate()}>
+              {appUpdateInstalling ? copy.settings.updateInstalling : copy.settings.installStableUpdate}
+            </button>
+          </div>
+        </div>
+
+        <div className="settingsRows">
+          <div className="settingControlRow">
+            <span>{copy.settings.currentVersion}</span>
+            <Badge tone="blue">{appUpdateStatus.currentVersion}</Badge>
+          </div>
+          <div className="settingControlRow">
+            <span>{copy.settings.channel}</span>
+            <Badge tone={appUpdateStatus.channel === "stable" ? "green" : "gray"}>
+              {formatAppUpdateChannel(copy, appUpdateStatus.channel)}
+            </Badge>
+          </div>
+          <div className="settingControlRow">
+            <span>{copy.settings.updateState}</span>
+            <Badge tone={appUpdateTone(appUpdateStatus.state)}>
+              {formatAppUpdateState(copy, appUpdateStatus.state)}
+            </Badge>
+          </div>
+          <div className="settingControlRow">
+            <span>{copy.settings.latestVersion}</span>
+            <Badge tone={appUpdateStatus.latestVersion ? "blue" : "gray"}>{appUpdateStatus.latestVersion ?? copy.settings.notChecked}</Badge>
+          </div>
+          <div className="settingControlRow">
+            <span>{copy.settings.lastChecked}</span>
+            <span className="mutedText">{appUpdateStatus.checkedAt ?? copy.settings.notChecked}</span>
+          </div>
+          <div className="settingControlRow">
+            <span>{copy.settings.feedConfigured}</span>
+            <Badge tone={appUpdateStatus.feedConfigured ? "green" : "gray"}>{appUpdateStatus.feedConfigured ? copy.settings.available : copy.settings.missing}</Badge>
+          </div>
+          <div className="settingControlRow">
+            <span>{copy.settings.signingConfigured}</span>
+            <Badge tone={appUpdateStatus.signingConfigured ? "green" : "gray"}>{appUpdateStatus.signingConfigured ? copy.settings.available : copy.settings.missing}</Badge>
+          </div>
+        </div>
+        <p className="mutedText">{appUpdateStatus.message}</p>
+        <p className="mutedText">{copy.settings.updateInstallDisabled}</p>
       </section>
 
       <section className="panel spanWide">
@@ -4899,6 +5081,22 @@ function Badge({ children, tone, title }: { children: ReactNode; tone: BadgeTone
 
 function StatusBadge({ copy, status }: { copy: UICopy; status: HostStatus }) {
   return <Badge tone={hostStatusTone(status)}>{copy.status.host[status]}</Badge>;
+}
+
+function formatAppUpdateChannel(copy: UICopy, channel: string) {
+  if (channel === "stable" || channel === "dev") return copy.settings.channelLabels[channel];
+  return channel;
+}
+
+function formatAppUpdateState(copy: UICopy, state: AppUpdateState) {
+  return copy.settings.updateStates[state];
+}
+
+function appUpdateTone(state: AppUpdateState): BadgeTone {
+  if (state === "up-to-date" || state === "available" || state === "ready") return "green";
+  if (state === "checking" || state === "installing" || state === "pending-configuration") return "yellow";
+  if (state === "error") return "red";
+  return "gray";
 }
 
 function HostDetailValueBadge({ label, tone }: { label: string; tone: BadgeTone }) {

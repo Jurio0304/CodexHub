@@ -2,6 +2,7 @@
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AppUpdateStatus,
   ConnectionTest,
   DeleteOperationResult,
   Health,
@@ -46,6 +47,18 @@ export const fallbackHealth: Health = {
   app: "CodexHub",
   mode: "web-mock",
   remoteWrapperRequired: false
+};
+
+export const fallbackAppUpdateStatus: AppUpdateStatus = {
+  channel: "dev",
+  currentVersion: "0.2.0",
+  state: "disabled",
+  configured: false,
+  feedConfigured: false,
+  signingConfigured: false,
+  latestVersion: null,
+  checkedAt: null,
+  message: "Dev channel auto-updates are disabled. Use local builds, preview packages, or test artifacts."
 };
 
 export const fallbackHosts: Host[] = [];
@@ -993,6 +1006,9 @@ function mockUpdateLibrarySkillAbout(skillId: string, about: string): SkillPack[
 
 export const api = {
   getHealth: () => safeInvoke<Health>("app_health", undefined, fallbackHealth),
+  getAppUpdateStatus: () => safeInvoke<AppUpdateStatus>("get_app_update_status", undefined, fallbackAppUpdateStatus),
+  checkStableUpdate: () => safeInvoke<AppUpdateStatus>("check_stable_update", undefined, fallbackAppUpdateStatus),
+  installStableUpdate: () => requiredInvoke<AppUpdateStatus>("install_stable_update"),
   getSettings: () =>
     safeInvoke<AppSettings>("get_settings", undefined, () => loadLocalSettings()).then((settings) => {
       const normalized = normalizeSettings(settings);

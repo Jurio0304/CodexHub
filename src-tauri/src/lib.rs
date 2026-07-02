@@ -10,15 +10,22 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tar::Builder as TarBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 use toml::map::Map as TomlMap;
 use toml::Value as TomlValue;
+use url::Url;
 
 const CODEX_NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/@openai/codex";
 const CODEX_LATEST_SOURCE: &str = "npm";
 const CODEX_LATEST_REFRESH_HOUR: u32 = 4;
+const STABLE_UPDATE_ENDPOINT_ENV: &str = "CODEXHUB_STABLE_UPDATE_ENDPOINT";
+const STABLE_UPDATER_PUBKEY_ENV: &str = "CODEXHUB_STABLE_UPDATER_PUBKEY";
+const STABLE_IDENTIFIER: &str = "app.codexhub.desktop";
+const DEV_IDENTIFIER: &str = "dev.codexhub.desktop";
+const APP_UPDATE_CHECK_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +33,38 @@ struct Health {
     app: &'static str,
     mode: &'static str,
     remote_wrapper_required: bool,
+}
+
+#[derive(Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum AppUpdateState {
+    Disabled,
+    PendingConfiguration,
+    Ready,
+    UpToDate,
+    Available,
+    Installing,
+    Error,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateStatus {
+    channel: String,
+    current_version: String,
+    state: AppUpdateState,
+    configured: bool,
+    feed_configured: bool,
+    signing_configured: bool,
+    latest_version: Option<String>,
+    checked_at: Option<String>,
+    message: String,
+}
+
+#[derive(Clone)]
+struct StableUpdaterConfig {
+    endpoint: Option<String>,
+    pubkey: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1308,6 +1347,352 @@ fn app_health() -> Health {
         mode: "tauri",
         remote_wrapper_required: false,
     }
+}
+
+#[tauri::command]
+fn get_app_update_status(app: AppHandle) -> AppUpdateStatus {
+    app_update_status_for_channel(
+        current_app_channel(&app),
+        current_app_version(&app),
+        None,
+        None,
+    )
+}
+
+#[tauri::command]
+async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> {
+    let channel = current_app_channel(&app);
+    let current_version = current_app_version(&app);
+    if channel != "stable" {
+        return Ok(app_update_status_for_channel(
+            channel,
+            current_version,
+            Some(AppUpdateState::Disabled),
+            None,
+        ));
+    }
+
+    let config = stable_updater_config();
+    if !stable_updater_configured(&config) {
+        return Ok(app_update_status_for_channel(
+            channel,
+            current_version,
+            Some(AppUpdateState::PendingConfiguration),
+            None,
+        ));
+    }
+
+    let endpoint = match config
+        .endpoint
+        .as_deref()
+        .and_then(|value| Url::parse(value).ok())
+    {
+        Some(endpoint) => endpoint,
+        None => {
+            return Ok(app_update_status(
+                channel,
+                &current_version,
+                AppUpdateState::Error,
+                &config,
+                None,
+                Some(update_checked_at()),
+                "Stable updater endpoint is configured but invalid. Rebuild with a valid HTTPS feed URL.".into(),
+            ));
+        }
+    };
+    if endpoint.scheme() != "https" {
+        return Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::Error,
+            &config,
+            None,
+            Some(update_checked_at()),
+            "Stable updater endpoint must use HTTPS.".into(),
+        ));
+    }
+
+    let pubkey = config.pubkey.clone().unwrap_or_default();
+    let updater = match app
+        .updater_builder()
+        .pubkey(pubkey)
+        .endpoints(vec![endpoint])
+        .and_then(|builder| {
+            builder
+                .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS))
+                .build()
+        }) {
+        Ok(updater) => updater,
+        Err(_) => {
+            return Ok(app_update_status(
+                channel,
+                &current_version,
+                AppUpdateState::Error,
+                &config,
+                None,
+                Some(update_checked_at()),
+                "Stable updater could not initialize. Verify the release feed and public signing key.".into(),
+            ));
+        }
+    };
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::Available,
+            &config,
+            Some(update.version),
+            Some(update_checked_at()),
+            "A signed stable update is available. Use Install update to let Windows apply it."
+                .into(),
+        )),
+        Ok(None) => Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::UpToDate,
+            &config,
+            None,
+            Some(update_checked_at()),
+            "CodexHub stable is up to date.".into(),
+        )),
+        Err(_) => Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::Error,
+            &config,
+            None,
+            Some(update_checked_at()),
+            "Stable update check failed. Verify the configured feed, signatures, and network path."
+                .into(),
+        )),
+    }
+}
+
+#[tauri::command]
+async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> {
+    let channel = current_app_channel(&app);
+    let current_version = current_app_version(&app);
+    if channel != "stable" {
+        return Ok(app_update_status_for_channel(
+            channel,
+            current_version,
+            Some(AppUpdateState::Disabled),
+            None,
+        ));
+    }
+
+    let config = stable_updater_config();
+    if !stable_updater_configured(&config) {
+        return Ok(app_update_status_for_channel(
+            channel,
+            current_version,
+            Some(AppUpdateState::PendingConfiguration),
+            None,
+        ));
+    }
+
+    let endpoint = match config
+        .endpoint
+        .as_deref()
+        .and_then(|value| Url::parse(value).ok())
+    {
+        Some(endpoint) => endpoint,
+        None => {
+            return Ok(app_update_status(
+                channel,
+                &current_version,
+                AppUpdateState::Error,
+                &config,
+                None,
+                Some(update_checked_at()),
+                "Stable updater endpoint is configured but invalid. Rebuild with a valid HTTPS feed URL.".into(),
+            ));
+        }
+    };
+    if endpoint.scheme() != "https" {
+        return Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::Error,
+            &config,
+            None,
+            Some(update_checked_at()),
+            "Stable updater endpoint must use HTTPS.".into(),
+        ));
+    }
+
+    let pubkey = config.pubkey.clone().unwrap_or_default();
+    let updater = match app
+        .updater_builder()
+        .pubkey(pubkey)
+        .endpoints(vec![endpoint])
+        .and_then(|builder| {
+            builder
+                .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS))
+                .build()
+        }) {
+        Ok(updater) => updater,
+        Err(_) => {
+            return Ok(app_update_status(
+                channel,
+                &current_version,
+                AppUpdateState::Error,
+                &config,
+                None,
+                Some(update_checked_at()),
+                "Stable updater could not initialize. Verify the release feed and public signing key.".into(),
+            ));
+        }
+    };
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let latest_version = update.version.clone();
+            match update.download_and_install(|_, _| {}, || {}).await {
+                Ok(()) => Ok(app_update_status(
+                    channel,
+                    &current_version,
+                    AppUpdateState::Installing,
+                    &config,
+                    Some(latest_version),
+                    Some(update_checked_at()),
+                    "Stable update installer started. CodexHub will close while Windows applies the update.".into(),
+                )),
+                Err(_) => Ok(app_update_status(
+                    channel,
+                    &current_version,
+                    AppUpdateState::Error,
+                    &config,
+                    Some(latest_version),
+                    Some(update_checked_at()),
+                    "Stable update install failed. Verify the signed artifact, feed metadata, and installer path.".into(),
+                )),
+            }
+        }
+        Ok(None) => Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::UpToDate,
+            &config,
+            None,
+            Some(update_checked_at()),
+            "CodexHub stable is up to date.".into(),
+        )),
+        Err(_) => Ok(app_update_status(
+            channel,
+            &current_version,
+            AppUpdateState::Error,
+            &config,
+            None,
+            Some(update_checked_at()),
+            "Stable update check failed. Verify the configured feed, signatures, and network path."
+                .into(),
+        )),
+    }
+}
+
+fn current_app_channel(app: &AppHandle) -> &'static str {
+    match app.config().identifier.as_str() {
+        STABLE_IDENTIFIER => "stable",
+        DEV_IDENTIFIER => "dev",
+        _ => "dev",
+    }
+}
+
+fn current_app_version(app: &AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+fn stable_updater_config() -> StableUpdaterConfig {
+    StableUpdaterConfig {
+        endpoint: non_empty_compile_env(option_env!("CODEXHUB_STABLE_UPDATE_ENDPOINT")),
+        pubkey: non_empty_compile_env(option_env!("CODEXHUB_STABLE_UPDATER_PUBKEY")),
+    }
+}
+
+fn non_empty_compile_env(value: Option<&'static str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn stable_updater_configured(config: &StableUpdaterConfig) -> bool {
+    config.endpoint.is_some() && config.pubkey.is_some()
+}
+
+fn app_update_status_for_channel(
+    channel: &'static str,
+    current_version: String,
+    state_override: Option<AppUpdateState>,
+    latest_version: Option<String>,
+) -> AppUpdateStatus {
+    let config = stable_updater_config();
+    let state = state_override.unwrap_or_else(|| {
+        if channel != "stable" {
+            AppUpdateState::Disabled
+        } else if stable_updater_configured(&config) {
+            AppUpdateState::Ready
+        } else {
+            AppUpdateState::PendingConfiguration
+        }
+    });
+    let message = app_update_message(channel, &state);
+    app_update_status(
+        channel,
+        &current_version,
+        state,
+        &config,
+        latest_version,
+        None,
+        message,
+    )
+}
+
+fn app_update_status(
+    channel: &'static str,
+    current_version: &str,
+    state: AppUpdateState,
+    config: &StableUpdaterConfig,
+    latest_version: Option<String>,
+    checked_at: Option<String>,
+    message: String,
+) -> AppUpdateStatus {
+    AppUpdateStatus {
+        channel: channel.into(),
+        current_version: current_version.into(),
+        configured: stable_updater_configured(config),
+        feed_configured: config.endpoint.is_some(),
+        signing_configured: config.pubkey.is_some(),
+        latest_version,
+        checked_at,
+        state,
+        message,
+    }
+}
+
+fn app_update_message(channel: &'static str, state: &AppUpdateState) -> String {
+    match (channel, state) {
+        ("dev", _) => "Dev channel auto-updates are disabled. Use local builds, preview packages, or test artifacts.".into(),
+        ("stable", AppUpdateState::PendingConfiguration) => format!(
+            "Stable updater is pending configuration. Set {STABLE_UPDATE_ENDPOINT_ENV} and {STABLE_UPDATER_PUBKEY_ENV} during the signed stable release build."
+        ),
+        ("stable", AppUpdateState::Ready) => "Stable updater feed and public key are configured. Run a manual check when ready.".into(),
+        ("stable", AppUpdateState::UpToDate) => "CodexHub stable is up to date.".into(),
+        ("stable", AppUpdateState::Available) => {
+            "A signed stable update is available. Use Install update to let Windows apply it.".into()
+        }
+        ("stable", AppUpdateState::Installing) => {
+            "Stable update installer started. CodexHub will close while Windows applies the update.".into()
+        }
+        ("stable", AppUpdateState::Error) => "Stable update check failed. Verify the configured feed, signatures, and network path.".into(),
+        _ => "Stable updater status is unknown.".into(),
+    }
+}
+
+fn update_checked_at() -> String {
+    Local::now().fixed_offset().to_rfc3339()
 }
 
 async fn run_blocking_command<T, F>(label: &'static str, command: F) -> Result<T, String>
@@ -5528,6 +5913,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn stable_updater_status_is_pending_without_build_time_config() {
+        let status = app_update_status_for_channel("stable", "0.2.0".into(), None, None);
+        assert!(matches!(status.state, AppUpdateState::PendingConfiguration));
+        assert_eq!(status.current_version, "0.2.0");
+        assert!(!status.configured);
+        assert!(!status.feed_configured);
+        assert!(!status.signing_configured);
+        assert!(status.message.contains(STABLE_UPDATE_ENDPOINT_ENV));
+        assert!(status.message.contains(STABLE_UPDATER_PUBKEY_ENV));
+    }
+
+    #[test]
+    fn dev_updater_status_is_disabled() {
+        let status = app_update_status_for_channel("dev", "0.2.0".into(), None, None);
+        assert!(matches!(status.state, AppUpdateState::Disabled));
+        assert!(!status.configured);
+        assert!(status
+            .message
+            .contains("Dev channel auto-updates are disabled"));
+    }
+
     fn empty_state() -> AppState {
         AppState {
             hosts: Mutex::new(Vec::new()),
@@ -5667,10 +6074,13 @@ mod tests {
         let tasks = state.tasks.lock().expect("tasks mutex poisoned").clone();
         let serialized = serde_json::to_string(&tasks).expect("serialize tasks");
 
-        assert_eq!(tasks.iter().map(|task| task.id.as_str()).collect::<Vec<_>>(), vec![
-            "task-new",
-            "task-old"
-        ]);
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["task-new", "task-old"]
+        );
         assert_eq!(
             serde_json::to_string(&tasks[0].status).expect("serialize status"),
             "\"failed\""
@@ -5991,9 +6401,11 @@ mod tests {
         let fallback = parse_skill_metadata("# Instructions", Path::new("draft-helper"))
             .expect("fallback skill");
         assert_eq!(fallback.name, "draft-helper");
-        let description_only =
-            parse_skill_metadata("---\ndescription: Description only\n---\nBody", Path::new("helper"))
-                .expect("description-only skill");
+        let description_only = parse_skill_metadata(
+            "---\ndescription: Description only\n---\nBody",
+            Path::new("helper"),
+        )
+        .expect("description-only skill");
         assert_eq!(description_only.name, "helper");
         assert_eq!(
             description_only.description.as_deref(),
@@ -6529,9 +6941,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             app_health,
+            get_app_update_status,
+            check_stable_update,
+            install_stable_update,
             get_settings,
             save_settings,
             get_ssh_status,
