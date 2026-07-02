@@ -11,6 +11,7 @@
     "build": "pnpm build:tauri",
     "build:tauri": "tauri build --no-bundle --ci",
     "build:tauri:dev": "tauri build --config src-tauri/tauri.dev.conf.json --no-bundle --ci",
+    "build:macos:release": "tauri build --bundles app,dmg --ci",
     "build:installer:nsis": "tauri build --bundles nsis --ci",
     "build:installer:nsis:dev": "tauri build --config src-tauri/tauri.dev.conf.json --bundles nsis --ci",
     "build:installer:msi": "tauri build --bundles msi --ci",

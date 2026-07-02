@@ -80,6 +80,22 @@ The updater foundation is stable-only and disabled until real signing and feed c
 - Signing private keys and passwords are supplied only through the trusted release environment.
 - Portable users can still download the latest stable portable zip from Releases.
 
+## macOS Release Artifact
+
+The macOS workflow builds v0.2.0 `.app` and `.dmg` artifacts on a GitHub-hosted macOS runner:
+
+```text
+.github/workflows/build-macos-release.yml
+```
+
+Before treating the macOS artifact as broadly publishable, verify:
+
+- `Build macOS Release` completes on `master`.
+- The uploaded artifact is `codexhub-macos-v0.2.0-unsigned-release`.
+- The artifact is clearly labeled unsigned until Developer ID signing and notarization are configured.
+- The real Mac checklist in `docs/macos-support.md` is completed.
+- No Apple signing certificate, private key, notarization password, token, or profile is committed to git.
+
 ## Manual Acceptance Items
 
 The owner must test at least:

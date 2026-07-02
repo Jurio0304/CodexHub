@@ -1,7 +1,7 @@
 # CodexHub Architecture
 
-Date: 2026-06-26
-Target: Windows desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust.
+Date: 2026-07-01
+Target: Windows-first desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with macOS release-build support.
 
 ## Architecture Principle
 
@@ -11,6 +11,8 @@ CodexHub is a desktop control plane for Codex App SSH-based remote development. 
 - `~/.codex/skills/`
 
 Codex App remains the interactive coding surface. If Codex App has no public API for host registration or reconnect, CodexHub provides a safe fallback wizard instead of touching private app state.
+
+The local platform layer owns OS-specific paths and command discovery. Windows keeps `%USERPROFILE%\.ssh\config`, while macOS uses `~/.ssh/config`, `~/.ssh/id_ed25519`, `~/.codex/config.toml`, `~/.codex/skills`, and the Codex binary search order documented in `docs/macos-support.md`.
 
 ## Runtime Layers
 
@@ -43,7 +45,8 @@ Tauri command surface:
 
 - `app_health()`: smoke-test command exposed by the desktop backend.
 - `get_settings()` / `save_settings(settings)`: persist local appearance and setup-guide state.
-- `get_ssh_status()`: inspect Windows OpenSSH state and public-key availability without reading private key contents.
+- `get_local_codex_status()`: inspect the local Codex CLI path and version without installing anything.
+- `get_ssh_status()`: inspect local OpenSSH state and public-key availability without reading private key contents.
 - `generate_ed25519_key()`: generate a non-overwriting local Ed25519 keypair.
 - `list_ssh_config_hosts()`: parse safe managed and unmanaged `%USERPROFILE%\.ssh\config` aliases without modifying user-owned blocks.
 - `upsert_ssh_config_host(draft)` / `delete_ssh_config_host(alias)`: write or remove only scoped CodexHub-managed/local target blocks with backups and task evidence.
@@ -230,7 +233,7 @@ Window 6 skill management is folder-based and uses the same direct SSH/SCP route
 
 ## SSH Config Policy
 
-Default behavior is read-only analysis of `%USERPROFILE%\.ssh\config`.
+Default behavior is read-only analysis of the platform SSH config path: `%USERPROFILE%\.ssh\config` on Windows and `~/.ssh/config` on macOS.
 
 Optional write behavior must follow these rules:
 

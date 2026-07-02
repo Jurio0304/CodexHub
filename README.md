@@ -3,13 +3,15 @@
 
   <h1>CodexHub</h1>
 
-  <p><strong>Windows desktop control plane for Codex App SSH workspaces.</strong></p>
+  <p><strong>Windows-first desktop control plane for Codex App SSH workspaces, with macOS release builds in progress.</strong></p>
   <p>Prepare Linux hosts, install or update remote Codex, apply profiles, sync skills, and inspect redacted task logs without writing to Codex App private state.</p>
 
   <p>
     <a href="docs/zh-CN/README.md">简体中文</a>
     ·
     <a href="#-install">Install</a>
+    ·
+    <a href="docs/macos-support.md">macOS</a>
     ·
     <a href="docs/known-limitations.md">Known Limitations</a>
     ·
@@ -19,7 +21,7 @@
   <p>
     <img alt="Release" src="https://img.shields.io/badge/release-v0.2.0-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
-    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D4" />
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-MSVC-B7410E" />
@@ -49,6 +51,7 @@ CodexHub is a Windows-first desktop control plane for one practical workflow: ma
 ## ✨ Core Features
 
 * Reads local Windows OpenSSH status and public keys.
+* Uses a platform adapter for local SSH and Codex paths on Windows and macOS.
 * Generates a non-overwriting Ed25519 key when no suitable key exists.
 * Imports safe aliases from `%USERPROFILE%\.ssh\config` in read-only mode.
 * Adds, updates, or deletes only CodexHub-managed SSH config blocks with timestamped backups.
@@ -76,19 +79,27 @@ More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-l
 
 ## ✅ Requirements
 
-For the full Windows desktop app:
+For the released Windows desktop app:
 
 1. Windows 10/11.
 2. Microsoft WebView2 Runtime.
 3. Windows OpenSSH client: `ssh.exe`, `scp.exe`, and `ssh-keygen.exe`.
 4. SSH access to Linux remote hosts where Codex App will run.
 
+For the macOS desktop app:
+
+1. A real Mac for `.app` / `.dmg` runtime validation.
+2. OpenSSH client tools and `ssh-keygen`.
+3. Codex CLI installed through official OpenAI/Codex guidance.
+4. SSH access to Linux remote hosts where Codex App will run.
+
 ## 🚀 Install
 
-For everyday use, download the latest stable Windows build from this repository's Releases page.
+For everyday use, download the latest stable build from this repository's Releases page.
 
-* Installer: download and run the Windows x64 setup `.exe`.
-* Portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
+* Windows installer: download and run the Windows x64 setup `.exe`.
+* Windows portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
+* macOS: download the macOS `.dmg` or `.app` release artifact when available.
 
 ## ⚡ Quick Start
 
@@ -138,6 +149,7 @@ For everyday use, download the latest stable Windows build from this repository'
 
 ## ⚠️ Known Limitations
 
+* macOS support requires real-device validation for GUI behavior, Gatekeeper, signing, and notarization.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.

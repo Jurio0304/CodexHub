@@ -1,3 +1,4 @@
+use crate::platform;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -207,17 +208,13 @@ pub fn generate_ed25519_key() -> Result<SshKeyGenerationResult, String> {
     }
 
     if !command_available("ssh-keygen") {
-        return Err(
-            "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
-        );
+        return Err(ssh_keygen_missing_message());
     }
 
     fs::create_dir_all(&ssh_dir)
         .map_err(|error| format!("Failed to create .ssh directory: {error}"))?;
-    let comment = format!(
-        "codexhub@{}",
-        env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
-    );
+    set_ssh_dir_permissions(&ssh_dir)?;
+    let comment = key_comment();
     let output = process_command("ssh-keygen")
         .arg("-t")
         .arg("ed25519")
@@ -1492,16 +1489,11 @@ fn redact_key_value(line: &str, key: &str) -> String {
 }
 
 fn ssh_dir() -> Result<PathBuf, String> {
-    let profile = env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            "USERPROFILE is not set; cannot locate the Windows .ssh directory.".to_string()
-        })?;
-    Ok(profile.join(".ssh"))
+    platform::get_ssh_dir()
 }
 
 fn config_path() -> Result<PathBuf, String> {
-    Ok(ssh_dir()?.join("config"))
+    platform::get_ssh_config_path()
 }
 
 fn key_info(key_type: &str, private_path: &Path, public_path: &Path) -> SshKeyInfo {
@@ -1524,38 +1516,47 @@ fn key_info(key_type: &str, private_path: &Path, public_path: &Path) -> SshKeyIn
 }
 
 fn command_available(command: &str) -> bool {
-    #[cfg(windows)]
-    {
-        process_command("where")
-            .arg(command)
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
+    platform::command_available(command)
+}
 
-    #[cfg(not(windows))]
-    {
-        process_command("sh")
-            .arg("-c")
-            .arg(format!("command -v {command}"))
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+fn ssh_keygen_missing_message() -> String {
+    if platform::is_windows() {
+        "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into()
+    } else {
+        "ssh-keygen was not found on PATH. Install OpenSSH client tools first.".into()
     }
 }
 
-fn expand_local_path(input: &str) -> Result<PathBuf, String> {
-    let mut value = input.trim().to_string();
-    if value.starts_with("%USERPROFILE%") {
-        let profile = env::var("USERPROFILE")
-            .map_err(|_| "USERPROFILE is not set; cannot expand IdentityFile.".to_string())?;
-        value = value.replacen("%USERPROFILE%", &profile, 1);
-    } else if value == "~" || value.starts_with("~/") || value.starts_with("~\\") {
-        let profile = env::var("USERPROFILE")
-            .map_err(|_| "USERPROFILE is not set; cannot expand IdentityFile.".to_string())?;
-        value = format!("{profile}{}", &value[1..]);
+fn key_comment() -> String {
+    if platform::is_windows() {
+        format!(
+            "codexhub@{}",
+            env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
+        )
+    } else {
+        "codexhub".into()
     }
-    Ok(PathBuf::from(value))
+}
+
+#[cfg(unix)]
+fn set_ssh_dir_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("Failed to inspect SSH directory permissions: {error}"))?;
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| format!("Failed to set SSH directory permissions: {error}"))
+}
+
+#[cfg(not(unix))]
+fn set_ssh_dir_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn expand_local_path(input: &str) -> Result<PathBuf, String> {
+    platform::expand_home_path(input).map_err(|error| format!("{error} Cannot expand IdentityFile."))
 }
 
 fn public_key_path_for(private_path: &Path) -> PathBuf {
@@ -1582,18 +1583,14 @@ fn read_public_key(public_path: &Path) -> Result<String, String> {
 
 fn generate_keypair_at(private_path: &Path) -> Result<(), String> {
     if !command_available("ssh-keygen") {
-        return Err(
-            "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
-        );
+        return Err(ssh_keygen_missing_message());
     }
     if let Some(parent) = private_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create SSH key directory: {error}"))?;
+        set_ssh_dir_permissions(parent)?;
     }
-    let comment = format!(
-        "codexhub@{}",
-        env::var("COMPUTERNAME").unwrap_or_else(|_| "windows".into())
-    );
+    let comment = key_comment();
     let output = process_command("ssh-keygen")
         .arg("-t")
         .arg("ed25519")
@@ -1615,9 +1612,7 @@ fn generate_keypair_at(private_path: &Path) -> Result<(), String> {
 
 fn derive_public_key(private_path: &Path, public_path: &Path) -> Result<(), String> {
     if !command_available("ssh-keygen") {
-        return Err(
-            "ssh-keygen was not found on PATH. Install Windows OpenSSH Client first.".into(),
-        );
+        return Err(ssh_keygen_missing_message());
     }
     let output = process_command("ssh-keygen")
         .arg("-y")
@@ -2272,6 +2267,21 @@ mod tests {
         assert_eq!(hosts[0].alias, "lab");
         assert_eq!(hosts[0].host_name, "10.0.0.5");
         assert_eq!(hosts[0].identity_file, r"C:\Users\Example User\.ssh\id_ed25519");
+    }
+
+    #[test]
+    fn parser_and_writer_accept_macos_identity_paths() {
+        let mut mac_draft = draft("mac-lab");
+        mac_draft.identity_file = "~/.ssh/id_ed25519".into();
+        let next = upsert_managed_host_block("Host github.com\n    User git\n", &mac_draft)
+            .expect("upsert mac host");
+        let hosts = parse_managed_hosts(&next).expect("parse mac host");
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "mac-lab");
+        assert_eq!(hosts[0].identity_file, "~/.ssh/id_ed25519");
+        assert!(next.contains("IdentityFile ~/.ssh/id_ed25519"));
+        assert!(next.contains("Host github.com\n    User git\n"));
     }
 
     #[test]

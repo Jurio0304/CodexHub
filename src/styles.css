@@ -53,6 +53,20 @@
   --gray: #a3a9b6;
 }
 
+:root[data-platform="macos"] {
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace;
+  --sidebar: rgba(246, 247, 250, 0.86);
+  --surface: rgba(255, 255, 255, 0.82);
+  --radius-lg: 20px;
+  --radius-md: 16px;
+}
+
+:root[data-platform="macos"][data-theme="dark"] {
+  --sidebar: rgba(29, 30, 35, 0.86);
+  --surface: rgba(42, 43, 49, 0.8);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
@@ -1636,6 +1650,15 @@ tr:last-child td {
   color: var(--text);
   background: var(--surface-solid);
   box-shadow: var(--shadow-soft);
+}
+
+.codexCliDetails {
+  grid-template-columns: minmax(160px, 0.45fr) minmax(0, 1fr);
+}
+
+.codexCliDetails dd {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .commandGrid {

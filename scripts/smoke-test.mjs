@@ -10,6 +10,7 @@ const requiredFiles = [
   "docs/architecture.md",
   "docs/mvp-scope.md",
   "docs/known-limitations.md",
+  "docs/macos-support.md",
   "docs/public-scope.md",
   "docs/release-checklist.md",
   "docs/release-channels.md",
@@ -22,6 +23,7 @@ const requiredFiles = [
   "src/App.tsx",
   "src/api.ts",
   "src/models.ts",
+  "src/platform.ts",
   "src/settings.ts",
   "src/styles.css",
   "scripts/mock-dev.mjs",
@@ -42,7 +44,8 @@ const requiredFiles = [
   "src-tauri/icons/icon.ico",
   "src-tauri/src/main.rs",
   "src-tauri/src/lib.rs",
-  "src-tauri/capabilities/default.json"
+  "src-tauri/capabilities/default.json",
+  ".github/workflows/build-macos-release.yml"
 ];
 
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -58,7 +61,7 @@ for (const file of requiredFiles) {
 
 const packageJson = JSON.parse(read("package.json"));
 if (packageJson.version !== "0.2.0") fail("package version should be 0.2.0");
-for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:installer:nsis", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
+for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:installer:nsis", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
 if (packageJson.scripts.build !== "pnpm build:tauri") fail("default build should use build:tauri");
@@ -161,6 +164,7 @@ const research = read("docs/research.md");
 const architecture = read("docs/architecture.md");
 const mvp = read("docs/mvp-scope.md");
 const limitations = read("docs/known-limitations.md");
+const macosSupport = read("docs/macos-support.md");
 const readme = read("README.md");
 const publicScope = read("docs/public-scope.md");
 const releaseChecklist = read("docs/release-checklist.md");
@@ -169,7 +173,8 @@ const security = read("SECURITY.md");
 
 const requiredText = [
   [readme, "CodexHub is a Windows-first desktop control plane"],
-  [readme, "latest stable Windows build"],
+  [readme, "latest stable build"],
+  [readme, "macOS `.dmg` or `.app` release artifact"],
   [readme, "Settings > Codex > Connections"],
   [readme, "MIT"],
   [publicScope, "source-only"],
@@ -211,7 +216,10 @@ const requiredText = [
   [limitations, "Profiles /"],
   [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "The optional stored local credential key is never written to remote"],
-  [limitations, "CodexHub must not write Codex App private state"]
+  [limitations, "CodexHub must not write Codex App private state"],
+  [macosSupport, "Requires real macOS test"],
+  [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
+  [macosSupport, "~/.ssh/config"]
 ];
 
 for (const [content, phrase] of requiredText) {
@@ -258,6 +266,9 @@ for (const token of ["tauri-plugin-updater", "url = \"2\""]) {
 
 const rustLib = read("src-tauri/src/lib.rs");
 const sshRs = read("src-tauri/src/ssh.rs");
+const rustPlatform = read("src-tauri/src/platform.rs");
+const tsPlatform = read("src/platform.ts");
+const macosWorkflow = read(".github/workflows/build-macos-release.yml");
 for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
   if (!rustLib.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
 }
@@ -285,6 +296,7 @@ for (const command of [
   "remote_probe_codex",
   "remote_manage_codex",
   "refresh_latest_codex_version",
+  "get_local_codex_status",
   "list_profiles",
   "create_profile",
   "update_profile",
@@ -403,6 +415,51 @@ for (const token of ["hosts.json", "load_hosts", "save_hosts", "save_current_hos
 }
 for (const token of ["setup_guide_dismissed", "#[serde(default)]"]) {
   if (!rustLib.includes(token)) fail(`missing setup guide settings backend token: ${token}`);
+}
+for (const token of ["platform_appearance", "PlatformAppearance", "default_platform_appearance"]) {
+  if (!rustLib.includes(token)) fail(`missing platform appearance backend token: ${token}`);
+}
+for (const token of [
+  "RuntimePlatform",
+  "get_ssh_config_path",
+  "get_default_ssh_key_path",
+  "get_codex_config_path",
+  "get_codex_skills_path",
+  "/opt/homebrew/bin/codex",
+  "/usr/local/bin/codex",
+  ".local/bin/codex"
+]) {
+  if (!rustPlatform.includes(token)) fail(`missing Rust platform adapter token: ${token}`);
+}
+for (const token of [
+  "getPlatform",
+  "isWindows",
+  "isMacOS",
+  "isLinux",
+  "getHomeDir",
+  "getSshDir",
+  "getSshConfigPath",
+  "getDefaultSshKeyPath",
+  "getCodexConfigPath",
+  "getCodexSkillsPath",
+  "detectCodexBinaryPath",
+  "/opt/homebrew/bin/codex"
+]) {
+  if (!tsPlatform.includes(token)) fail(`missing TS platform adapter token: ${token}`);
+}
+for (const token of [
+  "runs-on: macos-14",
+  "actions/upload-artifact@v4",
+  "pnpm typecheck",
+  "pnpm build:web",
+  "pnpm build:macos:release",
+  "codexhub-macos-v0.2.0-unsigned-release",
+  "APPLE_SIGNING_IDENTITY: \"-\""
+]) {
+  if (!macosWorkflow.includes(token)) fail(`missing macOS workflow token: ${token}`);
+}
+for (const forbiddenWorkflowToken of ["softprops/action-gh-release", "gh release create", "tauri-action@v0"]) {
+  if (macosWorkflow.includes(forbiddenWorkflowToken)) fail(`macOS release workflow must not create a GitHub Release: ${forbiddenWorkflowToken}`);
 }
 for (const token of ["CREATE_NO_WINDOW", "process_command", "creation_flags(CREATE_NO_WINDOW)"]) {
   if (!sshRs.includes(token)) fail(`missing hidden Windows child-process token: ${token}`);
@@ -1050,8 +1107,8 @@ const settings = read("src/settings.ts");
 for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
   if (!settings.includes(fontPreset)) fail(`missing font preset: ${fontPreset}`);
 }
-for (const token of ["setupGuideDismissed", "setupGuideDismissed: false"]) {
-  if (!settings.includes(token)) fail(`missing setup guide settings token: ${token}`);
+for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
+  if (!settings.includes(token)) fail(`missing settings token: ${token}`);
 }
 for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Optimized", "Cross Platform"]) {
   if (settings.includes(oldFontPreset)) fail(`old font preset should not remain: ${oldFontPreset}`);
@@ -1064,7 +1121,7 @@ for (const token of ["appUpdatePanel", "versionInfoTable", "table-layout: fixed"
 for (const token of ["--font-ui", "--font-mono", "--app-content-max: 1220px", "--content-max: var(--app-content-max)", "font-family: var(--font-ui)", "font-family: var(--font-mono)"]) {
   if (!styles.includes(token)) fail(`missing font token: ${token}`);
 }
-for (const token of ['aria-label={copy.settings.font}', 'data-options="2"', "onFontPresetChange(preset)"]) {
+for (const token of ['aria-label={copy.settings.font}', 'aria-label={copy.settings.platformAppearance}', 'data-options="2"', "onFontPresetChange(preset)", "onPlatformAppearanceChange(choice)", "localCodexStatus", "copy.settings.localCodexCli"]) {
   if (!app.includes(token)) fail(`missing segmented font setting token: ${token}`);
 }
 if (app.includes("<select value={settings.fontPreset}")) fail("font setting should use the same segmented module style as theme");

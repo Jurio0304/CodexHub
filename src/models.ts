@@ -37,6 +37,17 @@ export type LatestCodexVersion = {
   error: string | null;
 };
 
+export type RuntimePlatform = "windows" | "macos" | "linux";
+
+export type LocalCodexStatus = {
+  platform: RuntimePlatform;
+  detected: boolean;
+  path: string | null;
+  version: string | null;
+  searchPaths: string[];
+  installHint: string;
+};
+
 export type HostStatus = "online" | "offline" | "unknown" | "testing";
 export type AuthMethod = "ssh-key" | "password" | "agent";
 
