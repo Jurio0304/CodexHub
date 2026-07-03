@@ -178,9 +178,6 @@ if ($Channel -eq "stable") {
     if ($SkipTauriBuild) {
       throw "Stable validation cannot use -SkipTauriBuild."
     }
-    if ($SkipPortable) {
-      throw "Stable validation cannot use -SkipPortable."
-    }
     if (-not $UserTested) {
       throw "Stable validation requires -UserTested after the owner completes full manual acceptance."
     }
@@ -219,13 +216,19 @@ if ($Channel -eq "stable" -and $ToolsReady -and $StableGatePassed) {
     Add-ArtifactIfExists "src-tauri\target\release\codexhub.exe"
   }
 
-  if ($StableBuildReady) {
+  if ($StableBuildReady -and -not $SkipPortable) {
     Invoke-Step -Name "Portable stable package" -ScriptBlock {
       Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\package-portable.ps1", "-Channel", "stable", "-SkipBuild")
       $packageJson = Read-JsonFile "package.json"
       Add-ArtifactIfExists "release-artifacts\CodexHub-v$($packageJson.version)-windows-x64-portable.zip"
       Add-ArtifactIfExists "release-artifacts\SHA256SUMS.txt"
     }
+
+    Invoke-Step -Name "Release exe startup check" -ScriptBlock {
+      Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\check-release-exe.ps1", "-Seconds", "$StartupSeconds")
+    }
+  } elseif ($StableBuildReady) {
+    Skip-Step -Name "Portable stable package" -Reason "approved Windows public release path is the updater-enabled setup installer."
 
     Invoke-Step -Name "Release exe startup check" -ScriptBlock {
       Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\check-release-exe.ps1", "-Seconds", "$StartupSeconds")
@@ -287,7 +290,11 @@ if ($Channel -eq "dev") {
   $ManualItems.Add("Do not publish dev artifacts, tag dev builds, or copy dev-only notes into README/user docs.") | Out-Null
 } else {
   $ManualItems.Add("Owner full manual acceptance must be completed before using -UserTested.") | Out-Null
-  $ManualItems.Add("Inspect the portable zip, SHA256SUMS.txt, and app startup behavior before publishing.") | Out-Null
+  if ($SkipPortable) {
+    $ManualItems.Add("Inspect the updater-enabled setup exe, .exe.sig, latest.json, SHA256SUMS.txt, and app startup behavior before publishing.") | Out-Null
+  } else {
+    $ManualItems.Add("Inspect the portable zip, SHA256SUMS.txt, and app startup behavior before publishing.") | Out-Null
+  }
   $ManualItems.Add("Run live SSH acceptance only with an explicit sanitized test alias: -LiveSshAlias <alias>.") | Out-Null
   $ManualItems.Add("This script does not push, tag, upload, or create a GitHub Release.") | Out-Null
 }

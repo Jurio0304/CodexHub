@@ -125,6 +125,10 @@ if (localMachine && localMachine.length >= 3) {
   });
 }
 
+const isUpdaterFeedReleaseUrl = (file, line) =>
+  /^dist-release\/v[^/]+\/windows-updater\/latest\.json$/i.test(file) &&
+  /https:\/\/github\.com\/[^/\s"]+\/[^/\s"]+\/releases\/download\//i.test(line);
+
 for (const file of uniqueFiles) {
   const normalized = file.replaceAll("\\", "/");
   for (const pattern of forbiddenPathPatterns) {
@@ -150,7 +154,7 @@ for (const file of uniqueFiles) {
       }
     }
     for (const check of personalChecks) {
-      if (check.pattern.test(line) && normalized !== auditScriptPath) {
+      if (check.pattern.test(line) && normalized !== auditScriptPath && !isUpdaterFeedReleaseUrl(normalized, line)) {
         fail(`${check.name} in ${file}:${index + 1}`);
       }
     }

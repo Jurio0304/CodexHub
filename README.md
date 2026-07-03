@@ -97,8 +97,7 @@ For the macOS desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows installer: download and run the Windows x64 setup `.exe`.
-* Windows portable: unzip the Windows x64 portable `.zip`, then run `CodexHub.exe`.
+* Windows: download and run the Windows x64 setup `.exe`; signed stable installers can check and install future Windows updates from Settings.
 * macOS: download the macOS Apple Silicon `.dmg`; the current artifact is unsigned and may require Gatekeeper approval.
 
 ## ⚡ Quick Start

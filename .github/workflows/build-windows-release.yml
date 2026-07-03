@@ -1,0 +1,131 @@
+name: Build Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing GitHub Release tag to use for updater URLs and optional asset upload."
+        required: true
+        default: "v0.2.0"
+      upload_to_release:
+        description: "Upload Windows updater assets and latest.json to the existing GitHub Release."
+        required: true
+        type: boolean
+        default: false
+  push:
+    branches:
+      - master
+
+jobs:
+  windows-release:
+    name: Windows signed updater release
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+      CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: npm install -g pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve release metadata
+        id: meta
+        shell: pwsh
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          $packageJson = Get-Content package.json -Raw | ConvertFrom-Json
+          $tag = $env:INPUT_TAG
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = "v$($packageJson.version)"
+          }
+          if (-not $tag.StartsWith("v")) {
+            $tag = "v$tag"
+          }
+          "version=$($packageJson.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Verify updater release configuration
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CODEXHUB_STABLE_UPDATE_ENDPOINT)) {
+            throw "CODEXHUB_STABLE_UPDATE_ENDPOINT repository variable is required."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CODEXHUB_STABLE_UPDATER_PUBKEY)) {
+            throw "CODEXHUB_STABLE_UPDATER_PUBKEY repository variable is required."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY repository secret is required."
+          }
+          if (-not $env:CODEXHUB_STABLE_UPDATE_ENDPOINT.StartsWith("https://")) {
+            throw "CODEXHUB_STABLE_UPDATE_ENDPOINT must be HTTPS."
+          }
+
+      - name: Run smoke checks
+        run: pnpm smoke
+
+      - name: Run mock smoke checks
+        run: pnpm smoke:mock
+
+      - name: Run TypeScript typecheck
+        run: pnpm typecheck
+
+      - name: Build frontend
+        run: pnpm build:web
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build signed Windows updater bundle
+        run: pnpm build:installer:nsis:updater
+
+      - name: Generate Windows updater feed
+        run: pnpm release:updater-feed
+        env:
+          CODEXHUB_RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+
+      - name: Upload Windows updater artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codexhub-windows-v${{ steps.meta.outputs.version }}-signed-updater-release
+          path: |
+            dist-release/v${{ steps.meta.outputs.version }}/windows-updater/CodexHub_${{ steps.meta.outputs.version }}_x64-setup.exe
+            dist-release/v${{ steps.meta.outputs.version }}/windows-updater/CodexHub_${{ steps.meta.outputs.version }}_x64-setup.exe.sig
+            dist-release/v${{ steps.meta.outputs.version }}/windows-updater/latest.json
+          if-no-files-found: error
+
+      - name: Upload updater assets to existing GitHub Release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          $releaseDir = "dist-release/v$env:VERSION/windows-updater"
+          gh release view "$env:RELEASE_TAG"
+          gh release upload "$env:RELEASE_TAG" --clobber `
+            "$releaseDir/CodexHub_$($env:VERSION)_x64-setup.exe#CodexHub $env:VERSION Windows x64 Setup" `
+            "$releaseDir/CodexHub_$($env:VERSION)_x64-setup.exe.sig#CodexHub $env:VERSION Windows x64 updater signature" `
+            "$releaseDir/latest.json#CodexHub $env:VERSION stable updater feed"

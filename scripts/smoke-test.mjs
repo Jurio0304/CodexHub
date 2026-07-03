@@ -32,10 +32,13 @@ const requiredFiles = [
   "scripts/validate-release.ps1",
   "scripts/package-portable.ps1",
   "scripts/check-release-exe.ps1",
+  "scripts/create-updater-tauri-config.mjs",
+  "scripts/create-windows-updater-feed.mjs",
   "figs/app-logo.png",
   "src-tauri/Cargo.toml",
   "src-tauri/tauri.conf.json",
   "src-tauri/tauri.dev.conf.json",
+  "src-tauri/tauri.updater.conf.json",
   "src-tauri/icons/32x32.png",
   "src-tauri/icons/64x64.png",
   "src-tauri/icons/128x128.png",
@@ -45,7 +48,8 @@ const requiredFiles = [
   "src-tauri/src/main.rs",
   "src-tauri/src/lib.rs",
   "src-tauri/capabilities/default.json",
-  ".github/workflows/build-macos-release.yml"
+  ".github/workflows/build-macos-release.yml",
+  ".github/workflows/build-windows-release.yml"
 ];
 
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
@@ -61,13 +65,16 @@ for (const file of requiredFiles) {
 
 const packageJson = JSON.parse(read("package.json"));
 if (packageJson.version !== "0.2.0") fail("package version should be 0.2.0");
-for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:installer:nsis", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
+for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
 if (packageJson.scripts.build !== "pnpm build:tauri") fail("default build should use build:tauri");
 if (!packageJson.scripts.dev.includes("--config src-tauri/tauri.dev.conf.json")) fail("default dev should use the dev channel Tauri config");
 if (!packageJson.scripts["build:tauri"].includes("--no-bundle --ci")) fail("build:tauri should skip installer bundling in CI");
 if (!packageJson.scripts["build:tauri:dev"].includes("--config src-tauri/tauri.dev.conf.json")) fail("dev Tauri build should use the dev channel config");
+if (!packageJson.scripts["build:installer:nsis:updater"].includes("create-updater-tauri-config.mjs")) fail("Windows updater NSIS build should inject the updater Tauri config");
+if (!packageJson.scripts["build:installer:nsis:updater"].includes("src-tauri/tauri.updater.local.json")) fail("Windows updater NSIS build should use the generated local updater artifact config");
+if (!packageJson.scripts["release:updater-feed"].includes("create-windows-updater-feed.mjs")) fail("release:updater-feed should generate the Windows updater feed");
 if (!packageJson.scripts["release:portable"].includes("package-portable.ps1")) fail("release:portable should call package-portable.ps1");
 if (!packageJson.scripts["release:portable:dev"].includes("-Channel dev")) fail("dev portable release should pass -Channel dev");
 if (!packageJson.scripts["validate:release"].includes("validate-release.ps1")) fail("validate:release should call validate-release.ps1");
@@ -76,6 +83,7 @@ if (!packageJson.dependencies?.["@tauri-apps/plugin-dialog"]) fail("missing Taur
 
 const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
 const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
+const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
 if (tauriConfig.version !== "0.2.0") fail("stable Tauri version should be 0.2.0");
@@ -90,6 +98,8 @@ if (devTauriConfig.identifier?.endsWith(".app")) fail("Dev Tauri identifier shou
 if (tauriConfig.plugins?.updater?.pubkey !== "") {
   fail("stable updater plugin needs an empty pubkey placeholder so startup config deserializes before build-time config is injected");
 }
+if (updaterTauriConfig.bundle?.createUpdaterArtifacts !== true) fail("Windows updater build config should create Tauri updater artifacts");
+if (devTauriConfig.bundle?.createUpdaterArtifacts) fail("dev channel must not create updater artifacts");
 if (tauriConfig.bundle?.targets === "all") fail("Tauri bundle targets must not default to all installers");
 if (Array.isArray(tauriConfig.bundle?.targets) && tauriConfig.bundle.targets.includes("msi")) {
   fail("MSI bundling should be an explicit command, not a default target");
@@ -275,6 +285,9 @@ const sshRs = read("src-tauri/src/ssh.rs");
 const rustPlatform = read("src-tauri/src/platform.rs");
 const tsPlatform = read("src/platform.ts");
 const macosWorkflow = read(".github/workflows/build-macos-release.yml");
+const windowsWorkflow = read(".github/workflows/build-windows-release.yml");
+const updaterConfigScript = read("scripts/create-updater-tauri-config.mjs");
+const windowsUpdaterFeedScript = read("scripts/create-windows-updater-feed.mjs");
 for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
   if (!rustLib.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
 }
@@ -466,6 +479,39 @@ for (const token of [
 }
 for (const forbiddenWorkflowToken of ["softprops/action-gh-release", "gh release create", "tauri-action@v0"]) {
   if (macosWorkflow.includes(forbiddenWorkflowToken)) fail(`macOS release workflow must not create a GitHub Release: ${forbiddenWorkflowToken}`);
+}
+for (const token of [
+  "runs-on: windows-2022",
+  "CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}",
+  "CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}",
+  "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
+  "pnpm build:installer:nsis:updater",
+  "pnpm release:updater-feed",
+  "latest.json",
+  "x64-setup.exe.sig",
+  "upload_to_release == 'true'",
+  "gh release upload"
+]) {
+  if (!windowsWorkflow.includes(token)) fail(`missing Windows updater workflow token: ${token}`);
+}
+for (const token of [
+  "CODEXHUB_STABLE_UPDATER_PUBKEY",
+  "tauri.updater.local.json",
+  "raw `.pub` base64 content",
+  "config.plugins",
+  "pubkey"
+]) {
+  if (!updaterConfigScript.includes(token)) fail(`missing updater Tauri config script token: ${token}`);
+}
+for (const token of [
+  "CodexHub_${version}_x64-setup.exe",
+  "const signaturePath = `${updaterPath}.sig`",
+  "windows-x86_64",
+  "CODEXHUB_RELEASE_TAG",
+  "https://github.com/${repo}/releases/download/${normalizedTag}/${updaterName}",
+  "latest.json"
+]) {
+  if (!windowsUpdaterFeedScript.includes(token)) fail(`missing Windows updater feed script token: ${token}`);
 }
 for (const token of ["CREATE_NO_WINDOW", "process_command", "creation_flags(CREATE_NO_WINDOW)"]) {
   if (!sshRs.includes(token)) fail(`missing hidden Windows child-process token: ${token}`);

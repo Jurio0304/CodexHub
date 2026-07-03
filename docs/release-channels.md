@@ -52,7 +52,7 @@ Stable is the default package identity:
 pnpm build:tauri
 pnpm build:installer:nsis
 pnpm build:installer:msi
-pnpm release:portable
+pnpm build:installer:nsis:updater
 ```
 
 Dev uses the dev Tauri override:
@@ -69,10 +69,10 @@ Do not create a GitHub Release from the `dev` channel. Do not create any GitHub 
 
 ## Stable Updater Boundary
 
-Only `stable` may use the Tauri updater. The current foundation wires the updater plugin, Settings status/check UI, and a gated install action. The stable Check button remains clickable so formal builds can report their updater state; without both `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`, the backend returns `pending-configuration`. Install stays disabled until a signed stable feed returns `available`.
+Only `stable` may use the Tauri updater. The current foundation wires the updater plugin, Settings status/check UI, a gated install action, and a Windows signed-updater release workflow. The stable Check button remains clickable so formal builds can report their updater state; without both `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`, the backend returns `pending-configuration`. Install stays disabled until a signed stable feed returns `available`.
 
 `dev` must not auto-update from any feed. Dev builds are local source runs, preview packages, or test artifacts only.
 
-Portable packages remain manual stable artifacts downloaded from Releases. Do not replace `pnpm release:portable` or its package contents with updater feed behavior.
+`pnpm release:portable` remains available for manual/local packaging, but the v0.2.0 Windows public Release keeps only the signed updater-enabled setup installer. Portable builds do not participate in automatic update feeds unless a separate portable update story is designed and tested.
 
 See [stable updater details](stable-updater.md).
