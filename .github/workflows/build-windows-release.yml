@@ -22,10 +22,6 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: write
-    env:
-      CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
-      CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
     steps:
       - name: Checkout
@@ -68,6 +64,10 @@ jobs:
 
       - name: Verify updater release configuration
         shell: pwsh
+        env:
+          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CODEXHUB_STABLE_UPDATE_ENDPOINT)) {
             throw "CODEXHUB_STABLE_UPDATE_ENDPOINT repository variable is required."
@@ -99,6 +99,10 @@ jobs:
 
       - name: Build signed Windows updater bundle
         run: pnpm build:installer:nsis:updater
+        env:
+          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Generate Windows updater feed
         run: pnpm release:updater-feed
