@@ -1672,8 +1672,7 @@ fn current_app_version(app: &AppHandle) -> String {
 fn stable_updater_config() -> StableUpdaterConfig {
     StableUpdaterConfig {
         endpoint: non_empty_compile_env(option_env!("CODEXHUB_STABLE_UPDATE_ENDPOINT")),
-        pubkey: option_env!("CODEXHUB_STABLE_UPDATER_PUBKEY")
-            .and_then(normalize_updater_pubkey),
+        pubkey: option_env!("CODEXHUB_STABLE_UPDATER_PUBKEY").and_then(normalize_updater_pubkey),
     }
 }
 
@@ -1692,31 +1691,68 @@ fn normalize_updater_pubkey(value: &str) -> Option<String> {
     if let Ok(bytes) = general_purpose::STANDARD.decode(trimmed) {
         if let Ok(decoded) = String::from_utf8(bytes) {
             if decoded.contains("minisign public key") {
-                if let Some(pubkey) = extract_minisign_public_key(&decoded) {
-                    return Some(pubkey);
+                if let Some(pub_file) = normalize_minisign_pub_file_text(&decoded) {
+                    return Some(general_purpose::STANDARD.encode(pub_file.as_bytes()));
                 }
             }
         }
-    }
-    if trimmed.contains("minisign public key") || trimmed.contains('\n') {
-        if let Some(pubkey) = extract_minisign_public_key(trimmed) {
-            return Some(pubkey);
+        if let Some(pub_file) = minisign_pub_file_from_key_line(trimmed) {
+            return Some(general_purpose::STANDARD.encode(pub_file.as_bytes()));
         }
     }
-    Some(trimmed.to_string())
+    if trimmed.contains("minisign public key") || trimmed.contains('\n') {
+        if let Some(pub_file) = normalize_minisign_pub_file_text(trimmed) {
+            return Some(general_purpose::STANDARD.encode(pub_file.as_bytes()));
+        }
+    }
+    None
 }
 
-fn extract_minisign_public_key(value: &str) -> Option<String> {
+fn normalize_minisign_pub_file_text(value: &str) -> Option<String> {
+    let key_line = extract_minisign_public_key_line(value)?;
+    let comment = value
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("minisign public key"))
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            minisign_key_id(&key_line)
+                .map(|key_id| format!("untrusted comment: minisign public key: {key_id}"))
+        })?;
+    Some(format!("{comment}\n{key_line}\n"))
+}
+
+fn extract_minisign_public_key_line(value: &str) -> Option<String> {
     value
         .lines()
         .map(str::trim)
-        .find(|line| {
-            !line.is_empty()
-                && !line.starts_with("untrusted comment")
-                && !line.starts_with("trusted comment")
-                && !line.contains("minisign public key")
-        })
+        .find(|line| minisign_key_id(line).is_some())
         .map(ToOwned::to_owned)
+}
+
+fn minisign_pub_file_from_key_line(value: &str) -> Option<String> {
+    let key_id = minisign_key_id(value)?;
+    Some(format!(
+        "untrusted comment: minisign public key: {key_id}\n{value}\n"
+    ))
+}
+
+fn minisign_key_id(value: &str) -> Option<String> {
+    let bytes = general_purpose::STANDARD.decode(value).ok()?;
+    if bytes.len() != 42 {
+        return None;
+    }
+    if bytes.first() != Some(&0x45) || !matches!(bytes.get(1).copied(), Some(0x64 | 0x44)) {
+        return None;
+    }
+    Some(
+        bytes[2..10]
+            .iter()
+            .rev()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(""),
+    )
 }
 
 fn stable_updater_configured(config: &StableUpdaterConfig) -> bool {
@@ -4530,9 +4566,7 @@ fn run_get_local_codex_status() -> LocalCodexStatus {
         .collect::<Vec<_>>();
     search_paths.push(match platform {
         platform::RuntimePlatform::Windows => "where codex".into(),
-        platform::RuntimePlatform::MacOS | platform::RuntimePlatform::Linux => {
-            "which codex".into()
-        }
+        platform::RuntimePlatform::MacOS | platform::RuntimePlatform::Linux => "which codex".into(),
     });
     let detected_path = platform::detect_codex_binary_path();
     let version = detected_path
@@ -6154,18 +6188,23 @@ mod tests {
     }
 
     #[test]
-    fn updater_pubkey_normalization_accepts_public_key_line_and_pub_file() {
+    fn updater_pubkey_normalization_returns_tauri_pub_file_value() {
         let pubkey = "RWS19HRXxKw1q5/L9ZWqd5uQUpzxp8rDovvj1gMDY7gvZqhaBWrhAeVv";
-        let pub_file = format!(
-            "untrusted comment: minisign public key: AB35ACC45774F4B5\n{pubkey}\n"
-        );
+        let pub_file =
+            format!("untrusted comment: minisign public key: AB35ACC45774F4B5\n{pubkey}\n");
         let encoded_pub_file = general_purpose::STANDARD.encode(pub_file.as_bytes());
 
-        assert_eq!(normalize_updater_pubkey(pubkey).as_deref(), Some(pubkey));
-        assert_eq!(normalize_updater_pubkey(&pub_file).as_deref(), Some(pubkey));
+        assert_eq!(
+            normalize_updater_pubkey(pubkey).as_deref(),
+            Some(encoded_pub_file.as_str())
+        );
+        assert_eq!(
+            normalize_updater_pubkey(&pub_file).as_deref(),
+            Some(encoded_pub_file.as_str())
+        );
         assert_eq!(
             normalize_updater_pubkey(&encoded_pub_file).as_deref(),
-            Some(pubkey)
+            Some(encoded_pub_file.as_str())
         );
     }
 
@@ -6186,7 +6225,8 @@ mod tests {
             CloseButtonBehavior::Ask
         ));
         assert_eq!(
-            serde_json::to_string(&CloseButtonBehavior::MinimizeToTray).expect("serialize behavior"),
+            serde_json::to_string(&CloseButtonBehavior::MinimizeToTray)
+                .expect("serialize behavior"),
             "\"minimize-to-tray\""
         );
     }
