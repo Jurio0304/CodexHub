@@ -1,7 +1,7 @@
 # CodexHub Stable Updater Foundation
 
-Date: 2026-07-03
-Version baseline: v0.2.2
+Date: 2026-07-04
+Version baseline: v0.2.3
 
 This document records the internal updater foundation. Public user-facing install instructions stay in `README.md`.
 
@@ -12,7 +12,7 @@ This document records the internal updater foundation. Public user-facing instal
 - The Rust backend initializes `tauri-plugin-updater` and exposes `get_app_update_status`, `check_stable_update`, and `install_stable_update`.
 - Settings shows a compact `Version info` table below Local keys with software name, current version, install time, latest version, and last update-check time.
 - The check button is available on `stable` builds. If the feed or public key is absent, the backend returns `pending-configuration` instead of pretending a real update check ran.
-- After a check attempt, Settings must not display the latest-version cell as `Not checked` / `未检查` for an updater error. It should show the failed state and keep the backend message available so feed, signature, or network failures can be diagnosed.
+- Every check attempt records a `Check app update` task run. After an updater error, Settings must not display the latest-version cell as `Not checked` / `未检查`; it should show the failed state, open a log dialog with the failure evidence, and keep the same run reviewable from Tasks.
 - The install button is disabled unless the latest stable check returns `available`; it uses Tauri signature verification before launching the Windows installer.
 - Channel, feed, and signing state remain backend status fields used for status and install gating; they are not exposed as noisy end-user rows in the compact Settings card.
 - Windows signed updater publishing uses `.github/workflows/build-windows-release.yml`, `src-tauri/tauri.updater.conf.json`, `scripts/create-updater-tauri-config.mjs`, and `scripts/create-windows-updater-feed.mjs`.
@@ -53,4 +53,4 @@ The Windows and macOS release workflows only upload updater assets to an existin
 
 `dev` does not use automatic updates because it represents local development, previews, and acceptance artifacts that should never become a public update source.
 
-Portable packaging remains manual/local for now. The v0.2.2 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package. The macOS public artifact is unsigned/ad-hoc and documented only in README, docs, and Release notes; the app UI must not display unsigned or notarization warnings.
+Portable packaging remains manual/local for now. The v0.2.3 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package. The macOS public artifact is unsigned/ad-hoc and documented only in README, docs, and Release notes; the app UI must not display unsigned or notarization warnings.

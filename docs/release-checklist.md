@@ -1,7 +1,7 @@
 # CodexHub Release Checklist
 
-Date: 2026-07-02
-Version baseline: v0.2.2
+Date: 2026-07-04
+Version baseline: v0.2.3
 
 Use this checklist before any public `stable` release. The checklist is a gate for local validation and owner acceptance only; it does not upload, tag, push, or create a GitHub Release.
 
@@ -62,6 +62,7 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 - The summary lists the stable executable or installer, updater feed, and `SHA256SUMS.txt` artifact paths.
 - If stable updater publication is enabled, the build environment injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; `TAURI_SIGNING_PRIVATE_KEY` is supplied only as a GitHub Actions secret or trusted local environment value.
 - If stable updater publication is not enabled, Settings Check may be clicked but must report pending configuration; the Update action must remain disabled rather than pretending updates are available or installable.
+- Failed Settings update checks open a log dialog and record a `Check app update` run that can be reopened from Tasks.
 - `pnpm audit:public` passes and reports no secrets, private hosts, local app state, personal IDs, local home paths, workstation names, or build-output leaks.
 - If a portable package is explicitly published in a future release, it must contain only `CodexHub.exe`, user-facing docs, license, and security notes, and it must not contain dev-only docs, release checklists, local app state, SSH config, known hosts, private keys, `.env*`, logs, databases, `dist/`, `src-tauri/target/`, or installer cache.
 - `scripts/check-release-exe.ps1` starts the release executable with temporary app data and confirms it stays running through the startup window.
@@ -80,11 +81,11 @@ The updater foundation is stable-only. Windows signed updater assets are built b
 - The Windows and macOS workflows upload updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
 - The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
 - Signing private keys and passwords are supplied only through the trusted release environment.
-- Portable packaging remains manual/local for now; v0.2.2 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
+- Portable packaging remains manual/local for now; v0.2.3 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
 
 ## macOS Release Artifact
 
-The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.2.2 public GitHub Release includes unsigned Apple Silicon macOS assets:
+The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.2.3 public GitHub Release includes unsigned Apple Silicon macOS assets:
 
 ```text
 .github/workflows/build-macos-release.yml
@@ -111,5 +112,5 @@ The owner must test at least:
 - Remote Codex install/update status and redacted task logs.
 - Profile create/edit/import, API env-var selection, preview apply, and apply result.
 - Skill import/download, target preview, install/uninstall, and task evidence.
-- Settings Version info table placement below Local keys, date-time formatting, stable check behavior, and gated update install behavior.
+- Settings Version info table placement below Local keys, date-time formatting, stable check behavior, failure log dialog, Tasks replay, and gated update install behavior.
 - Codex App fallback instructions for `Settings > Codex > Connections`.

@@ -62,7 +62,7 @@ export const fallbackHealth: Health = {
 export const fallbackAppUpdateStatus: AppUpdateStatus = {
   softwareName: "CodexHub Dev",
   channel: "dev",
-  currentVersion: "0.2.2",
+  currentVersion: "0.2.3",
   installedAt: null,
   state: "disabled",
   configured: false,
@@ -1046,7 +1046,7 @@ function mockUpdateLibrarySkillAbout(skillId: string, about: string): SkillPack[
 export const api = {
   getHealth: () => safeInvoke<Health>("app_health", undefined, fallbackHealth),
   getAppUpdateStatus: () => safeInvoke<AppUpdateStatus>("get_app_update_status", undefined, fallbackAppUpdateStatus),
-  checkStableUpdate: () => safeInvoke<AppUpdateStatus>("check_stable_update", undefined, fallbackAppUpdateStatus),
+  checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update"),
   installStableUpdate: () => requiredInvoke<AppUpdateStatus>("install_stable_update"),
   getSettings: () =>
     safeInvoke<AppSettings>("get_settings", undefined, () => loadLocalSettings()).then((settings) => {

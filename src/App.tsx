@@ -453,7 +453,8 @@ const uiCopy = {
         "Install skill": "Install skill",
         "Delete SSH Host": "Delete SSH Host",
         "Delete profile": "Delete profile",
-        "Delete skill": "Delete skill"
+        "Delete skill": "Delete skill",
+        "Check app update": "Check app update"
       }
     },
     settings: {
@@ -480,6 +481,7 @@ const uiCopy = {
       updatedAt: "Updated at",
       notChecked: "Not checked",
       checkFailed: "Check failed",
+      updateCheckFailureHint: "You can review this run later from the ✅ Tasks details page.",
       pendingConfiguration: "Pending setup",
       checkStableUpdate: "Check",
       updateChecking: "Checking...",
@@ -930,7 +932,8 @@ const uiCopy = {
         "Install skill": "安装 Skill",
         "Delete SSH Host": "删除 SSH Host",
         "Delete profile": "删除配置",
-        "Delete skill": "删除 Skill"
+        "Delete skill": "删除 Skill",
+        "Check app update": "检查程序版本"
       }
     },
     settings: {
@@ -957,6 +960,7 @@ const uiCopy = {
       updatedAt: "更新时间",
       notChecked: "未检查",
       checkFailed: "检查失败",
+      updateCheckFailureHint: "你可以稍后在“✅ 任务”详情页回看本次运行的日志。",
       pendingConfiguration: "待配置",
       checkStableUpdate: "检查",
       updateChecking: "检查中...",
@@ -1038,6 +1042,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadLocalSettings());
   const [health, setHealth] = useState<Health>(fallbackHealth);
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus>(fallbackAppUpdateStatus);
+  const [appUpdateFailureTask, setAppUpdateFailureTask] = useState<TaskRun | null>(null);
   const [appUpdateChecking, setAppUpdateChecking] = useState(false);
   const [appUpdateInstalling, setAppUpdateInstalling] = useState(false);
   const [hosts, setHosts] = useState<Host[]>([]);
@@ -1135,6 +1140,12 @@ function App() {
     return latest;
   };
 
+  const refreshTasks = async () => {
+    const nextTasks = normalizeTaskRunsForUi(await api.listTasks());
+    setTasks(nextTasks);
+    return nextTasks;
+  };
+
   const handleCheckStableUpdate = async () => {
     setAppUpdateChecking(true);
     setAppUpdateStatus((current) => ({
@@ -1146,13 +1157,25 @@ function App() {
       const nextStatus = await api.checkStableUpdate();
       setAppUpdateStatus(nextStatus);
       setNotice(nextStatus.message);
+      const nextTasks = await refreshTasks();
+      if (nextStatus.state === "error") {
+        const recordedTask = latestAppUpdateTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus);
+        setAppUpdateFailureTask(recordedTask);
+        if (!nextTasks.some((task) => task.id === recordedTask.id)) {
+          setTasks((current) => [recordedTask, ...current]);
+        }
+      }
     } catch (error) {
-      setNotice(formatError(error));
+      const message = formatError(error);
+      const task = createLocalAppUpdateTask(message, appUpdateStatus);
+      setNotice(message);
       setAppUpdateStatus((current) => ({
         ...current,
         state: "error",
-        message: formatError(error)
+        message
       }));
+      setTasks((current) => [task, ...current]);
+      setAppUpdateFailureTask(task);
     } finally {
       setAppUpdateChecking(false);
     }
@@ -2083,6 +2106,34 @@ function App() {
             setActiveSection("tasks");
             setCodexOperationModal(null);
           }}
+        />
+      ) : null}
+      {appUpdateFailureTask ? (
+        <TaskLogModal
+          copy={copy}
+          now={Date.now()}
+          task={appUpdateFailureTask}
+          onClose={() => setAppUpdateFailureTask(null)}
+          footer={(
+            <>
+              <p className="mutedText taskLogModalHint">{copy.settings.updateCheckFailureHint}</p>
+              <div className="modalActions">
+                <button
+                  className="secondaryButton"
+                  type="button"
+                  onClick={() => {
+                    setActiveSection("tasks");
+                    setAppUpdateFailureTask(null);
+                  }}
+                >
+                  {copy.codexOperation.viewTasks}
+                </button>
+                <button className="primaryButton" type="button" onClick={() => setAppUpdateFailureTask(null)}>
+                  {copy.codexOperation.close}
+                </button>
+              </div>
+            </>
+          )}
         />
       ) : null}
       {setupGuideOpen ? (
@@ -4932,7 +4983,19 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
   );
 }
 
-function TaskLogModal({ copy, now, task, onClose }: { copy: UICopy; now: number; task: TaskRun; onClose: () => void }) {
+function TaskLogModal({
+  copy,
+  now,
+  task,
+  onClose,
+  footer
+}: {
+  copy: UICopy;
+  now: number;
+  task: TaskRun;
+  onClose: () => void;
+  footer?: ReactNode;
+}) {
   return (
     <div className="modalBackdrop" role="presentation">
       <section className="taskLogModal" role="dialog" aria-modal="true" aria-labelledby="task-log-modal-title">
@@ -4958,7 +5021,7 @@ function TaskLogModal({ copy, now, task, onClose }: { copy: UICopy; now: number;
         </div>
         <div className="logList taskLogModalList">
           {task.logs.length > 0 ? task.logs.map((log) => (
-            <details className="logLine" data-level={log.level} key={log.id}>
+            <details className="logLine" data-level={log.level} key={log.id} open={task.status === "failed"}>
               <summary>
                 <span>{log.timestamp}</span>
                 <strong>{copy.status.log[log.level]}</strong>
@@ -4995,6 +5058,7 @@ function TaskLogModal({ copy, now, task, onClose }: { copy: UICopy; now: number;
             </details>
           )) : <p className="mutedText">{copy.tasks.noLogs}</p>}
         </div>
+        {footer}
       </section>
     </div>
   );
@@ -5285,6 +5349,45 @@ function normalizeTaskRunForUi(task: TaskRun, receivedAt = new Date().toISOStrin
   const endedAt = task.endedAt && isNowTimeLabel(task.endedAt) ? receivedAt : task.endedAt;
   const logs = task.logs.map((log) => (isNowTimeLabel(log.timestamp) ? { ...log, timestamp: receivedAt } : log));
   return { ...task, startedAt, endedAt, logs };
+}
+
+function latestAppUpdateTask(tasks: TaskRun[]) {
+  return tasks.find((task) => task.action === "Check app update") ?? null;
+}
+
+function createLocalAppUpdateTask(message: string, status: AppUpdateStatus): TaskRun {
+  const now = new Date().toISOString();
+  const taskId = `task-app-update-check-local-${Date.now()}`;
+  return {
+    id: taskId,
+    hostId: "local-app",
+    hostName: status.softwareName || "CodexHub",
+    action: "Check app update",
+    status: "failed",
+    startedAt: now,
+    endedAt: now,
+    summary: message,
+    logs: [
+      {
+        id: `${taskId}-log-1`,
+        taskRunId: taskId,
+        level: "error",
+        timestamp: now,
+        message,
+        command: "check_stable_update",
+        stdout: [
+          `softwareName: ${status.softwareName || "CodexHub"}`,
+          `channel: ${status.channel}`,
+          `currentVersion: ${status.currentVersion}`,
+          `latestVersion: ${status.latestVersion ?? "not checked"}`,
+          `state: error`
+        ].join("\n"),
+        stderr: message,
+        exitCode: 1,
+        timedOut: false
+      }
+    ]
+  };
 }
 
 function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus }) {

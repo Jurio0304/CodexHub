@@ -1407,26 +1407,35 @@ fn get_app_update_status(app: AppHandle) -> AppUpdateStatus {
 }
 
 #[tauri::command]
-async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> {
+async fn check_stable_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppUpdateStatus, String> {
+    let status = check_stable_update_status(app).await;
+    record_task(&state, app_update_check_task(&status));
+    Ok(status)
+}
+
+async fn check_stable_update_status(app: AppHandle) -> AppUpdateStatus {
     let channel = current_app_channel(&app);
     let current_version = current_app_version(&app);
     if channel != "stable" {
-        return Ok(app_update_status_for_channel(
+        return app_update_status_for_channel(
             channel,
             current_version,
             Some(AppUpdateState::Disabled),
             None,
-        ));
+        );
     }
 
     let config = stable_updater_config();
     if !stable_updater_configured(&config) {
-        return Ok(app_update_status_for_channel(
+        return app_update_status_for_channel(
             channel,
             current_version,
             Some(AppUpdateState::PendingConfiguration),
             None,
-        ));
+        );
     }
 
     let endpoint = match config
@@ -1436,7 +1445,7 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
     {
         Some(endpoint) => endpoint,
         None => {
-            return Ok(app_update_status(
+            return app_update_status(
                 channel,
                 &current_version,
                 AppUpdateState::Error,
@@ -1444,11 +1453,11 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
                 None,
                 Some(update_checked_at()),
                 "Stable updater endpoint is configured but invalid. Rebuild with a valid HTTPS feed URL.".into(),
-            ));
+            );
         }
     };
     if endpoint.scheme() != "https" {
-        return Ok(app_update_status(
+        return app_update_status(
             channel,
             &current_version,
             AppUpdateState::Error,
@@ -1456,7 +1465,7 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
             None,
             Some(update_checked_at()),
             "Stable updater endpoint must use HTTPS.".into(),
-        ));
+        );
     }
 
     let pubkey = config.pubkey.clone().unwrap_or_default();
@@ -1471,7 +1480,7 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
         }) {
         Ok(updater) => updater,
         Err(error) => {
-            return Ok(app_update_status(
+            return app_update_status(
                 channel,
                 &current_version,
                 AppUpdateState::Error,
@@ -1483,12 +1492,12 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
                     error,
                     "Verify the release feed and public signing key.",
                 ),
-            ));
+            );
         }
     };
 
     match updater.check().await {
-        Ok(Some(update)) => Ok(app_update_status(
+        Ok(Some(update)) => app_update_status(
             channel,
             &current_version,
             AppUpdateState::Available,
@@ -1497,8 +1506,8 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
             Some(update_checked_at()),
             "A signed stable update is available. Use Install update to let Windows apply it."
                 .into(),
-        )),
-        Ok(None) => Ok(app_update_status(
+        ),
+        Ok(None) => app_update_status(
             channel,
             &current_version,
             AppUpdateState::UpToDate,
@@ -1506,8 +1515,8 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
             None,
             Some(update_checked_at()),
             "CodexHub stable is up to date.".into(),
-        )),
-        Err(error) => Ok(app_update_status(
+        ),
+        Err(error) => app_update_status(
             channel,
             &current_version,
             AppUpdateState::Error,
@@ -1519,7 +1528,7 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
                 error,
                 "Verify the configured feed, signatures, and network path.",
             ),
-        )),
+        ),
     }
 }
 
@@ -1813,6 +1822,74 @@ fn app_update_status(
         checked_at,
         state,
         message,
+    }
+}
+
+fn app_update_check_task(status: &AppUpdateStatus) -> TaskRun {
+    let task_id = format!("task-app-update-check-{}", timestamp_millis());
+    let failed = matches!(&status.state, AppUpdateState::Error);
+    let log_level = match &status.state {
+        AppUpdateState::Error => TaskLogLevel::Error,
+        AppUpdateState::Disabled | AppUpdateState::PendingConfiguration => TaskLogLevel::Warn,
+        _ => TaskLogLevel::Info,
+    };
+    let latest_version = status.latest_version.as_deref().unwrap_or("not checked");
+    let checked_at = status.checked_at.as_deref().unwrap_or("not checked");
+    let task_time = status.checked_at.clone().unwrap_or_else(update_checked_at);
+    let details = format!(
+        "softwareName: {}\nchannel: {}\ncurrentVersion: {}\nlatestVersion: {}\nstate: {}\ncheckedAt: {}\nfeedConfigured: {}\nsigningConfigured: {}",
+        status.software_name,
+        status.channel,
+        status.current_version,
+        latest_version,
+        app_update_state_label(&status.state),
+        checked_at,
+        status.feed_configured,
+        status.signing_configured
+    );
+
+    TaskRun {
+        id: task_id.clone(),
+        host_id: "local-app".into(),
+        host_name: status.software_name.clone(),
+        action: "Check app update".into(),
+        status: if failed {
+            TaskStatus::Failed
+        } else {
+            TaskStatus::Success
+        },
+        started_at: task_time.clone(),
+        ended_at: Some(task_time.clone()),
+        summary: status.message.clone(),
+        logs: vec![TaskLog {
+            id: format!("{task_id}-log-1"),
+            task_run_id: task_id,
+            level: log_level,
+            timestamp: task_time,
+            message: status.message.clone(),
+            command: Some("check_stable_update".into()),
+            stdout: Some(details),
+            stderr: if failed {
+                Some(status.message.clone())
+            } else {
+                Some(String::new())
+            },
+            exit_code: Some(if failed { 1 } else { 0 }),
+            duration_ms: None,
+            timed_out: Some(false),
+        }],
+    }
+}
+
+fn app_update_state_label(state: &AppUpdateState) -> &'static str {
+    match state {
+        AppUpdateState::Disabled => "disabled",
+        AppUpdateState::PendingConfiguration => "pending-configuration",
+        AppUpdateState::Ready => "ready",
+        AppUpdateState::UpToDate => "up-to-date",
+        AppUpdateState::Available => "available",
+        AppUpdateState::Installing => "installing",
+        AppUpdateState::Error => "error",
     }
 }
 

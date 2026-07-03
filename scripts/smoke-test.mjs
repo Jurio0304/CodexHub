@@ -65,7 +65,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.2.2") fail("package version should be 0.2.2");
+if (packageJson.version !== "0.2.3") fail("package version should be 0.2.3");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -90,11 +90,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.2.2") fail("stable Tauri version should be 0.2.2");
+if (tauriConfig.version !== "0.2.3") fail("stable Tauri version should be 0.2.3");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.2.2") fail("dev Tauri version should be 0.2.2");
+if (devTauriConfig.version !== "0.2.3") fail("dev Tauri version should be 0.2.3");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -190,7 +190,9 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.2.2_aarch64.dmg"],
+  [readme, "CodexHub_0.2.3_aarch64.dmg"],
+  [readme, "update checks fail"],
+  [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
   [readme, "Windows tray / macOS menu bar status icon"],
   [readme, "MIT"],
@@ -358,6 +360,9 @@ for (const command of [
 }
 for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDATE_ENDPOINT", "CODEXHUB_STABLE_UPDATER_PUBKEY", "tauri_plugin_updater::Builder::new().build()", "UpdaterExt", "stable_updater_configured", "normalize_updater_pubkey", "extract_minisign_public_key"]) {
   if (!rustLib.includes(token)) fail(`missing stable updater backend token: ${token}`);
+}
+for (const token of ["app_update_check_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status))", "Check app update"]) {
+  if (!rustLib.includes(token)) fail(`missing stable updater task token: ${token}`);
 }
 for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)", "updater_error_message"]) {
   if (!rustLib.includes(token)) fail(`missing gated stable updater install token: ${token}`);
@@ -627,7 +632,7 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing close-button UI token: ${token}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked"]) {
+for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "createLocalAppUpdateTask", "footer={("]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
 }
 for (const token of ["function appVersionTone", "function appUpdateLatestVersionLabel", "function appLatestVersionTone", "isCodexVersionBehind(current, latest) ? \"red\" : \"green\"", "status.state === \"error\" && status.checkedAt", "status.state === \"pending-configuration\""]) {
@@ -1065,7 +1070,7 @@ if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay 
 if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
 if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");
 if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
-for (const token of ["TaskLogModal", "taskLogModal", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs"]) {
+for (const token of ["TaskLogModal", "taskLogModal", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\"}"]) {
   if (!app.includes(token)) fail(`missing task-history log modal token: ${token}`);
 }
 for (const token of ["logPanel", "publicKeyBox", "commandGrid", "commands.map((command)"]) {
@@ -1078,6 +1083,9 @@ for (const token of ["copyPublicKeyButton", "data-success={publicKeyCopied}", "c
 const api = read("src/api.ts");
 for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "get_app_update_status", "check_stable_update", "install_stable_update"]) {
   if (!api.includes(token)) fail(`missing stable updater API token: ${token}`);
+}
+if (!api.includes('checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update")')) {
+  fail("Stable update check should expose backend/IPC errors instead of falling back to mock status");
 }
 for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior", "onCloseButtonBehaviorRequested", "close-button-behavior-requested", "requiredInvoke<AppSettings>"]) {
   if (!api.includes(token)) fail(`missing close-button API token: ${token}`);
@@ -1254,7 +1262,7 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
-for (const token of ["appUpdatePanel", "versionInfoTable", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
+for (const token of ["appUpdatePanel", "versionInfoTable", "taskLogModalHint", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
   if (!styles.includes(token)) fail(`missing stable updater Settings style token: ${token}`);
 }
 const versionInfoTableStyle = styles.match(/\.versionInfoTable\s*\{[^}]*\}/)?.[0] ?? "";

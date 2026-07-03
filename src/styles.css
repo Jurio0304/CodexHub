@@ -1511,6 +1511,15 @@ tr:last-child td {
   overflow: auto;
 }
 
+.taskLogModalHint {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  line-height: 1.5;
+}
+
 .detailGrid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
