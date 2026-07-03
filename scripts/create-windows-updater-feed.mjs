@@ -37,7 +37,7 @@ fs.copyFileSync(updaterPath, path.join(outputDir, path.basename(updaterPath)));
 const updaterUrl = `https://github.com/${repo}/releases/download/${normalizedTag}/${updaterName}`;
 const feed = {
   version,
-  notes: `CodexHub ${version} stable Windows update.`,
+  notes: `CodexHub ${version} stable update.`,
   pub_date: new Date().toISOString(),
   platforms: {
     "windows-x86_64": {

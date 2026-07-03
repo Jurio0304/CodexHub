@@ -67,10 +67,12 @@ fs.copyFileSync(dmgPath, path.join(outputDir, dmgName));
 fs.copyFileSync(tarPath, path.join(outputDir, tarName));
 
 const updaterUrl = `https://github.com/${repo}/releases/download/${normalizedTag}/${tarName}`;
+const stableNotes = `CodexHub ${version} stable update.`;
+const existingNotes = typeof existingFeed.notes === "string" ? existingFeed.notes.trim() : "";
 const feed = {
   ...existingFeed,
   version,
-  notes: existingFeed.notes || `CodexHub ${version} stable update.`,
+  notes: existingNotes && !existingNotes.endsWith("stable Windows update.") ? existingNotes : stableNotes,
   pub_date: new Date().toISOString(),
   platforms: {
     ...(existingFeed.platforms ?? {}),
