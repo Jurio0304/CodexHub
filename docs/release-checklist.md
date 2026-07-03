@@ -59,7 +59,7 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 
 - `scripts/validate-release.ps1 -Channel stable -UserTested` completes with zero failures.
 - The owner has manually tested the built app end to end.
-- The summary lists the stable executable, updater feed, and `SHA256SUMS.txt` artifact paths.
+- The summary lists the stable executable or installer, updater feed, and `SHA256SUMS.txt` artifact paths.
 - If stable updater publication is enabled, the build environment injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; `TAURI_SIGNING_PRIVATE_KEY` is supplied only as a GitHub Actions secret or trusted local environment value.
 - If stable updater publication is not enabled, Settings Check may be clicked but must report pending configuration; the Update action must remain disabled rather than pretending updates are available or installable.
 - `pnpm audit:public` passes and reports no secrets, private hosts, local app state, personal IDs, local home paths, workstation names, or build-output leaks.
@@ -76,15 +76,15 @@ The updater foundation is stable-only. Windows signed updater assets are built b
 - The stable feed metadata points only to owner-approved stable artifacts.
 - Feed metadata includes valid Tauri signatures for the Windows stable target.
 - `CODEXHUB_STABLE_UPDATER_PUBKEY` contains the raw Tauri-generated `.pub` base64 value, not decoded minisign text.
-- `latest.json` contains the signed `windows-x86_64` setup exe URL and signature.
-- The Windows workflow uploads updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
+- `latest.json` contains the signed platform URL and signature for each approved stable target, currently `windows-x86_64` and unsigned/ad-hoc `darwin-aarch64`.
+- The Windows and macOS workflows upload updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
 - The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
 - Signing private keys and passwords are supplied only through the trusted release environment.
 - Portable packaging remains manual/local for now; v0.2.1 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
 
 ## macOS Release Artifact
 
-The macOS workflow can build unsigned `.app` and `.dmg` CI artifacts on a GitHub-hosted macOS runner, but macOS artifacts are not part of the v0.2.1 public GitHub Release:
+The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.2.1 public GitHub Release includes unsigned Apple Silicon macOS assets:
 
 ```text
 .github/workflows/build-macos-release.yml
@@ -95,6 +95,7 @@ Before treating the macOS artifact as broadly publishable, verify:
 - `Build macOS Release` completes on `master`.
 - The uploaded CI artifact uses the current package version, for example `codexhub-macos-v<version>-unsigned-release`.
 - The artifact is clearly labeled unsigned until Developer ID signing and notarization are configured.
+- Documentation and GitHub Release notes explain the unsigned/ad-hoc status and manual trust steps when needed; the app UI does not display unsigned or notarization warnings.
 - The real Mac checklist in `docs/macos-support.md` is completed.
 - No Apple signing certificate, private key, notarization password, token, or profile is committed to git.
 

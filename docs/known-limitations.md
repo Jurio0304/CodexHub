@@ -4,7 +4,7 @@ Date: 2026-07-01
 
 ## macOS
 
-macOS release-build support is merged, but the current CI artifact is unsigned unless Apple Developer ID signing and notarization are configured. Real Mac validation remains required before treating macOS behavior as fully verified. macOS artifacts are not part of the v0.2.1 public GitHub Release.
+macOS release-build support is merged, but the current public artifact is unsigned/ad-hoc unless Apple Developer ID signing and notarization are configured. Real Mac validation remains required before treating macOS behavior as fully verified. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
 
 The following items require real macOS test:
 

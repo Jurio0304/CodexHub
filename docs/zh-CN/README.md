@@ -92,9 +92,9 @@ macOS 桌面应用需要：
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- Windows 安装包：下载并运行 Windows x64 setup `.exe`。
-- Windows 便携包：解压 Windows x64 portable `.zip`，然后运行 `CodexHub.exe`。
-- macOS：下载 macOS Apple Silicon `.dmg`；当前 artifact 未签名，可能需要通过 Gatekeeper 手动允许。
+- Windows：下载并运行 `CodexHub_0.2.1_x64-setup.exe`。
+- macOS Apple Silicon：下载 `CodexHub_0.2.1_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。当前 macOS 构建为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
 
 ## ⚡ 快速开始
 

@@ -2,6 +2,16 @@ name: Build macOS Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing GitHub Release tag to use for updater URLs and optional asset upload."
+        required: true
+        default: "v0.2.1"
+      upload_to_release:
+        description: "Upload unsigned macOS assets and merged latest.json to the existing GitHub Release."
+        required: true
+        type: boolean
+        default: false
   push:
     branches:
       - master
@@ -13,6 +23,8 @@ jobs:
   macos-release:
     name: macOS unsigned release
     runs-on: macos-14
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -34,9 +46,20 @@ jobs:
 
       - name: Resolve release metadata
         id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="v$VERSION"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) TAG="v$TAG" ;;
+          esac
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Run smoke checks
         run: pnpm smoke
@@ -50,14 +73,69 @@ jobs:
       - name: Generate macOS icons
         run: pnpm tauri icon src-tauri/icons/icon.png
 
+      - name: Verify macOS updater release configuration
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        env:
+          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$CODEXHUB_STABLE_UPDATE_ENDPOINT" ]; then
+            echo "CODEXHUB_STABLE_UPDATE_ENDPOINT repository variable is required." >&2
+            exit 1
+          fi
+          if [ -z "$CODEXHUB_STABLE_UPDATER_PUBKEY" ]; then
+            echo "CODEXHUB_STABLE_UPDATER_PUBKEY repository variable is required." >&2
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY repository secret is required." >&2
+            exit 1
+          fi
+          case "$CODEXHUB_STABLE_UPDATE_ENDPOINT" in
+            https://*) ;;
+            *)
+              echo "CODEXHUB_STABLE_UPDATE_ENDPOINT must be HTTPS." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Build unsigned macOS release
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.upload_to_release != 'true'
         run: |
           echo "Unsigned/ad-hoc macOS release artifact: Apple Developer ID signing and notarization are not configured in this workflow."
           pnpm build:macos:release
         env:
           APPLE_SIGNING_IDENTITY: "-"
 
+      - name: Build unsigned macOS updater release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        run: |
+          echo "Unsigned/ad-hoc macOS release artifact: Apple Developer ID signing and notarization are not configured in this workflow."
+          pnpm build:macos:updater
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+      - name: Download existing release feed
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          mkdir -p dist-release/existing-release
+          gh release download "$RELEASE_TAG" --pattern latest.json --pattern SHA256SUMS.txt --dir dist-release/existing-release
+
+      - name: Generate merged macOS updater feed
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        run: pnpm release:macos-updater-feed
+        env:
+          CODEXHUB_RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+
       - name: Upload macOS release artifact
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.upload_to_release != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: codexhub-macos-v${{ steps.meta.outputs.version }}-unsigned-release
@@ -65,3 +143,35 @@ jobs:
             src-tauri/target/release/bundle/macos/*.app
             src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
+
+      - name: Upload macOS updater artifact
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codexhub-macos-v${{ steps.meta.outputs.version }}-unsigned-updater-release
+          path: |
+            dist-release/v${{ steps.meta.outputs.version }}/macos-updater/CodexHub_${{ steps.meta.outputs.version }}_aarch64.dmg
+            dist-release/v${{ steps.meta.outputs.version }}/macos-updater/*.app.tar.gz
+            dist-release/v${{ steps.meta.outputs.version }}/macos-updater/latest.json
+            dist-release/v${{ steps.meta.outputs.version }}/macos-updater/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Upload macOS assets to existing GitHub Release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          releaseDir="dist-release/v$VERSION/macos-updater"
+          updaterArchive=$(find "$releaseDir" -maxdepth 1 -name '*.app.tar.gz' -print -quit)
+          if [ -z "$updaterArchive" ]; then
+            echo "Missing macOS updater archive." >&2
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG"
+          gh release upload "$RELEASE_TAG" --clobber \
+            "$releaseDir/CodexHub_${VERSION}_aarch64.dmg#CodexHub $VERSION macOS Apple Silicon DMG unsigned" \
+            "$updaterArchive#CodexHub $VERSION macOS Apple Silicon updater archive unsigned" \
+            "$releaseDir/latest.json#CodexHub $VERSION stable updater feed" \
+            "$releaseDir/SHA256SUMS.txt#CodexHub $VERSION SHA256 checksums"

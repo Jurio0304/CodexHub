@@ -291,7 +291,7 @@ if ($Channel -eq "dev") {
 } else {
   $ManualItems.Add("Owner full manual acceptance must be completed before using -UserTested.") | Out-Null
   if ($SkipPortable) {
-    $ManualItems.Add("Inspect the updater-enabled setup exe, .exe.sig, latest.json, SHA256SUMS.txt, and app startup behavior before publishing.") | Out-Null
+    $ManualItems.Add("Inspect the updater-enabled installer, updater archive when applicable, latest.json, SHA256SUMS.txt, and app startup behavior before publishing.") | Out-Null
   } else {
     $ManualItems.Add("Inspect the portable zip, SHA256SUMS.txt, and app startup behavior before publishing.") | Out-Null
   }

@@ -97,8 +97,9 @@ For the macOS desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run the Windows x64 setup `.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS: download the macOS Apple Silicon `.dmg`; the current artifact is unsigned and may require Gatekeeper approval.
+* Windows: download and run `CodexHub_0.2.1_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.2.1_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
 
 ## ⚡ Quick Start
 
