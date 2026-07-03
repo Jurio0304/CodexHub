@@ -19,7 +19,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.1-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.2-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -61,6 +61,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * Manages local profile templates and applies rendered TOML to remote `~/.codex/config.toml`.
 * Imports local or GitHub skill directories containing `SKILL.md`.
 * Shows task history with redacted stdout/stderr, command status, duration, and failure evidence.
+* Keeps a Windows tray / macOS menu bar status icon. The first window close asks whether future closes exit CodexHub or minimize it to the tray, and the choice can be changed later in Settings.
 * Guides the user to Codex App after CodexHub verifies an SSH alias.
 
 ## 🔐 Safety Boundaries
@@ -97,8 +98,8 @@ For the macOS desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.2.1_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.2.1_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.2.2_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.2.2_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
 
 ## ⚡ Quick Start

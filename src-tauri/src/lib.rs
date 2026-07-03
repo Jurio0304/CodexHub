@@ -1,19 +1,25 @@
 mod platform;
 mod ssh;
 
+use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone};
 use flate2::{write::GzEncoder, Compression};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::env;
+use std::fmt::Display;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tar::Builder as TarBuilder;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{
+    menu::MenuBuilder,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager, State, Window, WindowEvent,
+};
 use tauri_plugin_updater::UpdaterExt;
 use toml::map::Map as TomlMap;
 use toml::Value as TomlValue;
@@ -27,6 +33,11 @@ const STABLE_UPDATER_PUBKEY_ENV: &str = "CODEXHUB_STABLE_UPDATER_PUBKEY";
 const STABLE_IDENTIFIER: &str = "app.codexhub.desktop";
 const DEV_IDENTIFIER: &str = "dev.codexhub.desktop";
 const APP_UPDATE_CHECK_TIMEOUT_SECS: u64 = 30;
+const MAIN_WINDOW_LABEL: &str = "main";
+const CLOSE_BUTTON_BEHAVIOR_REQUESTED_EVENT: &str = "close-button-behavior-requested";
+const TRAY_ID: &str = "codexhub-main-tray";
+const TRAY_MENU_SHOW_ID: &str = "show_codexhub";
+const TRAY_MENU_QUIT_ID: &str = "quit_codexhub";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -760,6 +771,14 @@ enum PlatformAppearance {
     Macos,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum CloseButtonBehavior {
+    Ask,
+    Exit,
+    MinimizeToTray,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -767,6 +786,8 @@ struct AppSettings {
     font_preset: FontPreset,
     #[serde(default = "default_platform_appearance")]
     platform_appearance: PlatformAppearance,
+    #[serde(default = "default_close_button_behavior")]
+    close_button_behavior: CloseButtonBehavior,
     #[serde(default)]
     setup_guide_dismissed: bool,
 }
@@ -777,6 +798,7 @@ impl Default for AppSettings {
             theme: ThemeChoice::System,
             font_preset: FontPreset::English,
             platform_appearance: PlatformAppearance::Auto,
+            close_button_behavior: CloseButtonBehavior::Ask,
             setup_guide_dismissed: false,
         }
     }
@@ -1448,7 +1470,7 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
                 .build()
         }) {
         Ok(updater) => updater,
-        Err(_) => {
+        Err(error) => {
             return Ok(app_update_status(
                 channel,
                 &current_version,
@@ -1456,7 +1478,11 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
                 &config,
                 None,
                 Some(update_checked_at()),
-                "Stable updater could not initialize. Verify the release feed and public signing key.".into(),
+                updater_error_message(
+                    "Stable updater could not initialize",
+                    error,
+                    "Verify the release feed and public signing key.",
+                ),
             ));
         }
     };
@@ -1481,15 +1507,18 @@ async fn check_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> 
             Some(update_checked_at()),
             "CodexHub stable is up to date.".into(),
         )),
-        Err(_) => Ok(app_update_status(
+        Err(error) => Ok(app_update_status(
             channel,
             &current_version,
             AppUpdateState::Error,
             &config,
             None,
             Some(update_checked_at()),
-            "Stable update check failed. Verify the configured feed, signatures, and network path."
-                .into(),
+            updater_error_message(
+                "Stable update check failed",
+                error,
+                "Verify the configured feed, signatures, and network path.",
+            ),
         )),
     }
 }
@@ -1558,7 +1587,7 @@ async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String
                 .build()
         }) {
         Ok(updater) => updater,
-        Err(_) => {
+        Err(error) => {
             return Ok(app_update_status(
                 channel,
                 &current_version,
@@ -1566,7 +1595,11 @@ async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String
                 &config,
                 None,
                 Some(update_checked_at()),
-                "Stable updater could not initialize. Verify the release feed and public signing key.".into(),
+                updater_error_message(
+                    "Stable updater could not initialize",
+                    error,
+                    "Verify the release feed and public signing key.",
+                ),
             ));
         }
     };
@@ -1584,14 +1617,18 @@ async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String
                     Some(update_checked_at()),
                     "Stable update installer started. CodexHub will close while Windows applies the update.".into(),
                 )),
-                Err(_) => Ok(app_update_status(
+                Err(error) => Ok(app_update_status(
                     channel,
                     &current_version,
                     AppUpdateState::Error,
                     &config,
                     Some(latest_version),
                     Some(update_checked_at()),
-                    "Stable update install failed. Verify the signed artifact, feed metadata, and installer path.".into(),
+                    updater_error_message(
+                        "Stable update install failed",
+                        error,
+                        "Verify the signed artifact, feed metadata, and installer path.",
+                    ),
                 )),
             }
         }
@@ -1604,15 +1641,18 @@ async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String
             Some(update_checked_at()),
             "CodexHub stable is up to date.".into(),
         )),
-        Err(_) => Ok(app_update_status(
+        Err(error) => Ok(app_update_status(
             channel,
             &current_version,
             AppUpdateState::Error,
             &config,
             None,
             Some(update_checked_at()),
-            "Stable update check failed. Verify the configured feed, signatures, and network path."
-                .into(),
+            updater_error_message(
+                "Stable update check failed",
+                error,
+                "Verify the configured feed, signatures, and network path.",
+            ),
         )),
     }
 }
@@ -1632,7 +1672,8 @@ fn current_app_version(app: &AppHandle) -> String {
 fn stable_updater_config() -> StableUpdaterConfig {
     StableUpdaterConfig {
         endpoint: non_empty_compile_env(option_env!("CODEXHUB_STABLE_UPDATE_ENDPOINT")),
-        pubkey: non_empty_compile_env(option_env!("CODEXHUB_STABLE_UPDATER_PUBKEY")),
+        pubkey: option_env!("CODEXHUB_STABLE_UPDATER_PUBKEY")
+            .and_then(normalize_updater_pubkey),
     }
 }
 
@@ -1640,6 +1681,41 @@ fn non_empty_compile_env(value: Option<&'static str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_updater_pubkey(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(bytes) = general_purpose::STANDARD.decode(trimmed) {
+        if let Ok(decoded) = String::from_utf8(bytes) {
+            if decoded.contains("minisign public key") {
+                if let Some(pubkey) = extract_minisign_public_key(&decoded) {
+                    return Some(pubkey);
+                }
+            }
+        }
+    }
+    if trimmed.contains("minisign public key") || trimmed.contains('\n') {
+        if let Some(pubkey) = extract_minisign_public_key(trimmed) {
+            return Some(pubkey);
+        }
+    }
+    Some(trimmed.to_string())
+}
+
+fn extract_minisign_public_key(value: &str) -> Option<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            !line.is_empty()
+                && !line.starts_with("untrusted comment")
+                && !line.starts_with("trusted comment")
+                && !line.contains("minisign public key")
+        })
         .map(ToOwned::to_owned)
 }
 
@@ -1730,6 +1806,10 @@ fn app_update_message(channel: &'static str, state: &AppUpdateState) -> String {
     }
 }
 
+fn updater_error_message(prefix: &str, error: impl Display, guidance: &str) -> String {
+    format!("{prefix}: {error}. {guidance}")
+}
+
 fn update_checked_at() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
 }
@@ -1765,6 +1845,24 @@ fn get_settings(app: AppHandle) -> AppSettings {
 #[tauri::command]
 fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
     write_settings(&app, &settings)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn choose_close_button_behavior(
+    app: AppHandle,
+    behavior: CloseButtonBehavior,
+) -> Result<AppSettings, String> {
+    let mut settings = read_settings(&app);
+    settings.close_button_behavior = behavior.clone();
+    write_settings(&app, &settings)?;
+
+    match behavior {
+        CloseButtonBehavior::Ask => {}
+        CloseButtonBehavior::Exit => app.exit(0),
+        CloseButtonBehavior::MinimizeToTray => hide_main_window(&app),
+    }
+
     Ok(settings)
 }
 
@@ -6055,6 +6153,44 @@ mod tests {
             .contains("Dev channel auto-updates are disabled"));
     }
 
+    #[test]
+    fn updater_pubkey_normalization_accepts_public_key_line_and_pub_file() {
+        let pubkey = "RWS19HRXxKw1q5/L9ZWqd5uQUpzxp8rDovvj1gMDY7gvZqhaBWrhAeVv";
+        let pub_file = format!(
+            "untrusted comment: minisign public key: AB35ACC45774F4B5\n{pubkey}\n"
+        );
+        let encoded_pub_file = general_purpose::STANDARD.encode(pub_file.as_bytes());
+
+        assert_eq!(normalize_updater_pubkey(pubkey).as_deref(), Some(pubkey));
+        assert_eq!(normalize_updater_pubkey(&pub_file).as_deref(), Some(pubkey));
+        assert_eq!(
+            normalize_updater_pubkey(&encoded_pub_file).as_deref(),
+            Some(pubkey)
+        );
+    }
+
+    #[test]
+    fn legacy_app_settings_default_close_button_behavior_to_ask() {
+        let settings: AppSettings = serde_json::from_str(
+            r#"{
+                "theme": "system",
+                "fontPreset": "english",
+                "platformAppearance": "auto",
+                "setupGuideDismissed": true
+            }"#,
+        )
+        .expect("legacy app settings deserialize");
+
+        assert!(matches!(
+            settings.close_button_behavior,
+            CloseButtonBehavior::Ask
+        ));
+        assert_eq!(
+            serde_json::to_string(&CloseButtonBehavior::MinimizeToTray).expect("serialize behavior"),
+            "\"minimize-to-tray\""
+        );
+    }
+
     fn empty_state() -> AppState {
         AppState {
             hosts: Mutex::new(Vec::new()),
@@ -7062,6 +7198,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            setup_app_tray(app.handle())?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            handle_window_close_request(window, event);
+        })
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             app_health,
@@ -7070,6 +7213,7 @@ pub fn run() {
             install_stable_update,
             get_settings,
             save_settings,
+            choose_close_button_behavior,
             get_ssh_status,
             generate_ed25519_key,
             list_ssh_config_hosts,
@@ -7116,6 +7260,83 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodexHub");
+}
+
+fn setup_app_tray(app: &AppHandle) -> tauri::Result<()> {
+    let app_name = app_display_name(app);
+    let menu = MenuBuilder::new(app)
+        .text(TRAY_MENU_SHOW_ID, format!("Show {app_name}"))
+        .separator()
+        .text(TRAY_MENU_QUIT_ID, format!("Quit {app_name}"))
+        .build()?;
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .menu(&menu)
+        .tooltip(&app_name)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            TRAY_MENU_SHOW_ID => show_main_window(app),
+            TRAY_MENU_QUIT_ID => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray.build(app)?;
+    Ok(())
+}
+
+fn handle_window_close_request(window: &Window, event: &WindowEvent) {
+    let WindowEvent::CloseRequested { api, .. } = event else {
+        return;
+    };
+    if window.label() != MAIN_WINDOW_LABEL {
+        return;
+    }
+
+    api.prevent_close();
+    let app = window.app_handle();
+    match read_settings(app).close_button_behavior {
+        CloseButtonBehavior::Ask => {
+            let _ = app.emit(CLOSE_BUTTON_BEHAVIOR_REQUESTED_EVENT, ());
+        }
+        CloseButtonBehavior::Exit => app.exit(0),
+        CloseButtonBehavior::MinimizeToTray => {
+            let _ = window.hide();
+        }
+    }
+}
+
+fn app_display_name(app: &AppHandle) -> String {
+    app.get_webview_window(MAIN_WINDOW_LABEL)
+        .and_then(|window| window.title().ok())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| "CodexHub".into())
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn hide_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.hide();
+    }
 }
 
 fn timestamp_millis() -> u128 {
@@ -10711,6 +10932,10 @@ fn default_true() -> bool {
 
 fn default_platform_appearance() -> PlatformAppearance {
     PlatformAppearance::Auto
+}
+
+fn default_close_button_behavior() -> CloseButtonBehavior {
+    CloseButtonBehavior::Ask
 }
 
 fn home_dir() -> Option<PathBuf> {

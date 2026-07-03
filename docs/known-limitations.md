@@ -10,6 +10,7 @@ The following items require real macOS test:
 
 - Launching the `.app` and `.dmg`.
 - Gatekeeper behavior for unsigned/ad-hoc release artifacts.
+- Menu bar/status item restore, close-to-hidden behavior, and `Cmd+Q` true-quit behavior.
 - `~/.ssh/config` writes and backups on a real Mac account.
 - Local Codex CLI detection through Homebrew, `/usr/local/bin`, `~/.local/bin`, and `which codex`.
 - Codex App Settings / Connections / SSH handoff.

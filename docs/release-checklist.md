@@ -1,7 +1,7 @@
 # CodexHub Release Checklist
 
 Date: 2026-07-02
-Version baseline: v0.2.1
+Version baseline: v0.2.2
 
 Use this checklist before any public `stable` release. The checklist is a gate for local validation and owner acceptance only; it does not upload, tag, push, or create a GitHub Release.
 
@@ -75,16 +75,16 @@ The updater foundation is stable-only. Windows signed updater assets are built b
 - `dev` builds do not auto-update and are never referenced by the stable feed.
 - The stable feed metadata points only to owner-approved stable artifacts.
 - Feed metadata includes valid Tauri signatures for the Windows stable target.
-- `CODEXHUB_STABLE_UPDATER_PUBKEY` contains the raw Tauri-generated `.pub` base64 value, not decoded minisign text.
+- `CODEXHUB_STABLE_UPDATER_PUBKEY` is accepted as either the direct Tauri updater public key line or a generated minisign `.pub` file value; release scripts must normalize it before writing `tauri.updater.local.json`.
 - `latest.json` contains the signed platform URL and signature for each approved stable target, currently `windows-x86_64` and unsigned/ad-hoc `darwin-aarch64`.
 - The Windows and macOS workflows upload updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
 - The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
 - Signing private keys and passwords are supplied only through the trusted release environment.
-- Portable packaging remains manual/local for now; v0.2.1 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
+- Portable packaging remains manual/local for now; v0.2.2 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
 
 ## macOS Release Artifact
 
-The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.2.1 public GitHub Release includes unsigned Apple Silicon macOS assets:
+The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.2.2 public GitHub Release includes unsigned Apple Silicon macOS assets:
 
 ```text
 .github/workflows/build-macos-release.yml

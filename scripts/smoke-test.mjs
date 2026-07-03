@@ -65,7 +65,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.2.1") fail("package version should be 0.2.1");
+if (packageJson.version !== "0.2.2") fail("package version should be 0.2.2");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -90,11 +90,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.2.1") fail("stable Tauri version should be 0.2.1");
+if (tauriConfig.version !== "0.2.2") fail("stable Tauri version should be 0.2.2");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.2.1") fail("dev Tauri version should be 0.2.1");
+if (devTauriConfig.version !== "0.2.2") fail("dev Tauri version should be 0.2.2");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -190,9 +190,11 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.2.1_aarch64.dmg"],
+  [readme, "CodexHub_0.2.2_aarch64.dmg"],
   [readme, "Settings > Codex > Connections"],
+  [readme, "Windows tray / macOS menu bar status icon"],
   [readme, "MIT"],
+  [zhReadme, "Windows 托盘 / macOS 菜单栏状态图标"],
   [publicScope, "source-only"],
   [publicScope, "pnpm audit:public"],
   [releaseChecklist, "Live SSH Acceptance"],
@@ -224,6 +226,9 @@ const requiredText = [
   [architecture, "bundle identifier"],
   [architecture, "app.codexhub.desktop"],
   [architecture, "dev.codexhub.desktop"],
+  [architecture, "Desktop Lifecycle"],
+  [architecture, "closeButtonBehavior"],
+  [architecture, "close-button-behavior-requested"],
   [architecture, "Stable Updater Foundation"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
@@ -233,6 +238,7 @@ const requiredText = [
   [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "The optional stored local credential key is never written to remote"],
   [limitations, "CodexHub must not write Codex App private state"],
+  [limitations, "Menu bar/status item restore"],
   [macosSupport, "Requires real macOS test"],
   [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
   [macosSupport, "~/.ssh/config"]
@@ -280,9 +286,10 @@ for (const token of ["APPDATA", "LOCALAPPDATA", "USERPROFILE", "WindowStyle", "R
 }
 
 const cargoToml = read("src-tauri/Cargo.toml");
-for (const token of ["tauri-plugin-updater", "url = \"2\""]) {
+for (const token of ["tauri-plugin-updater", "url = \"2\"", "base64 = \"0.22\""]) {
   if (!cargoToml.includes(token)) fail(`missing updater Cargo dependency token: ${token}`);
 }
+if (!cargoToml.includes("features = [\"tray-icon\"]")) fail("Tauri dependency should enable the tray-icon feature");
 
 const rustLib = read("src-tauri/src/lib.rs");
 const sshRs = read("src-tauri/src/ssh.rs");
@@ -303,6 +310,7 @@ for (const command of [
   "install_stable_update",
   "get_settings",
   "save_settings",
+  "choose_close_button_behavior",
   "get_ssh_status",
   "generate_ed25519_key",
   "list_ssh_config_hosts",
@@ -348,10 +356,10 @@ for (const command of [
 ]) {
   if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
 }
-for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDATE_ENDPOINT", "CODEXHUB_STABLE_UPDATER_PUBKEY", "tauri_plugin_updater::Builder::new().build()", "UpdaterExt", "stable_updater_configured"]) {
+for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDATE_ENDPOINT", "CODEXHUB_STABLE_UPDATER_PUBKEY", "tauri_plugin_updater::Builder::new().build()", "UpdaterExt", "stable_updater_configured", "normalize_updater_pubkey", "extract_minisign_public_key"]) {
   if (!rustLib.includes(token)) fail(`missing stable updater backend token: ${token}`);
 }
-for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)"]) {
+for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)", "updater_error_message"]) {
   if (!rustLib.includes(token)) fail(`missing gated stable updater install token: ${token}`);
 }
 if (rustLib.includes("export_profiles")) fail("Profiles export command should be removed");
@@ -444,6 +452,23 @@ for (const token of ["platform_appearance", "PlatformAppearance", "default_platf
   if (!rustLib.includes(token)) fail(`missing platform appearance backend token: ${token}`);
 }
 for (const token of [
+  "CloseButtonBehavior",
+  "close_button_behavior",
+  "default_close_button_behavior",
+  "CLOSE_BUTTON_BEHAVIOR_REQUESTED_EVENT",
+  "close-button-behavior-requested",
+  "TrayIconBuilder",
+  "TRAY_MENU_SHOW_ID",
+  "TRAY_MENU_QUIT_ID",
+  "TrayIconEvent::Click",
+  "WindowEvent::CloseRequested",
+  "api.prevent_close()",
+  "show_main_window",
+  "hide_main_window"
+]) {
+  if (!rustLib.includes(token)) fail(`missing close-to-tray backend token: ${token}`);
+}
+for (const token of [
   "RuntimePlatform",
   "get_ssh_config_path",
   "get_default_ssh_key_path",
@@ -510,7 +535,8 @@ if (windowsWorkflow.includes(".exe.sig#")) fail("Windows GitHub Release upload m
 for (const token of [
   "CODEXHUB_STABLE_UPDATER_PUBKEY",
   "tauri.updater.local.json",
-  "raw `.pub` base64 content",
+  "normalizePubkey",
+  "extractMinisignPublicKey",
   "config.plugins",
   "pubkey"
 ]) {
@@ -585,16 +611,29 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "Local keys", "本地密钥", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
+for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "🎨 Appearance", "🎨 外观", "🔑 Local keys", "🔑 本地密钥", "🧭 Version info", "🧭 版本信息", "⚙️ Other", "⚙️ 其他", "Program close button behavior", "程序关闭按钮行为", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog", "Ask next time", "Exit app", "Minimize to tray", "关闭按钮", "下次询问", "退出程序", "最小化到托盘"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appLatestVersionTone(appUpdateStatus.latestVersion)", "appUpdateStatus.latestVersion ?? copy.settings.notChecked", "appUpdateStatus.checkedAt ?? copy.settings.notChecked"]) {
+for (const token of [
+  "closeButtonPromptOpen",
+  "CloseButtonBehaviorPromptModal",
+  "api.onCloseButtonBehaviorRequested",
+  "api.chooseCloseButtonBehavior",
+  "handleChooseCloseButtonBehavior",
+  "onCloseButtonBehaviorChange",
+  "copy.settings.closeButton",
+  "copy.settings.closeButtonOptions",
+  "copy.closeButtonPrompt"
+]) {
+  if (!app.includes(token)) fail(`missing close-button UI token: ${token}`);
+}
+for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked"]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
 }
-for (const token of ["function appVersionTone", "function appLatestVersionTone", "isCodexVersionBehind(current, latest) ? \"red\" : \"green\"", "parseCodexVersion(latest) ? \"green\" : \"gray\""]) {
+for (const token of ["function appVersionTone", "function appUpdateLatestVersionLabel", "function appLatestVersionTone", "isCodexVersionBehind(current, latest) ? \"red\" : \"green\"", "status.state === \"error\" && status.checkedAt", "status.state === \"pending-configuration\""]) {
   if (!app.includes(token)) fail(`missing app version badge tone token: ${token}`);
 }
-for (const label of ["Version info", "版本信息", "Software", "软件名", "Installed at", "安装时间", "Updated at", "更新时间"]) {
+for (const label of ["Version info", "版本信息", "Software", "软件名", "Installed at", "安装时间", "Updated at", "更新时间", "Check failed", "检查失败", "Pending setup", "待配置"]) {
   if (!app.includes(label)) fail(`missing version info UI label: ${label}`);
 }
 for (const token of ["canInstallStableUpdate", "appUpdateStatus.state === \"available\"", "onInstallStableUpdate", "api.installStableUpdate"]) {
@@ -1040,6 +1079,9 @@ const api = read("src/api.ts");
 for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "get_app_update_status", "check_stable_update", "install_stable_update"]) {
   if (!api.includes(token)) fail(`missing stable updater API token: ${token}`);
 }
+for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior", "onCloseButtonBehaviorRequested", "close-button-behavior-requested", "requiredInvoke<AppSettings>"]) {
+  if (!api.includes(token)) fail(`missing close-button API token: ${token}`);
+}
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
@@ -1197,6 +1239,15 @@ for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
 }
 for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
   if (!settings.includes(token)) fail(`missing settings token: ${token}`);
+}
+for (const token of [
+  "CloseButtonBehavior",
+  "closeButtonBehavior",
+  "closeButtonBehavior: \"ask\"",
+  "closeButtonBehaviorValues",
+  "\"minimize-to-tray\""
+]) {
+  if (!settings.includes(token)) fail(`missing close-button settings token: ${token}`);
 }
 for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Optimized", "Cross Platform"]) {
   if (settings.includes(oldFontPreset)) fail(`old font preset should not remain: ${oldFontPreset}`);

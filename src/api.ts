@@ -50,7 +50,7 @@ import {
   getSshDir,
   getPlatform
 } from "./platform";
-import type { AppSettings } from "./settings";
+import type { AppSettings, CloseButtonBehavior } from "./settings";
 import { loadLocalSettings, normalizeSettings, saveLocalSettings } from "./settings";
 
 export const fallbackHealth: Health = {
@@ -62,7 +62,7 @@ export const fallbackHealth: Health = {
 export const fallbackAppUpdateStatus: AppUpdateStatus = {
   softwareName: "CodexHub Dev",
   channel: "dev",
-  currentVersion: "0.2.1",
+  currentVersion: "0.2.2",
   installedAt: null,
   state: "disabled",
   configured: false,
@@ -1062,6 +1062,22 @@ export const api = {
       saveLocalSettings(nextSettings);
       return nextSettings;
     });
+  },
+  chooseCloseButtonBehavior: (behavior: Exclude<CloseButtonBehavior, "ask">) => {
+    const normalized = normalizeSettings({ ...loadLocalSettings(), closeButtonBehavior: behavior });
+    if (!hasTauriRuntime()) {
+      saveLocalSettings(normalized);
+      return Promise.resolve(normalized);
+    }
+    return requiredInvoke<AppSettings>("choose_close_button_behavior", { behavior }).then((saved) => {
+      const nextSettings = normalizeSettings(saved);
+      saveLocalSettings(nextSettings);
+      return nextSettings;
+    });
+  },
+  onCloseButtonBehaviorRequested: async (handler: () => void): Promise<UnlistenFn> => {
+    if (!hasTauriRuntime()) return () => {};
+    return listen("close-button-behavior-requested", () => handler());
   },
   getSshStatus: () => safeInvoke<SshStatus>("get_ssh_status", undefined, () => fallbackSshStatus()),
   generateEd25519Key: () => requiredInvoke<SshKeyGenerationResult>("generate_ed25519_key"),

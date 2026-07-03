@@ -4,11 +4,13 @@ import type { RuntimePlatform } from "./platform";
 export type ThemeChoice = "system" | "light" | "dark";
 export type FontPreset = "english" | "zh-cn";
 export type PlatformAppearance = "auto" | "windows" | "macos";
+export type CloseButtonBehavior = "ask" | "exit" | "minimize-to-tray";
 
 export type AppSettings = {
   theme: ThemeChoice;
   fontPreset: FontPreset;
   platformAppearance: PlatformAppearance;
+  closeButtonBehavior: CloseButtonBehavior;
   setupGuideDismissed: boolean;
 };
 
@@ -24,6 +26,7 @@ export const defaultSettings: AppSettings = {
   theme: "system",
   fontPreset: "english",
   platformAppearance: "auto",
+  closeButtonBehavior: "ask",
   setupGuideDismissed: false
 };
 
@@ -47,6 +50,7 @@ export const fontPresets: Record<FontPreset, FontPresetDefinition> = {
 
 const themeValues: ThemeChoice[] = ["system", "light", "dark"];
 const platformAppearanceValues: PlatformAppearance[] = ["auto", "windows", "macos"];
+const closeButtonBehaviorValues: CloseButtonBehavior[] = ["ask", "exit", "minimize-to-tray"];
 
 function normalizeFontPreset(value: unknown): FontPreset {
   return value === "zh-cn" ? "zh-cn" : "english";
@@ -62,6 +66,9 @@ export function normalizeSettings(value: unknown): AppSettings {
     platformAppearance: platformAppearanceValues.includes(candidate.platformAppearance as PlatformAppearance)
       ? (candidate.platformAppearance as PlatformAppearance)
       : defaultSettings.platformAppearance,
+    closeButtonBehavior: closeButtonBehaviorValues.includes(candidate.closeButtonBehavior as CloseButtonBehavior)
+      ? (candidate.closeButtonBehavior as CloseButtonBehavior)
+      : defaultSettings.closeButtonBehavior,
     setupGuideDismissed: candidate.setupGuideDismissed === true
   };
 }

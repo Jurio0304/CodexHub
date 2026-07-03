@@ -42,7 +42,7 @@ import type {
   TaskStatus
 } from "./models";
 import { applyAppSettings, fontPresets, loadLocalSettings } from "./settings";
-import type { AppSettings, FontPreset, PlatformAppearance, ThemeChoice } from "./settings";
+import type { AppSettings, CloseButtonBehavior, FontPreset, PlatformAppearance, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
 type Locale = "en" | "zh";
@@ -457,7 +457,7 @@ const uiCopy = {
       }
     },
     settings: {
-      appearance: "Appearance",
+      appearance: "🎨 Appearance",
       theme: "Theme",
       platformAppearance: "Platform",
       font: "Font",
@@ -467,16 +467,20 @@ const uiCopy = {
       remoteWrapper: "Remote wrapper",
       sshConfig: "SSH config",
       desktopBackendRequired: "desktop backend required",
-      localSsh: "Local keys",
+      localSsh: "🔑 Local keys",
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
-      appUpdates: "Version info",
+      appUpdates: "🧭 Version info",
+      closeButton: "⚙️ Other",
+      closeButtonBehavior: "Program close button behavior",
       softwareName: "Software",
       currentVersion: "Current version",
       installedAt: "Installed at",
       latestVersion: "Latest version",
       updatedAt: "Updated at",
       notChecked: "Not checked",
+      checkFailed: "Check failed",
+      pendingConfiguration: "Pending setup",
       checkStableUpdate: "Check",
       updateChecking: "Checking...",
       installStableUpdate: "Update",
@@ -507,7 +511,21 @@ const uiCopy = {
         auto: "Auto",
         windows: "Windows",
         macos: "macOS"
+      },
+      closeButtonOptions: {
+        ask: "Ask next time",
+        exit: "Exit app",
+        "minimize-to-tray": "Minimize to tray"
       }
+    },
+    closeButtonPrompt: {
+      title: "What should the close button do?",
+      body: "Choose once and CodexHub will remember it. You can change this later at the bottom of Settings.",
+      exitTitle: "Exit app",
+      exitBody: "Close CodexHub completely.",
+      minimizeTitle: "Minimize to tray",
+      minimizeBody: "Keep CodexHub running in the background and restore it from the tray.",
+      cancel: "Keep open"
     },
     status: {
       host: {
@@ -916,7 +934,7 @@ const uiCopy = {
       }
     },
     settings: {
-      appearance: "外观",
+      appearance: "🎨 外观",
       theme: "主题",
       platformAppearance: "平台",
       font: "字体",
@@ -926,16 +944,20 @@ const uiCopy = {
       remoteWrapper: "远程包装器",
       sshConfig: "SSH 配置",
       desktopBackendRequired: "需要桌面后端",
-      localSsh: "本地密钥",
+      localSsh: "🔑 本地密钥",
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
-      appUpdates: "版本信息",
+      appUpdates: "🧭 版本信息",
+      closeButton: "⚙️ 其他",
+      closeButtonBehavior: "程序关闭按钮行为",
       softwareName: "软件名",
       currentVersion: "当前版本",
       installedAt: "安装时间",
       latestVersion: "最新版本",
       updatedAt: "更新时间",
       notChecked: "未检查",
+      checkFailed: "检查失败",
+      pendingConfiguration: "待配置",
       checkStableUpdate: "检查",
       updateChecking: "检查中...",
       installStableUpdate: "更新",
@@ -966,7 +988,21 @@ const uiCopy = {
         auto: "自动",
         windows: "Windows",
         macos: "macOS"
+      },
+      closeButtonOptions: {
+        ask: "下次询问",
+        exit: "退出程序",
+        "minimize-to-tray": "最小化到托盘"
       }
+    },
+    closeButtonPrompt: {
+      title: "关闭按钮要执行什么操作？",
+      body: "选择后 CodexHub 会记住你的偏好。之后可以在设置页面底部重新修改。",
+      exitTitle: "退出程序",
+      exitBody: "完全关闭 CodexHub。",
+      minimizeTitle: "最小化到托盘",
+      minimizeBody: "让 CodexHub 在后台继续运行，可从托盘恢复窗口。",
+      cancel: "保持打开"
     },
     status: {
       host: {
@@ -1027,6 +1063,8 @@ function App() {
   const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("language");
   const [setupGuideSshConfigHosts, setSetupGuideSshConfigHosts] = useState<SshConfigHost[]>([]);
   const [setupGuideBusy, setSetupGuideBusy] = useState(false);
+  const [closeButtonPromptOpen, setCloseButtonPromptOpen] = useState(false);
+  const [closeButtonPromptBusy, setCloseButtonPromptBusy] = useState(false);
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
@@ -1218,6 +1256,25 @@ function App() {
   useEffect(() => {
     applyAppSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void api.onCloseButtonBehaviorRequested(() => {
+      setCloseButtonPromptOpen(true);
+      setCloseButtonPromptBusy(false);
+    }).then((dispose) => {
+      if (active) {
+        unlisten = dispose;
+        return;
+      }
+      dispose();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     setNotice(copy.notices.default);
@@ -1801,6 +1858,21 @@ function App() {
     void api.saveSettings(nextSettings).then(setSettings);
   };
 
+  const handleChooseCloseButtonBehavior = async (behavior: Exclude<CloseButtonBehavior, "ask">) => {
+    setCloseButtonPromptBusy(true);
+    setCloseButtonPromptOpen(false);
+    try {
+      const nextSettings = await api.chooseCloseButtonBehavior(behavior);
+      setSettings(nextSettings);
+      applyAppSettings(nextSettings);
+    } catch (error) {
+      setCloseButtonPromptOpen(true);
+      setNotice(formatError(error));
+    } finally {
+      setCloseButtonPromptBusy(false);
+    }
+  };
+
   const handleDismissSetupGuide = () => {
     setSetupGuideOpen(false);
     persistSettings({ ...settings, setupGuideDismissed: true });
@@ -1942,6 +2014,7 @@ function App() {
             sshStatus={sshStatus}
             onCheckStableUpdate={handleCheckStableUpdate}
             onInstallStableUpdate={handleInstallStableUpdate}
+            onCloseButtonBehaviorChange={(closeButtonBehavior) => persistSettings({ ...settings, closeButtonBehavior })}
             onCopyPublicKey={handleCopyPublicKey}
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
             onGenerateEd25519Key={handleGenerateEd25519Key}
@@ -2026,6 +2099,54 @@ function App() {
           onSkip={handleDismissSetupGuide}
         />
       ) : null}
+      {closeButtonPromptOpen ? (
+        <CloseButtonBehaviorPromptModal
+          busy={closeButtonPromptBusy}
+          copy={copy}
+          onCancel={() => setCloseButtonPromptOpen(false)}
+          onChoose={handleChooseCloseButtonBehavior}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CloseButtonBehaviorPromptModal({
+  busy,
+  copy,
+  onCancel,
+  onChoose
+}: {
+  busy: boolean;
+  copy: UICopy;
+  onCancel: () => void;
+  onChoose: (behavior: Exclude<CloseButtonBehavior, "ask">) => Promise<void>;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="setupGuideModal" role="dialog" aria-modal="true" aria-labelledby="close-button-prompt-title">
+        <div className="setupGuideHero">
+          <h2 id="close-button-prompt-title">{copy.closeButtonPrompt.title}</h2>
+          <p>{copy.closeButtonPrompt.body}</p>
+        </div>
+
+        <div className="setupGuideLanguage">
+          <button className="setupGuideLanguageOption" disabled={busy} type="button" onClick={() => void onChoose("exit")}>
+            <strong>{copy.closeButtonPrompt.exitTitle}</strong>
+            <span>{copy.closeButtonPrompt.exitBody}</span>
+          </button>
+          <button className="setupGuideLanguageOption" disabled={busy} type="button" onClick={() => void onChoose("minimize-to-tray")}>
+            <strong>{copy.closeButtonPrompt.minimizeTitle}</strong>
+            <span>{copy.closeButtonPrompt.minimizeBody}</span>
+          </button>
+        </div>
+
+        <div className="modalActions setupGuideActions" data-has-hosts="true">
+          <button className="secondaryButton" disabled={busy} type="button" onClick={onCancel}>
+            {copy.closeButtonPrompt.cancel}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -4889,6 +5010,7 @@ function SettingsView({
   sshStatus,
   onCheckStableUpdate,
   onInstallStableUpdate,
+  onCloseButtonBehaviorChange,
   onCopyPublicKey,
   onFontPresetChange,
   onGenerateEd25519Key,
@@ -4905,6 +5027,7 @@ function SettingsView({
   sshStatus: SshStatus | null;
   onCheckStableUpdate: () => Promise<void>;
   onInstallStableUpdate: () => Promise<void>;
+  onCloseButtonBehaviorChange: (behavior: CloseButtonBehavior) => void;
   onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
   onGenerateEd25519Key: () => Promise<void>;
@@ -4918,6 +5041,7 @@ function SettingsView({
   const canCheckStableUpdate = appUpdateStatus.channel === "stable" && !appUpdateBusy;
   const canInstallStableUpdate =
     appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy;
+  const appLatestVersionLabel = appUpdateLatestVersionLabel(appUpdateStatus, copy);
   const [publicKeyCopied, setPublicKeyCopied] = useState(false);
 
   useEffect(() => {
@@ -5032,14 +5156,39 @@ function SettingsView({
                 </td>
                 <td>{appUpdateStatus.installedAt ?? copy.settings.unknown}</td>
                 <td>
-                  <Badge tone={appLatestVersionTone(appUpdateStatus.latestVersion)}>
-                    {appUpdateStatus.latestVersion ?? copy.settings.notChecked}
+                  <Badge tone={appLatestVersionTone(appUpdateStatus)} title={appUpdateStatus.message}>
+                    {appLatestVersionLabel}
                   </Badge>
                 </td>
                 <td>{appUpdateStatus.checkedAt ?? copy.settings.notChecked}</td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <section className="panel spanWide">
+        <div className="panelHeader compact">
+          <div>
+            <h2>{copy.settings.closeButton}</h2>
+          </div>
+        </div>
+        <div className="settingsRows">
+          <div className="settingControlRow">
+            <span>{copy.settings.closeButtonBehavior}</span>
+            <div className="segmentedControl" role="group" aria-label={copy.settings.closeButtonBehavior}>
+              {(["ask", "exit", "minimize-to-tray"] as CloseButtonBehavior[]).map((choice) => (
+                <button
+                  data-active={settings.closeButtonBehavior === choice}
+                  key={choice}
+                  onClick={() => onCloseButtonBehaviorChange(choice)}
+                  type="button"
+                >
+                  {copy.settings.closeButtonOptions[choice]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -5276,8 +5425,18 @@ function appVersionTone(current: string | null | undefined, latest: string | nul
   return isCodexVersionBehind(current, latest) ? "red" : "green";
 }
 
-function appLatestVersionTone(latest: string | null | undefined): BadgeTone {
-  return parseCodexVersion(latest) ? "green" : "gray";
+function appUpdateLatestVersionLabel(status: AppUpdateStatus, copy: UICopy) {
+  if (status.latestVersion) return status.latestVersion;
+  if (status.state === "error" && status.checkedAt) return copy.settings.checkFailed;
+  if (status.state === "pending-configuration") return copy.settings.pendingConfiguration;
+  return copy.settings.notChecked;
+}
+
+function appLatestVersionTone(status: AppUpdateStatus): BadgeTone {
+  if (parseCodexVersion(status.latestVersion)) return "green";
+  if (status.state === "error" && status.checkedAt) return "red";
+  if (status.state === "pending-configuration") return "yellow";
+  return "gray";
 }
 
 function codexVersionTone(current: string | null | undefined, hosts: Host[], latest: string | null | undefined): BadgeTone {
