@@ -1,7 +1,7 @@
 # CodexHub Release Channels
 
 Date: 2026-07-02
-Version baseline: v0.2.0
+Version baseline: v0.2.1
 
 CodexHub uses exactly two release channels: `dev` and `stable`.
 
@@ -73,6 +73,6 @@ Only `stable` may use the Tauri updater. The current foundation wires the update
 
 `dev` must not auto-update from any feed. Dev builds are local source runs, preview packages, or test artifacts only.
 
-`pnpm release:portable` remains available for manual/local packaging, but the v0.2.0 Windows public Release keeps only the signed updater-enabled setup installer. Portable builds do not participate in automatic update feeds unless a separate portable update story is designed and tested.
+`pnpm release:portable` remains available for manual/local packaging, but the v0.2.1 Windows public Release keeps only the signed updater-enabled setup installer. Portable builds do not participate in automatic update feeds unless a separate portable update story is designed and tested.
 
 See [stable updater details](stable-updater.md).

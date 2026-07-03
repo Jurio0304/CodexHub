@@ -6,7 +6,7 @@ on:
       tag:
         description: "Existing GitHub Release tag to use for updater URLs and optional asset upload."
         required: true
-        default: "v0.2.0"
+        default: "v0.2.1"
       upload_to_release:
         description: "Upload Windows updater assets and latest.json to the existing GitHub Release."
         required: true
@@ -115,8 +115,8 @@ jobs:
           name: codexhub-windows-v${{ steps.meta.outputs.version }}-signed-updater-release
           path: |
             dist-release/v${{ steps.meta.outputs.version }}/windows-updater/CodexHub_${{ steps.meta.outputs.version }}_x64-setup.exe
-            dist-release/v${{ steps.meta.outputs.version }}/windows-updater/CodexHub_${{ steps.meta.outputs.version }}_x64-setup.exe.sig
             dist-release/v${{ steps.meta.outputs.version }}/windows-updater/latest.json
+            dist-release/v${{ steps.meta.outputs.version }}/windows-updater/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Upload updater assets to existing GitHub Release
@@ -131,5 +131,5 @@ jobs:
           gh release view "$env:RELEASE_TAG"
           gh release upload "$env:RELEASE_TAG" --clobber `
             "$releaseDir/CodexHub_$($env:VERSION)_x64-setup.exe#CodexHub $env:VERSION Windows x64 Setup" `
-            "$releaseDir/CodexHub_$($env:VERSION)_x64-setup.exe.sig#CodexHub $env:VERSION Windows x64 updater signature" `
-            "$releaseDir/latest.json#CodexHub $env:VERSION stable updater feed"
+            "$releaseDir/latest.json#CodexHub $env:VERSION stable updater feed" `
+            "$releaseDir/SHA256SUMS.txt#CodexHub $env:VERSION SHA256 checksums"

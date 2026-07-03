@@ -1,7 +1,7 @@
 # CodexHub Release Checklist
 
 Date: 2026-07-02
-Version baseline: v0.2.0
+Version baseline: v0.2.1
 
 Use this checklist before any public `stable` release. The checklist is a gate for local validation and owner acceptance only; it does not upload, tag, push, or create a GitHub Release.
 
@@ -59,7 +59,7 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 
 - `scripts/validate-release.ps1 -Channel stable -UserTested` completes with zero failures.
 - The owner has manually tested the built app end to end.
-- The summary lists the stable executable, updater signature/feed assets when enabled, and `SHA256SUMS.txt` artifact paths.
+- The summary lists the stable executable, updater feed, and `SHA256SUMS.txt` artifact paths.
 - If stable updater publication is enabled, the build environment injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; `TAURI_SIGNING_PRIVATE_KEY` is supplied only as a GitHub Actions secret or trusted local environment value.
 - If stable updater publication is not enabled, Settings Check may be clicked but must report pending configuration; the Update action must remain disabled rather than pretending updates are available or installable.
 - `pnpm audit:public` passes and reports no secrets, private hosts, local app state, personal IDs, local home paths, workstation names, or build-output leaks.
@@ -80,11 +80,11 @@ The updater foundation is stable-only. Windows signed updater assets are built b
 - The Windows workflow uploads updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
 - The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
 - Signing private keys and passwords are supplied only through the trusted release environment.
-- Portable packaging remains manual/local for now; v0.2.0 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
+- Portable packaging remains manual/local for now; v0.2.1 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
 
 ## macOS Release Artifact
 
-The macOS workflow builds v0.2.0 `.app` and `.dmg` artifacts on a GitHub-hosted macOS runner:
+The macOS workflow can build unsigned `.app` and `.dmg` CI artifacts on a GitHub-hosted macOS runner, but macOS artifacts are not part of the v0.2.1 public GitHub Release:
 
 ```text
 .github/workflows/build-macos-release.yml
@@ -93,7 +93,7 @@ The macOS workflow builds v0.2.0 `.app` and `.dmg` artifacts on a GitHub-hosted 
 Before treating the macOS artifact as broadly publishable, verify:
 
 - `Build macOS Release` completes on `master`.
-- The uploaded artifact is `codexhub-macos-v0.2.0-unsigned-release`.
+- The uploaded CI artifact uses the current package version, for example `codexhub-macos-v<version>-unsigned-release`.
 - The artifact is clearly labeled unsigned until Developer ID signing and notarization are configured.
 - The real Mac checklist in `docs/macos-support.md` is completed.
 - No Apple signing certificate, private key, notarization password, token, or profile is committed to git.

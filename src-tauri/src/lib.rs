@@ -1684,6 +1684,11 @@ fn app_update_status(
     checked_at: Option<String>,
     message: String,
 ) -> AppUpdateStatus {
+    let latest_version = match state {
+        AppUpdateState::UpToDate => latest_version.or_else(|| Some(current_version.into())),
+        _ => latest_version,
+    };
+
     AppUpdateStatus {
         software_name: app_name_for_channel(channel).into(),
         channel: channel.into(),
@@ -6018,6 +6023,26 @@ mod tests {
         assert!(!status.signing_configured);
         assert!(status.message.contains(STABLE_UPDATE_ENDPOINT_ENV));
         assert!(status.message.contains(STABLE_UPDATER_PUBKEY_ENV));
+    }
+
+    #[test]
+    fn up_to_date_update_status_reports_current_version_as_latest() {
+        let config = StableUpdaterConfig {
+            endpoint: Some("https://example.invalid/latest.json".into()),
+            pubkey: Some("public-key".into()),
+        };
+        let status = app_update_status(
+            "stable",
+            "0.2.0",
+            AppUpdateState::UpToDate,
+            &config,
+            None,
+            Some("2026-07-03 15:05:35".into()),
+            "CodexHub stable is up to date.".into(),
+        );
+
+        assert_eq!(status.latest_version.as_deref(), Some("0.2.0"));
+        assert_eq!(status.checked_at.as_deref(), Some("2026-07-03 15:05:35"));
     }
 
     #[test]

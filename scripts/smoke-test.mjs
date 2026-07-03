@@ -64,7 +64,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.2.0") fail("package version should be 0.2.0");
+if (packageJson.version !== "0.2.1") fail("package version should be 0.2.1");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -86,11 +86,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.2.0") fail("stable Tauri version should be 0.2.0");
+if (tauriConfig.version !== "0.2.1") fail("stable Tauri version should be 0.2.1");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.2.0") fail("dev Tauri version should be 0.2.0");
+if (devTauriConfig.version !== "0.2.1") fail("dev Tauri version should be 0.2.1");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -472,7 +472,7 @@ for (const token of [
   "pnpm typecheck",
   "pnpm build:web",
   "pnpm build:macos:release",
-  "codexhub-macos-v0.2.0-unsigned-release",
+  "codexhub-macos-v${{ steps.meta.outputs.version }}-unsigned-release",
   "APPLE_SIGNING_IDENTITY: \"-\""
 ]) {
   if (!macosWorkflow.includes(token)) fail(`missing macOS workflow token: ${token}`);
@@ -488,12 +488,13 @@ for (const token of [
   "pnpm build:installer:nsis:updater",
   "pnpm release:updater-feed",
   "latest.json",
-  "x64-setup.exe.sig",
+  "SHA256SUMS.txt",
   "upload_to_release == 'true'",
   "gh release upload"
 ]) {
   if (!windowsWorkflow.includes(token)) fail(`missing Windows updater workflow token: ${token}`);
 }
+if (windowsWorkflow.includes(".exe.sig#")) fail("Windows GitHub Release upload must not publish standalone updater signature assets");
 for (const token of [
   "CODEXHUB_STABLE_UPDATER_PUBKEY",
   "tauri.updater.local.json",
@@ -506,6 +507,8 @@ for (const token of [
 for (const token of [
   "CodexHub_${version}_x64-setup.exe",
   "const signaturePath = `${updaterPath}.sig`",
+  "SHA256SUMS.txt",
+  "createHash(\"sha256\")",
   "windows-x86_64",
   "CODEXHUB_RELEASE_TAG",
   "https://github.com/${repo}/releases/download/${normalizedTag}/${updaterName}",
@@ -561,8 +564,11 @@ const app = read("src/App.tsx");
 for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "Local keys", "本地密钥", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appUpdateStatus.latestVersion ?? copy.settings.notChecked", "appUpdateStatus.checkedAt ?? copy.settings.notChecked"]) {
+for (const token of ["appUpdateStatus", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appLatestVersionTone(appUpdateStatus.latestVersion)", "appUpdateStatus.latestVersion ?? copy.settings.notChecked", "appUpdateStatus.checkedAt ?? copy.settings.notChecked"]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
+}
+for (const token of ["function appVersionTone", "function appLatestVersionTone", "isCodexVersionBehind(current, latest) ? \"red\" : \"green\"", "parseCodexVersion(latest) ? \"green\" : \"gray\""]) {
+  if (!app.includes(token)) fail(`missing app version badge tone token: ${token}`);
 }
 for (const label of ["Version info", "版本信息", "Software", "软件名", "Installed at", "安装时间", "Updated at", "更新时间"]) {
   if (!app.includes(label)) fail(`missing version info UI label: ${label}`);

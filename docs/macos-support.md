@@ -1,6 +1,6 @@
 # CodexHub macOS Support
 
-Status: macOS release-build support is merged into `master` for v0.2.0. The current CI artifact is unsigned and still requires real Mac validation before broad public distribution.
+Status: macOS release-build support is merged into `master`. The current CI artifact is unsigned and still requires real Mac validation before broad public distribution. macOS artifacts are not part of the v0.2.1 public GitHub Release.
 
 CodexHub remains conservative: it writes CodexHub-managed SSH blocks to the user's SSH config, avoids Codex App private state, and keeps remote Codex work on the existing SSH/SFTP path. macOS support is buildable and mock-testable from Windows, but GUI behavior, installed app behavior, Gatekeeper, signing, and notarization require a real Mac.
 
@@ -26,12 +26,12 @@ Use the official Codex installer or official Codex CLI installation guidance. Do
 
 The macOS release workflow is `.github/workflows/build-macos-release.yml`.
 
-To download the unsigned v0.2.0 release artifact:
+To download the unsigned macOS CI artifact:
 
 1. Open the GitHub repository Actions tab.
 2. Run or open `Build macOS Release`.
 3. Wait for the `macOS unsigned release` job to finish.
-4. Download the `codexhub-macos-v0.2.0-unsigned-release` artifact.
+4. Download the `codexhub-macos-v<version>-unsigned-release` artifact for the package version being tested.
 5. Extract the artifact on a real Mac and test the `.app` or `.dmg`.
 
 The workflow uploads artifacts only. It does not create a GitHub Release, does not tag a release, and does not notarize the app. The build uses ad-hoc signing (`APPLE_SIGNING_IDENTITY=-`) until Apple Developer ID signing and notarization are configured.

@@ -1,7 +1,7 @@
 # CodexHub Stable Updater Foundation
 
 Date: 2026-07-03
-Version baseline: v0.2.0
+Version baseline: v0.2.1
 
 This document records the internal updater foundation. Public user-facing install instructions stay in `README.md`.
 
@@ -41,7 +41,7 @@ Before enabling a public stable update feed:
 4. Inject only the public key and stable feed URL into the stable build environment.
 5. Run the Windows release workflow or `pnpm build:installer:nsis:updater` with `TAURI_SIGNING_PRIVATE_KEY` supplied by the trusted environment.
 6. Generate `latest.json` with `pnpm release:updater-feed`.
-7. Upload the stable installer artifact, `.exe.sig` signature, and feed metadata to the approved GitHub Release.
+7. Upload only the approved public Windows assets to the GitHub Release: the stable setup installer, `latest.json`, and `SHA256SUMS.txt`. The standalone `.exe.sig` file is not published because its signature value is embedded in `latest.json`.
 8. Verify the Settings stable check reports either `up-to-date` or `available` against the public feed.
 9. For an `available` result, verify the Settings install button downloads the signed artifact, launches the installer, and closes CodexHub for Windows to apply the update.
 
@@ -51,4 +51,4 @@ The Windows release workflow only uploads updater assets to an existing GitHub R
 
 `dev` does not use automatic updates because it represents local development, previews, and acceptance artifacts that should never become a public update source.
 
-Portable packaging remains manual/local for now. The v0.2.0 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package; do not rely on portable builds for automatic install flows until a separate tested portable update story exists.
+Portable packaging remains manual/local for now. The v0.2.1 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package; do not rely on portable builds for automatic install flows until a separate tested portable update story exists.

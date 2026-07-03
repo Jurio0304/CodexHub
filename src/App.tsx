@@ -5025,9 +5025,17 @@ function SettingsView({
             <tbody>
               <tr>
                 <td><strong>{appUpdateStatus.softwareName}</strong></td>
-                <td>{appUpdateStatus.currentVersion}</td>
+                <td>
+                  <Badge tone={appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)}>
+                    {appUpdateStatus.currentVersion}
+                  </Badge>
+                </td>
                 <td>{appUpdateStatus.installedAt ?? copy.settings.unknown}</td>
-                <td>{appUpdateStatus.latestVersion ?? copy.settings.notChecked}</td>
+                <td>
+                  <Badge tone={appLatestVersionTone(appUpdateStatus.latestVersion)}>
+                    {appUpdateStatus.latestVersion ?? copy.settings.notChecked}
+                  </Badge>
+                </td>
                 <td>{appUpdateStatus.checkedAt ?? copy.settings.notChecked}</td>
               </tr>
             </tbody>
@@ -5262,6 +5270,14 @@ function isCodexVersionBehind(current: string | null | undefined, latest: string
   const currentVersion = parseCodexVersion(current);
   const latestVersion = parseCodexVersion(latest);
   return Boolean(currentVersion && latestVersion && compareVersionParts(currentVersion.parts, latestVersion.parts) < 0);
+}
+
+function appVersionTone(current: string | null | undefined, latest: string | null | undefined): BadgeTone {
+  return isCodexVersionBehind(current, latest) ? "red" : "green";
+}
+
+function appLatestVersionTone(latest: string | null | undefined): BadgeTone {
+  return parseCodexVersion(latest) ? "green" : "gray";
 }
 
 function codexVersionTone(current: string | null | undefined, hosts: Host[], latest: string | null | undefined): BadgeTone {

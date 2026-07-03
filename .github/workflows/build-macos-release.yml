@@ -32,6 +32,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Run smoke checks
         run: pnpm smoke
 
@@ -54,7 +60,7 @@ jobs:
       - name: Upload macOS release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: codexhub-macos-v0.2.0-unsigned-release
+          name: codexhub-macos-v${{ steps.meta.outputs.version }}-unsigned-release
           path: |
             src-tauri/target/release/bundle/macos/*.app
             src-tauri/target/release/bundle/dmg/*.dmg
