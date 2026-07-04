@@ -208,7 +208,7 @@ dd {
   background: transparent;
 }
 
-.navItem span:not(.navIcon) {
+.navLabel {
   color: var(--text);
   font-size: 0.98rem;
   font-weight: 650;
@@ -222,6 +222,21 @@ dd {
   place-items: center;
   font-size: 1.1rem;
   line-height: 1;
+}
+
+.navCompletionDot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 18%, transparent);
+}
+
+.navCompletionDot[data-tone="error"] {
+  background: var(--red);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
 }
 
 .navItem:hover,
@@ -1556,12 +1571,32 @@ tr:last-child td {
   gap: 12px;
 }
 
+.dividedSettingsRows {
+  gap: 0;
+}
+
 .settingControlRow,
 .settingSelectRow {
   display: grid;
   grid-template-columns: minmax(96px, 0.8fr) minmax(160px, 1.2fr);
   gap: 14px;
   align-items: center;
+}
+
+.dividedSettingsRows .settingControlRow {
+  position: relative;
+  min-height: 60px;
+  padding: 8px 0;
+}
+
+.dividedSettingsRows .settingControlRow[data-divider="true"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
 }
 
 .settingControlRow span,
@@ -1598,6 +1633,19 @@ tr:last-child td {
 
 .settingControlRow .segmentedControl {
   margin: 0;
+}
+
+.dividedSettingsRows .segmentedControl {
+  height: 44px;
+}
+
+.dividedSettingsRows .segmentedControl button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+  padding: 0 10px;
 }
 
 .appUpdatePanel .panelHeader {
@@ -1665,6 +1713,39 @@ tr:last-child td {
   color: var(--text);
   background: var(--surface-solid);
   box-shadow: var(--shadow-soft);
+}
+
+.pillToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  justify-self: end;
+  width: 52px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 3px;
+  background: rgba(104, 112, 131, 0.24);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.pillToggle[data-enabled="true"] {
+  border-color: color-mix(in srgb, var(--green) 52%, var(--border-strong));
+  background: color-mix(in srgb, var(--green) 72%, var(--surface-solid));
+}
+
+.pillToggleThumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow-soft);
+  transform: translateX(0);
+  transition: transform 160ms ease;
+}
+
+.pillToggle[data-enabled="true"] .pillToggleThumb {
+  transform: translateX(22px);
 }
 
 .commandGrid {

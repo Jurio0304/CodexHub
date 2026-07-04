@@ -19,7 +19,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.3-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.4-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -98,8 +98,8 @@ For the macOS desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.2.3_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.2.3_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.2.4_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.2.4_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 

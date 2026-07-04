@@ -49,6 +49,11 @@ type Locale = "en" | "zh";
 type HostBusyAction = "test" | "bootstrap" | RemoteCodexAction;
 type BadgeTone = "green" | "yellow" | "red" | "blue" | "gray";
 type SetupGuideStep = "language" | "ssh";
+type SectionCompletionTone = "success" | "error";
+type SectionCompletionSignals = Partial<Record<SectionId, SectionCompletionTone>>;
+type SectionOperationOptions<T> = {
+  classify?: (result: T) => SectionCompletionTone | null;
+};
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   hostAlias: string;
@@ -462,6 +467,7 @@ const uiCopy = {
       theme: "Theme",
       platformAppearance: "Platform",
       font: "Font",
+      sidebarCompletionIndicators: "Sidebar visual hints",
       runtime: "Runtime",
       backend: "Backend",
       app: "App",
@@ -941,6 +947,7 @@ const uiCopy = {
       theme: "主题",
       platformAppearance: "平台",
       font: "字体",
+      sidebarCompletionIndicators: "侧边栏视觉提示",
       runtime: "运行时",
       backend: "后端",
       app: "应用",
@@ -1037,6 +1044,19 @@ function visibleSshConfigHostsForHosts(configHosts: SshConfigHost[], appHosts: H
   return configHosts.filter((host) => aliases.has(host.alias.toLowerCase()));
 }
 
+function sectionOperationTone(result: unknown): SectionCompletionTone {
+  if (result && typeof result === "object") {
+    const candidate = result as { ok?: unknown; state?: unknown; status?: unknown; message?: unknown; task?: TaskRun };
+    if (candidate.ok === false || candidate.state === "error" || candidate.status === "failed" || candidate.task?.status === "failed") {
+      return "error";
+    }
+    if (typeof candidate.message === "string" && candidate.message.includes("partial-failure")) {
+      return "error";
+    }
+  }
+  return "success";
+}
+
 function App() {
   const [activeSection, setActiveSection] = useState<SectionId>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(() => loadLocalSettings());
@@ -1070,10 +1090,51 @@ function App() {
   const [setupGuideBusy, setSetupGuideBusy] = useState(false);
   const [closeButtonPromptOpen, setCloseButtonPromptOpen] = useState(false);
   const [closeButtonPromptBusy, setCloseButtonPromptBusy] = useState(false);
+  const [sectionCompletionSignals, setSectionCompletionSignals] = useState<SectionCompletionSignals>({});
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
+  const sidebarCompletionIndicatorsRef = useRef(settings.sidebarCompletionIndicators);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
+
+  useEffect(() => {
+    sidebarCompletionIndicatorsRef.current = settings.sidebarCompletionIndicators;
+    if (!settings.sidebarCompletionIndicators) setSectionCompletionSignals({});
+  }, [settings.sidebarCompletionIndicators]);
+
+  const clearSectionCompletionSignal = useCallback((section: SectionId) => {
+    setSectionCompletionSignals((current) => {
+      if (!current[section]) return current;
+      const next = { ...current };
+      delete next[section];
+      return next;
+    });
+  }, []);
+
+  const markSectionCompletionSignal = useCallback((section: SectionId, tone: SectionCompletionTone) => {
+    if (section === "tasks" || !sidebarCompletionIndicatorsRef.current) return;
+    setSectionCompletionSignals((current) => (current[section] === tone ? current : { ...current, [section]: tone }));
+  }, []);
+
+  const runSectionOperation = useCallback(async <T,>(
+    section: SectionId,
+    action: () => Promise<T>,
+    options: SectionOperationOptions<T> = {}
+  ) => {
+    try {
+      const result = await action();
+      const tone = options.classify ? options.classify(result) : sectionOperationTone(result);
+      if (tone) markSectionCompletionSignal(section, tone);
+      return result;
+    } catch (error) {
+      markSectionCompletionSignal(section, "error");
+      throw error;
+    }
+  }, [markSectionCompletionSignal]);
+
+  const handleContentInteraction = useCallback(() => {
+    clearSectionCompletionSignal(activeSection);
+  }, [activeSection, clearSectionCompletionSignal]);
 
   const refreshSshState = async () => {
     const [nextSshStatus, allSshConfigHosts, nextHosts] = await Promise.all([
@@ -1124,14 +1185,12 @@ function App() {
   };
 
   const handleDetectLocalSshHosts = async () => {
-    try {
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
       const result = await importLocalSshConfig();
       setNotice(copy.hosts.detectedLocalHosts(result.detectedSshConfigHosts.length));
       return result;
-    } catch (error) {
-      setNotice(formatError(error));
-      throw error;
-    }
+    });
   };
 
   const refreshLatestCodex = async (force = false) => {
@@ -1147,62 +1206,72 @@ function App() {
   };
 
   const handleCheckStableUpdate = async () => {
-    setAppUpdateChecking(true);
-    setAppUpdateStatus((current) => ({
-      ...current,
-      state: "checking",
-      message: copy.settings.updateChecking
-    }));
-    try {
-      const nextStatus = await api.checkStableUpdate();
-      setAppUpdateStatus(nextStatus);
-      setNotice(nextStatus.message);
-      const nextTasks = await refreshTasks();
-      if (nextStatus.state === "error") {
-        const recordedTask = latestAppUpdateTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus);
-        setAppUpdateFailureTask(recordedTask);
-        if (!nextTasks.some((task) => task.id === recordedTask.id)) {
-          setTasks((current) => [recordedTask, ...current]);
-        }
-      }
-    } catch (error) {
-      const message = formatError(error);
-      const task = createLocalAppUpdateTask(message, appUpdateStatus);
-      setNotice(message);
+    return runSectionOperation("settings", async () => {
+      setAppUpdateChecking(true);
       setAppUpdateStatus((current) => ({
         ...current,
-        state: "error",
-        message
+        state: "checking",
+        message: copy.settings.updateChecking
       }));
-      setTasks((current) => [task, ...current]);
-      setAppUpdateFailureTask(task);
-    } finally {
-      setAppUpdateChecking(false);
-    }
+      try {
+        const nextStatus = await api.checkStableUpdate();
+        setAppUpdateStatus(nextStatus);
+        setNotice(nextStatus.message);
+        const nextTasks = await refreshTasks();
+        if (nextStatus.state === "error") {
+          const recordedTask = latestAppUpdateTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus);
+          setAppUpdateFailureTask(recordedTask);
+          if (!nextTasks.some((task) => task.id === recordedTask.id)) {
+            setTasks((current) => [recordedTask, ...current]);
+          }
+        }
+        return nextStatus;
+      } catch (error) {
+        const message = formatError(error);
+        const task = createLocalAppUpdateTask(message, appUpdateStatus);
+        const errorStatus = {
+          ...appUpdateStatus,
+          state: "error" as const,
+          message
+        };
+        setNotice(message);
+        setAppUpdateStatus(errorStatus);
+        setTasks((current) => [task, ...current]);
+        setAppUpdateFailureTask(task);
+        return errorStatus;
+      } finally {
+        setAppUpdateChecking(false);
+      }
+    });
   };
 
   const handleInstallStableUpdate = async () => {
-    setAppUpdateInstalling(true);
-    setAppUpdateStatus((current) => ({
-      ...current,
-      state: "installing",
-      message: copy.settings.updateInstalling
-    }));
-    try {
-      const nextStatus = await api.installStableUpdate();
-      setAppUpdateStatus(nextStatus);
-      setNotice(nextStatus.message);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Stable update install failed.";
+    return runSectionOperation("settings", async () => {
+      setAppUpdateInstalling(true);
       setAppUpdateStatus((current) => ({
         ...current,
-        state: "error",
-        message
+        state: "installing",
+        message: copy.settings.updateInstalling
       }));
-      setNotice(message);
-    } finally {
-      setAppUpdateInstalling(false);
-    }
+      try {
+        const nextStatus = await api.installStableUpdate();
+        setAppUpdateStatus(nextStatus);
+        setNotice(nextStatus.message);
+        return nextStatus;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Stable update install failed.";
+        const errorStatus = {
+          ...appUpdateStatus,
+          state: "error" as const,
+          message
+        };
+        setAppUpdateStatus(errorStatus);
+        setNotice(message);
+        return errorStatus;
+      } finally {
+        setAppUpdateInstalling(false);
+      }
+    });
   };
 
   useEffect(() => {
@@ -1325,74 +1394,84 @@ function App() {
     requestId: string,
     onProgress: (event: SshBootstrapProgressEvent) => void
   ): Promise<SshBootstrapResult> => {
-    const hostAlias = draft.alias || draft.hostName;
-    setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
-    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const hostAlias = draft.alias || draft.hostName;
+      setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
+      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
 
-    try {
-      const result = await api.connectSshHost(draft, password, requestId, onProgress);
-      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-      setNotice(result.message);
-      if (!result.ok) {
-        if (result.writeResult.action === "rolled_back") {
-          await refreshSshState();
+      try {
+        const result = await api.connectSshHost(draft, password, requestId, onProgress);
+        setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+        setNotice(result.message);
+        if (!result.ok) {
+          if (result.writeResult.action === "rolled_back") {
+            await refreshSshState();
+          }
+          setHosts((current) =>
+            current.map((host) =>
+              host.hostAlias === result.hostAlias
+                ? {
+                    ...host,
+                    status: "offline",
+                    latencyMs: null
+                  }
+                : host
+            )
+          );
+          return result;
         }
+        await refreshSshState();
         setHosts((current) =>
           current.map((host) =>
             host.hostAlias === result.hostAlias
               ? {
                   ...host,
-                  status: "offline",
-                  latencyMs: null
+                  status: "online",
+                  latencyMs: result.latencyMs,
+                  lastSeen: copy.common.justNow
                 }
               : host
           )
         );
         return result;
+      } finally {
+        setHostBusy((current) => {
+          const next = { ...current };
+          delete next[hostAlias];
+          return next;
+        });
       }
-      await refreshSshState();
-      setHosts((current) =>
-        current.map((host) =>
-          host.hostAlias === result.hostAlias
-            ? {
-                ...host,
-                status: "online",
-                latencyMs: result.latencyMs,
-                lastSeen: copy.common.justNow
-              }
-            : host
-        )
-      );
-      return result;
-    } finally {
-      setHostBusy((current) => {
-        const next = { ...current };
-        delete next[hostAlias];
-        return next;
-      });
-    }
+    });
   };
 
   const handleDeleteSshConfigHost = async (alias: string) => {
-    const result = await api.deleteSshConfigHost(alias);
-    await refreshSshState();
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-    setNotice(result.backupPath ? `${result.message} Backup: ${result.backupPath}` : result.message);
-    return result;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.deleteSshConfigHost(alias);
+      await refreshSshState();
+      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+      setNotice(result.backupPath ? `${result.message} Backup: ${result.backupPath}` : result.message);
+      return result;
+    });
   };
 
   const handleGenerateEd25519Key = async () => {
-    setSshBusy(true);
-    try {
-      const result = await api.generateEd25519Key();
-      setSshStatus(result.status);
-      setNotice(result.message);
-    } catch (error) {
-      setNotice(formatError(error));
-      throw error;
-    } finally {
-      setSshBusy(false);
-    }
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      setSshBusy(true);
+      try {
+        const result = await api.generateEd25519Key();
+        setSshStatus(result.status);
+        setNotice(result.message);
+        return result;
+      } catch (error) {
+        setNotice(formatError(error));
+        throw error;
+      } finally {
+        setSshBusy(false);
+      }
+    });
   };
 
   const handleCopyPublicKey = async (publicKey: string) => {
@@ -1406,86 +1485,101 @@ function App() {
     }
   };
 
-  const handleTestHost = async (idOrAlias: string) => {
-    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
-    const hostAlias = target?.hostAlias ?? idOrAlias;
-    setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
-    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+  const handleTestHost = async (idOrAlias: string, signalSection: SectionId | null = activeSection) => {
+    const run = async () => {
+      const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+      const hostAlias = target?.hostAlias ?? idOrAlias;
+      setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
+      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
 
-    const result = await api.remoteProbeCodex(hostAlias);
-    setHosts((current) =>
-      current.map((host) =>
-        host.hostAlias === result.hostAlias
-          ? {
-              ...host,
-              status: result.sshStatus,
-              os: result.os,
-              arch: result.arch,
-              shell: result.shell,
-              path: result.path,
-              pathHasLocalBin: result.pathHasLocalBin,
-              codexInstalled: result.codexInstalled,
-              codexVersion: result.codexVersion,
-              configExists: result.configExists,
-              apiConfigName: result.apiConfigName,
-              apiConfigSource: result.apiConfigSource,
-              skillsExists: result.skillsExists,
-              skillsCount: result.skillsCount,
-              latencyMs: result.latencyMs,
-              lastSeen: result.sshStatus === "online" ? copy.common.justNow : host.lastSeen
-            }
-          : host
-      )
-    );
-    const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
-    setHosts(refreshedHosts);
-    setProfiles(refreshedProfiles);
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-    setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
-    setHostBusy((current) => {
-      const next = { ...current };
-      delete next[hostAlias];
-      return next;
-    });
+      try {
+        const result = await api.remoteProbeCodex(hostAlias);
+        setHosts((current) =>
+          current.map((host) =>
+            host.hostAlias === result.hostAlias
+              ? {
+                  ...host,
+                  status: result.sshStatus,
+                  os: result.os,
+                  arch: result.arch,
+                  shell: result.shell,
+                  path: result.path,
+                  pathHasLocalBin: result.pathHasLocalBin,
+                  codexInstalled: result.codexInstalled,
+                  codexVersion: result.codexVersion,
+                  configExists: result.configExists,
+                  apiConfigName: result.apiConfigName,
+                  apiConfigSource: result.apiConfigSource,
+                  skillsExists: result.skillsExists,
+                  skillsCount: result.skillsCount,
+                  latencyMs: result.latencyMs,
+                  lastSeen: result.sshStatus === "online" ? copy.common.justNow : host.lastSeen
+                }
+              : host
+          )
+        );
+        const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
+        setHosts(refreshedHosts);
+        setProfiles(refreshedProfiles);
+        setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+        setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
+        return { ...result, ok: result.sshStatus === "online" };
+      } finally {
+        setHostBusy((current) => {
+          const next = { ...current };
+          delete next[hostAlias];
+          return next;
+        });
+      }
+    };
+
+    return signalSection ? runSectionOperation(signalSection, run) : run();
   };
 
   const handleTestAllSshHosts = async () => {
-    await Promise.all(sshConfigHosts.map((host) => handleTestHost(host.alias)));
-    setNotice(copy.hosts.testedAll);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const results = await Promise.all(sshConfigHosts.map((host) => handleTestHost(host.alias, null)));
+      setNotice(copy.hosts.testedAll);
+      return { ok: results.every((result) => result.ok) };
+    });
   };
 
   const handleBootstrapExistingHost = async (idOrAlias: string, password: string) => {
-    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
-    const hostAlias = target?.hostAlias ?? idOrAlias;
-    setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
-    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+      const hostAlias = target?.hostAlias ?? idOrAlias;
+      setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
+      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
 
-    try {
-      const result = await api.bootstrapExistingSshHost(hostAlias, password);
-      await refreshSshState();
-      setHosts((current) =>
-        current.map((host) =>
-          host.hostAlias === result.hostAlias
-            ? {
-                ...host,
-                status: result.ok ? "online" : "offline",
-                latencyMs: result.latencyMs,
-                lastSeen: result.ok ? copy.common.justNow : host.lastSeen
-              }
-            : host
-        )
-      );
-      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-      setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
-      if (!result.ok) throw new Error(result.message);
-      return result.message;
-    } finally {
-      setHostBusy((current) => {
-        const next = { ...current };
-        delete next[hostAlias];
-        return next;
-      });
-    }
+      try {
+        const result = await api.bootstrapExistingSshHost(hostAlias, password);
+        await refreshSshState();
+        setHosts((current) =>
+          current.map((host) =>
+            host.hostAlias === result.hostAlias
+              ? {
+                  ...host,
+                  status: result.ok ? "online" : "offline",
+                  latencyMs: result.latencyMs,
+                  lastSeen: result.ok ? copy.common.justNow : host.lastSeen
+                }
+              : host
+          )
+        );
+        setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+        setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
+        if (!result.ok) throw new Error(result.message);
+        return result;
+      } finally {
+        setHostBusy((current) => {
+          const next = { ...current };
+          delete next[hostAlias];
+          return next;
+        });
+      }
+    });
   };
 
   const applyRemoteCodexResult = (result: RemoteCodexMaintenanceResult, action: RemoteCodexAction) => {
@@ -1510,106 +1604,115 @@ function App() {
   };
 
   const handleRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
-    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
-    const hostAlias = target?.hostAlias ?? idOrAlias;
-    const hostName = target?.name ?? hostAlias;
-    const showProgressModal = action === "install" || action === "update";
-    const requestId = showProgressModal ? `codex-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
-    setHostBusy((current) => ({ ...current, [hostAlias]: action }));
-    setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
-    if (showProgressModal) {
-      setCodexOperationModal({
-        hostAlias,
-        hostName,
-        action,
-        status: "running",
-        logs: []
-      });
-      await waitForNextFrame();
-    }
-
-    try {
-      const result = await api.remoteManageCodex(hostAlias, action, 120000, requestId, (event) => {
-        setCodexOperationModal((current) => {
-          if (!current || current.hostAlias !== event.hostAlias || current.action !== event.action) return current;
-          return {
-            ...current,
-            message: event.step === "summary" ? event.message : current.message,
-            logs: [...current.logs, event].slice(-80)
-          };
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+      const hostAlias = target?.hostAlias ?? idOrAlias;
+      const hostName = target?.name ?? hostAlias;
+      const showProgressModal = action === "install" || action === "update";
+      const requestId = showProgressModal ? `codex-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
+      setHostBusy((current) => ({ ...current, [hostAlias]: action }));
+      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+      if (showProgressModal) {
+        setCodexOperationModal({
+          hostAlias,
+          hostName,
+          action,
+          status: "running",
+          logs: []
         });
-      });
-      applyRemoteCodexResult(result, action);
-      setNotice(`${hostName}: ${result.message}`);
-      void refreshLatestCodex(true);
-      if (showProgressModal) {
-        setCodexOperationModal((current) =>
-          current && current.hostAlias === hostAlias && current.action === action
-            ? {
-                ...current,
-                status: result.ok ? "success" : "failed",
-                task: result.task,
-                message: result.message
-              }
-            : current
-        );
+        await waitForNextFrame();
       }
-    } catch (error) {
-      const errorMessage = formatError(error);
-      setNotice(`${hostName}: ${errorMessage}`);
-      if (showProgressModal) {
-        setCodexOperationModal((current) =>
-          current && current.hostAlias === hostAlias && current.action === action
-            ? {
-                ...current,
-                status: "failed",
-                error: errorMessage
-              }
-            : current
-        );
+
+      try {
+        const result = await api.remoteManageCodex(hostAlias, action, 120000, requestId, (event) => {
+          setCodexOperationModal((current) => {
+            if (!current || current.hostAlias !== event.hostAlias || current.action !== event.action) return current;
+            return {
+              ...current,
+              message: event.step === "summary" ? event.message : current.message,
+              logs: [...current.logs, event].slice(-80)
+            };
+          });
+        });
+        applyRemoteCodexResult(result, action);
+        setNotice(`${hostName}: ${result.message}`);
+        void refreshLatestCodex(true);
+        if (showProgressModal) {
+          setCodexOperationModal((current) =>
+            current && current.hostAlias === hostAlias && current.action === action
+              ? {
+                  ...current,
+                  status: result.ok ? "success" : "failed",
+                  task: result.task,
+                  message: result.message
+                }
+              : current
+          );
+        }
+        return result;
+      } catch (error) {
+        const errorMessage = formatError(error);
+        setNotice(`${hostName}: ${errorMessage}`);
+        if (showProgressModal) {
+          setCodexOperationModal((current) =>
+            current && current.hostAlias === hostAlias && current.action === action
+              ? {
+                  ...current,
+                  status: "failed",
+                  error: errorMessage
+                }
+              : current
+          );
+        }
+        setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "offline" } : host)));
+        return { ok: false, message: errorMessage };
+      } finally {
+        setHostBusy((current) => {
+          const next = { ...current };
+          delete next[hostAlias];
+          return next;
+        });
       }
-      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "offline" } : host)));
-    } finally {
-      setHostBusy((current) => {
-        const next = { ...current };
-        delete next[hostAlias];
-        return next;
-      });
-    }
+    });
   };
 
   const handleUpdateOutdatedCodexHosts = async (aliases: string[]) => {
-    const uniqueAliases = Array.from(new Set(aliases.filter(Boolean)));
-    if (uniqueAliases.length === 0) {
-      setNotice(copy.hosts.noOutdatedCodex);
-      return;
-    }
-    setHostBusy((current) => {
-      const next = { ...current };
-      for (const alias of uniqueAliases) next[alias] = "update";
-      return next;
-    });
-    setHosts((current) => current.map((host) => (uniqueAliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host)));
-    await waitForNextFrame();
-
-    try {
-      const results = await Promise.allSettled(uniqueAliases.map((alias) => api.remoteManageCodex(alias, "update", 120000)));
-      const fulfilled = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-      const rejectedAliases = results.flatMap((result, index) => (result.status === "rejected" ? [uniqueAliases[index]] : []));
-      for (const result of fulfilled) applyRemoteCodexResult(result, "update");
-      if (rejectedAliases.length > 0) {
-        setHosts((current) => current.map((host) => (rejectedAliases.includes(host.hostAlias) ? { ...host, status: "offline" } : host)));
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const uniqueAliases = Array.from(new Set(aliases.filter(Boolean)));
+      if (uniqueAliases.length === 0) {
+        setNotice(copy.hosts.noOutdatedCodex);
+        return { ok: true };
       }
-      const successCount = fulfilled.filter((result) => result.ok).length;
-      setNotice(copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length));
-      void refreshLatestCodex(true);
-    } finally {
       setHostBusy((current) => {
         const next = { ...current };
-        for (const alias of uniqueAliases) delete next[alias];
+        for (const alias of uniqueAliases) next[alias] = "update";
         return next;
       });
-    }
+      setHosts((current) => current.map((host) => (uniqueAliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host)));
+      await waitForNextFrame();
+
+      try {
+        const results = await Promise.allSettled(uniqueAliases.map((alias) => api.remoteManageCodex(alias, "update", 120000)));
+        const fulfilled = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+        const rejectedAliases = results.flatMap((result, index) => (result.status === "rejected" ? [uniqueAliases[index]] : []));
+        for (const result of fulfilled) applyRemoteCodexResult(result, "update");
+        if (rejectedAliases.length > 0) {
+          setHosts((current) => current.map((host) => (rejectedAliases.includes(host.hostAlias) ? { ...host, status: "offline" } : host)));
+        }
+        const successCount = fulfilled.filter((result) => result.ok).length;
+        setNotice(copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length));
+        void refreshLatestCodex(true);
+        return { ok: successCount === uniqueAliases.length };
+      } finally {
+        setHostBusy((current) => {
+          const next = { ...current };
+          for (const alias of uniqueAliases) delete next[alias];
+          return next;
+        });
+      }
+    });
   };
 
   const replaceProfile = (profile: Profile) => {
@@ -1617,45 +1720,60 @@ function App() {
   };
 
   const handleCreateProfile = async (draft: ProfileDraft) => {
-    const profile = await api.createProfile(draft);
-    setProfiles((current) => [...current, profile]);
-    setNotice(`${profile.name}: ${copy.profiles.create}`);
-    return profile;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const profile = await api.createProfile(draft);
+      setProfiles((current) => [...current, profile]);
+      setNotice(`${profile.name}: ${copy.profiles.create}`);
+      return profile;
+    });
   };
 
   const handleUpdateProfile = async (id: string, patch: ProfilePatch) => {
-    const profile = await api.updateProfile(id, patch);
-    replaceProfile(profile);
-    setNotice(`${profile.name}: ${copy.profiles.save}`);
-    return profile;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const profile = await api.updateProfile(id, patch);
+      replaceProfile(profile);
+      setNotice(`${profile.name}: ${copy.profiles.save}`);
+      return profile;
+    });
   };
 
   const handleDeleteProfile = async (id: string) => {
-    const profile = profiles.find((item) => item.id === id);
-    const result = await api.deleteProfile(id);
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-    if (!result.deleted) {
-      setNotice(result.message);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const profile = profiles.find((item) => item.id === id);
+      const result = await api.deleteProfile(id);
+      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+      if (!result.deleted) {
+        setNotice(result.message);
+        return result;
+      }
+      setProfiles((current) => current.filter((item) => item.id !== id));
+      setHosts((current) => current.map((host) => (host.profileId === id ? { ...host, profileId: null, apiConfigName: null, apiConfigSource: null } : host)));
+      setNotice(profile ? `${profile.name}: ${copy.profiles.delete}` : copy.profiles.delete);
       return result;
-    }
-    setProfiles((current) => current.filter((item) => item.id !== id));
-    setHosts((current) => current.map((host) => (host.profileId === id ? { ...host, profileId: null, apiConfigName: null, apiConfigSource: null } : host)));
-    setNotice(profile ? `${profile.name}: ${copy.profiles.delete}` : copy.profiles.delete);
-    return result;
+    });
   };
 
   const handleDuplicateProfile = async (id: string) => {
-    const profile = await api.duplicateProfile(id);
-    setProfiles((current) => [...current, profile]);
-    setNotice(`${profile.name}: ${copy.profiles.duplicate}`);
-    return profile;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const profile = await api.duplicateProfile(id);
+      setProfiles((current) => [...current, profile]);
+      setNotice(`${profile.name}: ${copy.profiles.duplicate}`);
+      return profile;
+    });
   };
 
   const handleImportProfiles = async (bundle: ProfileImportExport) => {
-    const result = await api.importProfiles(bundle);
-    setProfiles((current) => [...current, ...result.profiles]);
-    setNotice(copy.profiles.importReady(result.profiles.length));
-    return result;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.importProfiles(bundle);
+      setProfiles((current) => [...current, ...result.profiles]);
+      setNotice(copy.profiles.importReady(result.profiles.length));
+      return result;
+    });
   };
 
   const refreshSkills = async () => {
@@ -1666,16 +1784,19 @@ function App() {
   };
 
   const handleRefreshSkillLibrary = async () => {
-    const [nextSkills, nextStatus, nextHosts] = await Promise.all([
-      api.listSkillPacks(),
-      api.getSkillInventoryStatus(),
-      api.listHosts()
-    ]);
-    setSkillPacks(nextSkills);
-    setSkillInventoryStatus(nextStatus);
-    setHosts(nextHosts);
-    setNotice(copy.skills.refreshed);
-    return { skills: nextSkills, status: nextStatus, hosts: nextHosts };
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const [nextSkills, nextStatus, nextHosts] = await Promise.all([
+        api.listSkillPacks(),
+        api.getSkillInventoryStatus(),
+        api.listHosts()
+      ]);
+      setSkillPacks(nextSkills);
+      setSkillInventoryStatus(nextStatus);
+      setHosts(nextHosts);
+      setNotice(copy.skills.refreshed);
+      return { skills: nextSkills, status: nextStatus, hosts: nextHosts };
+    });
   };
 
   const applySkillDetectionResult = async (result: SkillDetectionResult) => {
@@ -1710,46 +1831,67 @@ function App() {
   };
 
   const handleDetectInstalledSkills = async (includeHosts: boolean) => {
-    const result = await api.detectInstalledSkills(includeHosts);
-    return applySkillDetectionResult(result);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.detectInstalledSkills(includeHosts);
+      return applySkillDetectionResult(result);
+    });
   };
 
   const handleImportSkillDirectory = async () => {
-    const selected = await open({ directory: true, multiple: false, title: copy.skills.importDirectory });
-    const path = Array.isArray(selected) ? selected[0] : selected;
-    if (!path) return null;
-    const result = await api.importLocalSkill(path);
-    await refreshSkills();
-    setNotice(result.message || copy.skills.imported(result.imported.length));
-    return result;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const selected = await open({ directory: true, multiple: false, title: copy.skills.importDirectory });
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      if (!path) return null;
+      const result = await api.importLocalSkill(path);
+      await refreshSkills();
+      setNotice(result.message || copy.skills.imported(result.imported.length));
+      return result;
+    }, { classify: (result) => (result ? sectionOperationTone(result) : null) });
   };
 
   const handleDownloadGithubSkill = async (repoUrl: string) => {
-    const result = await api.downloadGithubSkill(repoUrl);
-    await refreshSkills();
-    setNotice(result.message || copy.skills.imported(result.imported.length));
-    return result;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.downloadGithubSkill(repoUrl);
+      await refreshSkills();
+      setNotice(result.message || copy.skills.imported(result.imported.length));
+      return result;
+    });
   };
 
   const handleGetSkillTargets = async (skillId: string) => {
-    const result = await api.getSkillTargets(skillId);
-    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
-    return result;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.getSkillTargets(skillId);
+      if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+      return result;
+    });
   };
 
   const handleInstallSkillTargets = async (skillId: string, targets: SkillTargetRequest[]) => {
-    const result = await api.installSkillTargets(skillId, targets);
-    return applySkillOperationResult(result);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.installSkillTargets(skillId, targets);
+      return applySkillOperationResult(result);
+    });
   };
 
   const handleUninstallSkillTargets = async (skillId: string, targets: SkillTargetRequest[]) => {
-    const result = await api.uninstallSkillTargets(skillId, targets);
-    return applySkillOperationResult(result);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.uninstallSkillTargets(skillId, targets);
+      return applySkillOperationResult(result);
+    });
   };
 
   const handleDeleteLibrarySkill = async (skillId: string, uninstallFirst: boolean) => {
-    const result = await api.deleteLibrarySkill(skillId, uninstallFirst);
-    return applySkillOperationResult(result);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.deleteLibrarySkill(skillId, uninstallFirst);
+      return applySkillOperationResult(result);
+    });
   };
 
   const handleUpdateLibrarySkillAbout = async (skillId: string, about: string) => {
@@ -1761,10 +1903,13 @@ function App() {
   };
 
   const handleSetProfileApiKey = async (profileId: string, apiKey: string) => {
-    const profile = await api.setProfileApiKey(profileId, apiKey);
-    replaceProfile(profile);
-    setNotice(`${profile.name}: ${copy.profiles.credentialStored}`);
-    return profile;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const profile = await api.setProfileApiKey(profileId, apiKey);
+      replaceProfile(profile);
+      setNotice(`${profile.name}: ${copy.profiles.credentialStored}`);
+      return profile;
+    });
   };
 
   const handleGetProfileApiKey = useCallback(async (profileId: string) => {
@@ -1783,96 +1928,108 @@ function App() {
     return result;
   }, []);
 
-  const handlePreviewProfileApply = (profileId: string, hostIds: string[]) => api.previewProfileApply(profileId, hostIds);
+  const handlePreviewProfileApply = (profileId: string, hostIds: string[]) => {
+    const section = activeSection;
+    return runSectionOperation(section, () => api.previewProfileApply(profileId, hostIds));
+  };
 
   const handleApplyProfile = async (profileId: string, hostIds: string[]) => {
-    const result = await api.applyProfile(profileId, hostIds);
-    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
-    const profileName =
-      result.profiles.find((profile) => profile.id === profileId)?.name ??
-      profiles.find((profile) => profile.id === profileId)?.name ??
-      profileId;
-    if (result.profiles.length > 0 || result.hosts.length > 0) {
-      if (result.profiles.length > 0) setProfiles(result.profiles);
-      if (result.hosts.length > 0) setHosts(result.hosts);
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.applyProfile(profileId, hostIds);
+      if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+      const profileName =
+        result.profiles.find((profile) => profile.id === profileId)?.name ??
+        profiles.find((profile) => profile.id === profileId)?.name ??
+        profileId;
+      if (result.profiles.length > 0 || result.hosts.length > 0) {
+        if (result.profiles.length > 0) setProfiles(result.profiles);
+        if (result.hosts.length > 0) setHosts(result.hosts);
+        setNotice(`${profileName}: ${copy.profiles.applySelected}`);
+        void refreshLatestCodex(true);
+        return result;
+      }
+      const appliedAt = copy.common.justNow;
+      const normalizeHostKey = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
+      const appliedHostKeys = new Set<string>();
+      const successfulResults = result.results.filter((entry) => entry.status === "success" || entry.status === "no-change");
+      for (const item of successfulResults) {
+        for (const key of [item.hostId, item.hostAlias]) {
+          const normalizedKey = normalizeHostKey(key);
+          if (normalizedKey) appliedHostKeys.add(normalizedKey);
+        }
+      }
+      const appliedHostIds = new Set<string>();
+      for (const host of hosts) {
+        if (appliedHostKeys.has(normalizeHostKey(host.id)) || appliedHostKeys.has(normalizeHostKey(host.hostAlias))) {
+          appliedHostIds.add(host.id);
+        }
+      }
+      for (const item of successfulResults) {
+        const resultKeys = [normalizeHostKey(item.hostId), normalizeHostKey(item.hostAlias)].filter(Boolean);
+        const hasCurrentHostMatch = hosts.some(
+          (host) => resultKeys.includes(normalizeHostKey(host.id)) || resultKeys.includes(normalizeHostKey(host.hostAlias))
+        );
+        if (!hasCurrentHostMatch && item.hostId) {
+          appliedHostIds.add(item.hostId);
+        }
+      }
+      setProfiles((current) =>
+        current.map((profile) => {
+          const hostIdsWithoutApplied = profile.hostIds.filter(
+            (hostId) => !appliedHostIds.has(hostId) && !appliedHostKeys.has(normalizeHostKey(hostId))
+          );
+          if (profile.id !== profileId) {
+            return hostIdsWithoutApplied.length === profile.hostIds.length ? profile : { ...profile, hostIds: hostIdsWithoutApplied };
+          }
+          const nextHostIds = Array.from(new Set([...hostIdsWithoutApplied, ...appliedHostIds]));
+          return nextHostIds.length === profile.hostIds.length && nextHostIds.every((hostId, index) => hostId === profile.hostIds[index])
+            ? profile
+            : { ...profile, hostIds: nextHostIds };
+        })
+      );
+      setHosts((current) =>
+        current.map((host) =>
+          appliedHostIds.has(host.id) ||
+          appliedHostKeys.has(normalizeHostKey(host.id)) ||
+          appliedHostKeys.has(normalizeHostKey(host.hostAlias))
+            ? {
+                ...host,
+                profileId,
+                apiConfigName: profileName,
+                apiConfigSource: "profile",
+                profileAppliedAt: appliedAt,
+                profileAppliedSource: "CodexHub"
+              }
+            : host
+        )
+      );
       setNotice(`${profileName}: ${copy.profiles.applySelected}`);
       void refreshLatestCodex(true);
       return result;
-    }
-    const appliedAt = copy.common.justNow;
-    const normalizeHostKey = (value: string | null | undefined) => value?.trim().toLowerCase() ?? "";
-    const appliedHostKeys = new Set<string>();
-    const successfulResults = result.results.filter((entry) => entry.status === "success" || entry.status === "no-change");
-    for (const item of successfulResults) {
-      for (const key of [item.hostId, item.hostAlias]) {
-        const normalizedKey = normalizeHostKey(key);
-        if (normalizedKey) appliedHostKeys.add(normalizedKey);
-      }
-    }
-    const appliedHostIds = new Set<string>();
-    for (const host of hosts) {
-      if (appliedHostKeys.has(normalizeHostKey(host.id)) || appliedHostKeys.has(normalizeHostKey(host.hostAlias))) {
-        appliedHostIds.add(host.id);
-      }
-    }
-    for (const item of successfulResults) {
-      const resultKeys = [normalizeHostKey(item.hostId), normalizeHostKey(item.hostAlias)].filter(Boolean);
-      const hasCurrentHostMatch = hosts.some(
-        (host) => resultKeys.includes(normalizeHostKey(host.id)) || resultKeys.includes(normalizeHostKey(host.hostAlias))
-      );
-      if (!hasCurrentHostMatch && item.hostId) {
-        appliedHostIds.add(item.hostId);
-      }
-    }
-    setProfiles((current) =>
-      current.map((profile) => {
-        const hostIdsWithoutApplied = profile.hostIds.filter(
-          (hostId) => !appliedHostIds.has(hostId) && !appliedHostKeys.has(normalizeHostKey(hostId))
-        );
-        if (profile.id !== profileId) {
-          return hostIdsWithoutApplied.length === profile.hostIds.length ? profile : { ...profile, hostIds: hostIdsWithoutApplied };
-        }
-        const nextHostIds = Array.from(new Set([...hostIdsWithoutApplied, ...appliedHostIds]));
-        return nextHostIds.length === profile.hostIds.length && nextHostIds.every((hostId, index) => hostId === profile.hostIds[index])
-          ? profile
-          : { ...profile, hostIds: nextHostIds };
-      })
-    );
-    setHosts((current) =>
-      current.map((host) =>
-        appliedHostIds.has(host.id) ||
-        appliedHostKeys.has(normalizeHostKey(host.id)) ||
-        appliedHostKeys.has(normalizeHostKey(host.hostAlias))
-          ? {
-              ...host,
-              profileId,
-              apiConfigName: profileName,
-              apiConfigSource: "profile",
-              profileAppliedAt: appliedAt,
-              profileAppliedSource: "CodexHub"
-            }
-          : host
-      )
-    );
-    setNotice(`${profileName}: ${copy.profiles.applySelected}`);
-    void refreshLatestCodex(true);
-    return result;
+    });
   };
 
   const handleDetectCcSwitchProfiles = async () => {
-    const detection = await api.detectCcSwitchProfiles();
-    setNotice(
-      detection.detected ? copy.profiles.ccSwitchFound(detection.importExport.profiles.length) : copy.profiles.ccSwitchNone
-    );
-    return detection;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const detection = await api.detectCcSwitchProfiles();
+      setNotice(
+        detection.detected ? copy.profiles.ccSwitchFound(detection.importExport.profiles.length) : copy.profiles.ccSwitchNone
+      );
+      return detection;
+    });
   };
 
   const handleImportCcSwitchProfiles = async (detection: CcSwitchDetection) => {
-    const result = await api.importCcSwitchProfiles(detection);
-    const nextProfiles = await api.listProfiles();
-    setProfiles(nextProfiles);
-    setNotice(copy.profiles.importReady(result.profiles.length));
-    return result;
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.importCcSwitchProfiles(detection);
+      const nextProfiles = await api.listProfiles();
+      setProfiles(nextProfiles);
+      setNotice(copy.profiles.importReady(result.profiles.length));
+      return result;
+    });
   };
 
   const persistSettings = (nextSettings: AppSettings) => {
@@ -1902,39 +2059,49 @@ function App() {
   };
 
   const handleSetupGuideLanguageNext = async (fontPreset: FontPreset) => {
-    persistSettings({ ...settings, fontPreset });
-    setSetupGuideStep("ssh");
-    setSetupGuideBusy(true);
-    try {
-      await waitForNextFrame();
-      await refreshSshDetectionState();
-    } finally {
-      setSetupGuideBusy(false);
-    }
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      persistSettings({ ...settings, fontPreset });
+      setSetupGuideStep("ssh");
+      setSetupGuideBusy(true);
+      try {
+        await waitForNextFrame();
+        return await refreshSshDetectionState();
+      } finally {
+        setSetupGuideBusy(false);
+      }
+    });
   };
 
   const handleOpenSetupGuide = async () => {
-    setSetupGuideBusy(true);
-    try {
-      setSetupGuideStep("ssh");
-      setSetupGuideOpen(true);
-      await waitForNextFrame();
-      await refreshSshDetectionState();
-    } finally {
-      setSetupGuideBusy(false);
-    }
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      setSetupGuideBusy(true);
+      try {
+        setSetupGuideStep("ssh");
+        setSetupGuideOpen(true);
+        await waitForNextFrame();
+        return await refreshSshDetectionState();
+      } finally {
+        setSetupGuideBusy(false);
+      }
+    });
   };
 
   const handleImportLocalSshConfig = async () => {
-    setSetupGuideBusy(true);
-    try {
-      const refreshed = await importLocalSshConfig();
-      setSetupGuideOpen(false);
-      persistSettings({ ...settings, setupGuideDismissed: true });
-      setNotice(copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
-    } finally {
-      setSetupGuideBusy(false);
-    }
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      setSetupGuideBusy(true);
+      try {
+        const refreshed = await importLocalSshConfig();
+        setSetupGuideOpen(false);
+        persistSettings({ ...settings, setupGuideDismissed: true });
+        setNotice(copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
+        return refreshed;
+      } finally {
+        setSetupGuideBusy(false);
+      }
+    });
   };
 
   const renderContent = () => {
@@ -2043,8 +2210,9 @@ function App() {
             onGenerateEd25519Key={handleGenerateEd25519Key}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
             onRefreshSsh={async () => {
-              await refreshSshState();
+              await runSectionOperation("settings", refreshSshState);
             }}
+            onSidebarCompletionIndicatorsChange={(sidebarCompletionIndicators) => persistSettings({ ...settings, sidebarCompletionIndicators })}
             onThemeChange={(theme) => persistSettings({ ...settings, theme })}
           />
         );
@@ -2064,12 +2232,25 @@ function App() {
         </div>
 
         <nav className="navList">
-          {copy.navItems.map((item) => (
-            <button className="navItem" data-active={activeSection === item.id} key={item.id} onClick={() => setActiveSection(item.id)} type="button">
-              <span className="navIcon" aria-hidden="true">{item.icon}</span>
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {copy.navItems.map((item) => {
+            const completionTone = sectionCompletionSignals[item.id];
+            return (
+              <button
+                className="navItem"
+                data-active={activeSection === item.id}
+                key={item.id}
+                onClick={() => {
+                  clearSectionCompletionSignal(item.id);
+                  setActiveSection(item.id);
+                }}
+                type="button"
+              >
+                <span className="navIcon" aria-hidden="true">{item.icon}</span>
+                <span className="navLabel">{item.label}</span>
+                {completionTone ? <span className="navCompletionDot" data-tone={completionTone} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="sidebarFooter">
@@ -2080,7 +2261,13 @@ function App() {
         </div>
       </aside>
 
-      <main className="contentShell">
+      <main
+        className="contentShell"
+        onInputCapture={handleContentInteraction}
+        onKeyDownCapture={handleContentInteraction}
+        onPointerDownCapture={handleContentInteraction}
+        onScrollCapture={handleContentInteraction}
+      >
         <header className="topBar">
           <div>
             <h1>{selectedCopy.title}</h1>
@@ -2221,8 +2408,8 @@ function SetupGuideModal({
   sshConfigHosts: SshConfigHost[];
   sshStatus: SshStatus | null;
   onClose: () => void;
-  onImport: () => Promise<void>;
-  onLanguageNext: (fontPreset: FontPreset) => Promise<void>;
+  onImport: () => Promise<unknown>;
+  onLanguageNext: (fontPreset: FontPreset) => Promise<unknown>;
   onSkip: () => void;
 }) {
   const [languageDraft, setLanguageDraft] = useState<FontPreset>(currentFontPreset);
@@ -2498,7 +2685,7 @@ function DashboardView({
   tasks: TaskRun[];
   successfulTaskCount: number;
   onAddServer: () => void;
-  onTestAllSshHosts: () => Promise<void>;
+  onTestAllSshHosts: () => Promise<unknown>;
 }) {
   return (
     <div className="pageGrid">
@@ -2568,7 +2755,7 @@ function ServerMatrix({
   profileById: Map<string, Profile>;
   sshConfigHosts: SshConfigHost[];
   onAddServer: () => void;
-  onTestAllSshHosts: () => Promise<void>;
+  onTestAllSshHosts: () => Promise<unknown>;
 }) {
   const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
   const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
@@ -2680,13 +2867,13 @@ function HostsView({
   onConnectSshHost: (draft: SshHostDraft, password: string, requestId: string, onProgress: (event: SshBootstrapProgressEvent) => void) => Promise<SshBootstrapResult>;
   onDeleteSshConfigHost: (alias: string) => Promise<SshConfigDeleteResult>;
   onDetectLocalSshHosts: () => Promise<unknown>;
-  onGenerateEd25519Key: () => Promise<void>;
+  onGenerateEd25519Key: () => Promise<unknown>;
   onManageCodex: (id: string, action: RemoteCodexAction) => void;
   onOpenAddHost: () => void;
-  onOpenSetupGuide: () => Promise<void>;
-  onTestAllSshHosts: () => Promise<void>;
+  onOpenSetupGuide: () => Promise<unknown>;
+  onTestAllSshHosts: () => Promise<unknown>;
   onTestHost: (id: string) => void;
-  onUpdateOutdatedCodexHosts: (aliases: string[]) => Promise<void>;
+  onUpdateOutdatedCodexHosts: (aliases: string[]) => Promise<unknown>;
 }) {
   const identityFile = sshStatus?.ed25519.privateExists ? sshStatus.ed25519.privatePath : "";
   const hostByAlias = useMemo(
@@ -2889,7 +3076,7 @@ function SshHostModal({
   sshStatus: SshStatus | null;
   onClose: () => void;
   onConnect: (draft: SshHostDraft, password: string, requestId: string, onProgress: (event: SshBootstrapProgressEvent) => void) => Promise<SshBootstrapResult>;
-  onGenerateEd25519Key: () => Promise<void>;
+  onGenerateEd25519Key: () => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState<SshHostDraft>(() => initialDraft ?? emptySshHostDraft(defaultIdentityFile));
   const [password, setPassword] = useState("");
@@ -5080,6 +5267,7 @@ function SettingsView({
   onGenerateEd25519Key,
   onPlatformAppearanceChange,
   onRefreshSsh,
+  onSidebarCompletionIndicatorsChange,
   onThemeChange
 }: {
   appUpdateChecking: boolean;
@@ -5089,14 +5277,15 @@ function SettingsView({
   settings: AppSettings;
   sshBusy: boolean;
   sshStatus: SshStatus | null;
-  onCheckStableUpdate: () => Promise<void>;
-  onInstallStableUpdate: () => Promise<void>;
+  onCheckStableUpdate: () => Promise<unknown>;
+  onInstallStableUpdate: () => Promise<unknown>;
   onCloseButtonBehaviorChange: (behavior: CloseButtonBehavior) => void;
   onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
-  onGenerateEd25519Key: () => Promise<void>;
+  onGenerateEd25519Key: () => Promise<unknown>;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
-  onRefreshSsh: () => Promise<void>;
+  onRefreshSsh: () => Promise<unknown>;
+  onSidebarCompletionIndicatorsChange: (enabled: boolean) => void;
   onThemeChange: (theme: ThemeChoice) => void;
 }) {
   const publicKey = sshStatus?.ed25519.publicKey ?? sshStatus?.rsa.publicKey ?? "";
@@ -5126,8 +5315,8 @@ function SettingsView({
             <h2>{copy.settings.appearance}</h2>
           </div>
         </div>
-        <div className="settingsRows">
-          <div className="settingControlRow">
+        <div className="settingsRows dividedSettingsRows appearanceRows">
+          <div className="settingControlRow" data-divider="true">
             <span>{copy.settings.theme}</span>
             <div className="segmentedControl" role="group" aria-label={copy.settings.theme}>
               {(["system", "light", "dark"] as ThemeChoice[]).map((choice) => (
@@ -5158,6 +5347,21 @@ function SettingsView({
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="settingControlRow" data-divider="true">
+            <span>{copy.settings.sidebarCompletionIndicators}</span>
+            <button
+              className="pillToggle"
+              data-enabled={settings.sidebarCompletionIndicators}
+              role="switch"
+              aria-checked={settings.sidebarCompletionIndicators}
+              aria-label={copy.settings.sidebarCompletionIndicators}
+              type="button"
+              onClick={() => onSidebarCompletionIndicatorsChange(!settings.sidebarCompletionIndicators)}
+            >
+              <span className="pillToggleThumb" aria-hidden="true" />
+            </button>
           </div>
         </div>
       </section>
@@ -5237,8 +5441,8 @@ function SettingsView({
             <h2>{copy.settings.closeButton}</h2>
           </div>
         </div>
-        <div className="settingsRows">
-          <div className="settingControlRow">
+        <div className="settingsRows dividedSettingsRows">
+          <div className="settingControlRow" data-divider="true">
             <span>{copy.settings.closeButtonBehavior}</span>
             <div className="segmentedControl" role="group" aria-label={copy.settings.closeButtonBehavior}>
               {(["ask", "exit", "minimize-to-tray"] as CloseButtonBehavior[]).map((choice) => (

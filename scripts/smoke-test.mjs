@@ -65,7 +65,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.2.3") fail("package version should be 0.2.3");
+if (packageJson.version !== "0.2.4") fail("package version should be 0.2.4");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -90,11 +90,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.2.3") fail("stable Tauri version should be 0.2.3");
+if (tauriConfig.version !== "0.2.4") fail("stable Tauri version should be 0.2.4");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.2.3") fail("dev Tauri version should be 0.2.3");
+if (devTauriConfig.version !== "0.2.4") fail("dev Tauri version should be 0.2.4");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -190,7 +190,7 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.2.3_aarch64.dmg"],
+  [readme, "CodexHub_0.2.4_aarch64.dmg"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
@@ -302,6 +302,9 @@ const windowsWorkflow = read(".github/workflows/build-windows-release.yml");
 const updaterConfigScript = read("scripts/create-updater-tauri-config.mjs");
 const windowsUpdaterFeedScript = read("scripts/create-windows-updater-feed.mjs");
 const macosUpdaterFeedScript = read("scripts/create-macos-updater-feed.mjs");
+for (const token of ["sidebar_completion_indicators", "sidebar_completion_indicators: true", "#[serde(default = \"default_true\")]"]) {
+  if (!rustLib.includes(token)) fail(`missing sidebar completion settings Rust token: ${token}`);
+}
 for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
   if (!rustLib.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
 }
@@ -616,7 +619,7 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Host list", "主机列表", "Local config", "本地配置", "🎨 Appearance", "🎨 外观", "🔑 Local keys", "🔑 本地密钥", "🧭 Version info", "🧭 版本信息", "⚙️ Other", "⚙️ 其他", "Program close button behavior", "程序关闭按钮行为", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog", "Ask next time", "Exit app", "Minimize to tray", "关闭按钮", "下次询问", "退出程序", "最小化到托盘"]) {
+for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Sidebar visual hints", "侧边栏视觉提示", "Host list", "主机列表", "Local config", "本地配置", "🎨 Appearance", "🎨 外观", "🔑 Local keys", "🔑 本地密钥", "🧭 Version info", "🧭 版本信息", "⚙️ Other", "⚙️ 其他", "Program close button behavior", "程序关闭按钮行为", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog", "Ask next time", "Exit app", "Minimize to tray", "关闭按钮", "下次询问", "退出程序", "最小化到托盘"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
 for (const token of [
@@ -652,6 +655,24 @@ if (app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "stab
 }
 for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
   if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
+}
+for (const token of [
+  "SectionCompletionTone",
+  "sectionCompletionSignals",
+  "sidebarCompletionIndicatorsRef",
+  "runSectionOperation",
+  "markSectionCompletionSignal",
+  "clearSectionCompletionSignal(item.id)",
+  "className=\"navCompletionDot\"",
+  "data-tone={completionTone}",
+  "onPointerDownCapture={handleContentInteraction}",
+  "onScrollCapture={handleContentInteraction}",
+  "copy.settings.sidebarCompletionIndicators",
+  "className=\"pillToggle\"",
+  "role=\"switch\"",
+  "onSidebarCompletionIndicatorsChange"
+]) {
+  if (!app.includes(token)) fail(`missing sidebar completion indicator UI token: ${token}`);
 }
 for (const token of [
   "SetupGuideModal",
@@ -1245,7 +1266,7 @@ const settings = read("src/settings.ts");
 for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
   if (!settings.includes(fontPreset)) fail(`missing font preset: ${fontPreset}`);
 }
-for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
+for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
   if (!settings.includes(token)) fail(`missing settings token: ${token}`);
 }
 for (const token of [
@@ -1282,7 +1303,33 @@ for (const removedToken of ["localCodexStatus", "localCodexBusy", "onRefreshLoca
 }
 if (app.includes("<select value={settings.fontPreset}")) fail("font setting should use the same segmented module style as theme");
 if (!styles.includes('.segmentedControl[data-options="2"]')) fail("missing two-option segmented control style");
-for (const token of ["navIcon", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
+if (!app.includes('className="settingsRows dividedSettingsRows appearanceRows"')) fail("missing divided appearance settings row group");
+const appearanceDividerCount = (app.match(/data-divider="true"/g) ?? []).length;
+if (appearanceDividerCount < 3) fail("settings cards should mark theme, sidebar hint, and close behavior rows with dividers");
+if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.theme}<\/span>/.test(app)) {
+  fail("appearance card should place the first divider above the theme row");
+}
+if (/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.platformAppearance}<\/span>/.test(app)) {
+  fail("appearance card should not place the first divider above the platform row");
+}
+if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.sidebarCompletionIndicators}<\/span>/.test(app)) {
+  fail("appearance card should place a divider above the sidebar visual hints row");
+}
+if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.closeButtonBehavior}<\/span>/.test(app)) {
+  fail("other settings card should place a divider above the close button behavior row");
+}
+for (const token of [
+  ".dividedSettingsRows",
+  '.dividedSettingsRows .settingControlRow[data-divider="true"]::before',
+  "min-height: 60px",
+  "padding: 8px 0",
+  ".dividedSettingsRows .segmentedControl",
+  "height: 44px",
+  ".dividedSettingsRows .segmentedControl button"
+]) {
+  if (!styles.includes(token)) fail(`missing appearance row alignment style token: ${token}`);
+}
+for (const token of ["navIcon", "navLabel", "navCompletionDot", "navCompletionDot[data-tone=\"error\"]", "pillToggle", "pillToggleThumb", "translateX(22px)", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
   if (!styles.includes(token)) fail(`missing dashboard home polish style token: ${token}`);
 }
 for (const token of ["setupGuideModal", "setupGuideLanguage", "setupGuideLanguageOption", "setupGuideHostList", "setupGuideHostHeader", "setupGuideActions", "emptyListState", "emptyListIcon", "emptyListActions"]) {

@@ -11,6 +11,7 @@ export type AppSettings = {
   fontPreset: FontPreset;
   platformAppearance: PlatformAppearance;
   closeButtonBehavior: CloseButtonBehavior;
+  sidebarCompletionIndicators: boolean;
   setupGuideDismissed: boolean;
 };
 
@@ -27,6 +28,7 @@ export const defaultSettings: AppSettings = {
   fontPreset: "english",
   platformAppearance: "auto",
   closeButtonBehavior: "ask",
+  sidebarCompletionIndicators: true,
   setupGuideDismissed: false
 };
 
@@ -69,6 +71,7 @@ export function normalizeSettings(value: unknown): AppSettings {
     closeButtonBehavior: closeButtonBehaviorValues.includes(candidate.closeButtonBehavior as CloseButtonBehavior)
       ? (candidate.closeButtonBehavior as CloseButtonBehavior)
       : defaultSettings.closeButtonBehavior,
+    sidebarCompletionIndicators: candidate.sidebarCompletionIndicators !== false,
     setupGuideDismissed: candidate.setupGuideDismissed === true
   };
 }

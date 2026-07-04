@@ -788,6 +788,8 @@ struct AppSettings {
     platform_appearance: PlatformAppearance,
     #[serde(default = "default_close_button_behavior")]
     close_button_behavior: CloseButtonBehavior,
+    #[serde(default = "default_true")]
+    sidebar_completion_indicators: bool,
     #[serde(default)]
     setup_guide_dismissed: bool,
 }
@@ -799,6 +801,7 @@ impl Default for AppSettings {
             font_preset: FontPreset::English,
             platform_appearance: PlatformAppearance::Auto,
             close_button_behavior: CloseButtonBehavior::Ask,
+            sidebar_completion_indicators: true,
             setup_guide_dismissed: false,
         }
     }
