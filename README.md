@@ -40,25 +40,18 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 
 ## 🖼️ Screenshots
 
-**Dashboard** - Review every managed host at a glance, including SSH reachability, remote Codex status, profile alignment, skill inventory, and recent task results.
-
-![CodexHub Dashboard showing managed hosts and status checks](figs/Dashboard-en.png)
-
-**Hosts** - Add or inspect SSH hosts with guided key setup, one-time password bootstrap, connection tests, and remote Codex probes.
-
-![CodexHub Hosts page showing SSH host management](figs/Host-en.png)
-
-**API & Profiles** - Keep local API configuration names and profile templates organized before previewing or applying remote config changes.
-
-![CodexHub API and profile configuration page](figs/API-en.png)
-
-**Skills** - Import local or GitHub skill packs, check target inventories, and install or remove skills with task-log evidence.
-
-![CodexHub Skills page showing local libraries and install targets](figs/Skills-en.png)
-
-**Settings** - Check local SSH readiness, manage app update checks, and review platform-specific runtime preferences.
-
-![CodexHub Settings page showing local SSH and update controls](figs/Settings-en.png)
+| Screenshot |
+| --- |
+| **Dashboard**<br>Review every managed host at a glance, including SSH reachability, remote Codex status, profile alignment, skill inventory, and recent task results. |
+| ![CodexHub Dashboard showing managed hosts and status checks](figs/Dashboard-en.png) |
+| **Hosts**<br>Add or inspect SSH hosts with guided key setup, one-time password bootstrap, connection tests, and remote Codex probes. |
+| ![CodexHub Hosts page showing SSH host management](figs/Host-en.png) |
+| **API & Profiles**<br>Keep local API configuration names and profile templates organized before previewing or applying remote config changes. |
+| ![CodexHub API and profile configuration page](figs/API-en.png) |
+| **Skills**<br>Import local or GitHub skill packs, check target inventories, and install or remove skills with task-log evidence. |
+| ![CodexHub Skills page showing local libraries and install targets](figs/Skills-en.png) |
+| **Settings**<br>Check local SSH readiness, manage app update checks, and review platform-specific runtime preferences. |
+| ![CodexHub Settings page showing local SSH and update controls](figs/Settings-en.png) |
 
 ## ✨ Core Features
 

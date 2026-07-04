@@ -38,25 +38,18 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 
 ## 🖼️ 截图
 
-**Dashboard** - 一屏查看所有托管主机的 SSH 连通性、远端 Codex 状态、profile 对齐情况、skill inventory 和近期任务结果。
-
-![CodexHub Dashboard 页面，展示托管主机和状态检查](../../figs/Dashboard-zh.png)
-
-**Hosts** - 添加或检查 SSH 主机，完成 key 配置、一次性密码初始化、连接测试和远端 Codex 探测。
-
-![CodexHub Hosts 页面，展示 SSH 主机管理](../../figs/Host-zh.png)
-
-**API 与 Profiles** - 管理本地 API config 名称和 profile 模板，再预览或应用远端配置变更。
-
-![CodexHub API 与 profile 配置页面](../../figs/API-zh.png)
-
-**Skills** - 导入本地或 GitHub skill 包，检查安装目标 inventory，并通过任务日志追踪安装或移除结果。
-
-![CodexHub Skills 页面，展示本地技能库和安装目标](../../figs/Skills-zh.png)
-
-**Settings** - 检查本地 SSH 就绪状态、管理应用更新检查，并查看平台相关运行偏好。
-
-![CodexHub Settings 页面，展示本地 SSH 和更新控制](../../figs/Settings-zh.png)
+| 截图 |
+| --- |
+| **Dashboard**<br>一屏查看所有托管主机的 SSH 连通性、远端 Codex 状态、profile 对齐情况、skill inventory 和近期任务结果。 |
+| ![CodexHub Dashboard 页面，展示托管主机和状态检查](../../figs/Dashboard-zh.png) |
+| **Hosts**<br>添加或检查 SSH 主机，完成 key 配置、一次性密码初始化、连接测试和远端 Codex 探测。 |
+| ![CodexHub Hosts 页面，展示 SSH 主机管理](../../figs/Host-zh.png) |
+| **API 与 Profiles**<br>管理本地 API config 名称和 profile 模板，再预览或应用远端配置变更。 |
+| ![CodexHub API 与 profile 配置页面](../../figs/API-zh.png) |
+| **Skills**<br>导入本地或 GitHub skill 包，检查安装目标 inventory，并通过任务日志追踪安装或移除结果。 |
+| ![CodexHub Skills 页面，展示本地技能库和安装目标](../../figs/Skills-zh.png) |
+| **Settings**<br>检查本地 SSH 就绪状态、管理应用更新检查，并查看平台相关运行偏好。 |
+| ![CodexHub Settings 页面，展示本地 SSH 和更新控制](../../figs/Settings-zh.png) |
 
 ## ✨ 核心能力
 
