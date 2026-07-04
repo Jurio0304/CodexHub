@@ -40,13 +40,25 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 
 ## 🖼️ Screenshots
 
-【Screenshot placeholder: Dashboard host matrix with SSH, Codex, profile, skill, and task status.】
+**Dashboard** - Review every managed host at a glance, including SSH reachability, remote Codex status, profile alignment, skill inventory, and recent task results.
 
-【Screenshot placeholder: Add Server flow showing one-time password bootstrap and managed SSH config write.】
+![CodexHub Dashboard showing managed hosts and status checks](figs/Dashboard-en.png)
 
-【Screenshot placeholder: Profiles page with preview/apply controls and redacted task logs.】
+**Hosts** - Add or inspect SSH hosts with guided key setup, one-time password bootstrap, connection tests, and remote Codex probes.
 
-【Screenshot placeholder: Skills page with local library, detected targets, and install/uninstall actions.】
+![CodexHub Hosts page showing SSH host management](figs/Host-en.png)
+
+**API & Profiles** - Keep local API configuration names and profile templates organized before previewing or applying remote config changes.
+
+![CodexHub API and profile configuration page](figs/API-en.png)
+
+**Skills** - Import local or GitHub skill packs, check target inventories, and install or remove skills with task-log evidence.
+
+![CodexHub Skills page showing local libraries and install targets](figs/Skills-en.png)
+
+**Settings** - Check local SSH readiness, manage app update checks, and review platform-specific runtime preferences.
+
+![CodexHub Settings page showing local SSH and update controls](figs/Settings-en.png)
 
 ## ✨ Core Features
 
