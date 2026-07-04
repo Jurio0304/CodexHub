@@ -2,8 +2,8 @@
 
 > 文章标签：Codex App、SSH、Tauri、React、Rust、AI 开发工具、远程开发
 > 分类专栏：AI 工具链 / 桌面应用 / 远程开发效率
-> 项目地址：https://github.com/Jurio0304/CodexHub
-> Release 下载：https://github.com/Jurio0304/CodexHub/releases
+> 项目地址：<CodexHub 仓库地址>
+> Release 下载：<CodexHub Release 页面>
 
 如果你已经开始用 Codex App 做日常开发，大概率会遇到一个很现实的问题：本地电脑只是入口，真正的项目、依赖、GPU 环境、长期运行服务，往往分散在多台 Linux 服务器上。
 
@@ -131,9 +131,9 @@ CodexHub 使用 Tauri 2 + React + TypeScript + Vite + Rust 构建。
 
 ## 下载与反馈
 
-项目地址：https://github.com/Jurio0304/CodexHub
+项目地址：<CodexHub 仓库地址>
 
-Release 下载：https://github.com/Jurio0304/CodexHub/releases
+Release 下载：<CodexHub Release 页面>
 
 如果你也在使用 Codex App 连接多台远程 Linux 主机，欢迎试试 CodexHub。它不追求把所有事情都自动化，而是先把最容易出错、最需要审计的远程准备流程做清楚：能看见、能预览、有备份、可回滚、日志可追踪。
 

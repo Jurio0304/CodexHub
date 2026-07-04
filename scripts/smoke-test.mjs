@@ -65,7 +65,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.2.4") fail("package version should be 0.2.4");
+if (packageJson.version !== "0.2.5") fail("package version should be 0.2.5");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -90,11 +90,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.2.4") fail("stable Tauri version should be 0.2.4");
+if (tauriConfig.version !== "0.2.5") fail("stable Tauri version should be 0.2.5");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.2.4") fail("dev Tauri version should be 0.2.4");
+if (devTauriConfig.version !== "0.2.5") fail("dev Tauri version should be 0.2.5");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -190,7 +190,7 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.2.4_aarch64.dmg"],
+  [readme, "CodexHub_0.2.5_aarch64.dmg"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
@@ -235,11 +235,13 @@ const requiredText = [
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
   [mvp, "Window 6: single-card local skill library"],
+  [mvp, "selected host's `~/.codex-hub/env`"],
   [mvp, "Writing local credential-store key names or API key values into remote Codex config"],
   [limitations, "Profiles /"],
   [limitations, "direct GitHub repository URLs and GitHub"],
-  [limitations, "The optional stored local credential key is never written to remote"],
+  [limitations, "CodexHub writes the value only to the selected host's `~/.codex-hub/env`"],
   [limitations, "CodexHub must not write Codex App private state"],
+  [security, "CodexHub-managed remote `~/.codex-hub/env`"],
   [limitations, "Menu bar/status item restore"],
   [macosSupport, "Requires real macOS test"],
   [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
@@ -599,11 +601,36 @@ for (const token of [
 for (const token of ["profiles: Vec<Profile>", "hosts: Vec<Host>", "sync_profile_host_links", "sync_profile_host_ids", "clear_profile_host_links", "reconcile_hosts_with_profile_links", "RemoteApiConfigMatch"]) {
   if (!rustLib.includes(token)) fail(`missing profile apply refreshed-state token: ${token}`);
 }
-if (rustLib.includes("host.config_exists = Some(true);\n            host.api_config_name = Some(profile.name.clone());")) {
+const reconcileHostsMatch = rustLib.match(/fn reconcile_hosts_with_profile_links[\s\S]*?\n}\r?\n\r?\nfn record_task/);
+if (!reconcileHostsMatch) fail("missing reconcile_hosts_with_profile_links function body");
+if (reconcileHostsMatch[0].includes("host.config_exists = Some(true)") || reconcileHostsMatch[0].includes("host.api_config_name = Some(profile.name.clone())")) {
   fail("profile host-link reconcile must not promote local links into confirmed remote API config facts");
 }
 for (const token of ["api_config_name", "api_config_source", "classify_remote_api_config", "normalize_base_url_key", "read ~/.codex/config.toml base URL"]) {
   if (!rustLib.includes(token)) fail(`missing remote API config probe token: ${token}`);
+}
+for (const token of [
+  "codex_command_available",
+  "CODEX_COMMAND_AVAILABLE_SCRIPT",
+  "check codex command in PATH",
+  "REMOTE_API_ENV_PRESENT_SCRIPT",
+  "check remote API env",
+  "api_key_env_present",
+  "check_profile_api_env",
+  "configure_profile_remote_api_key",
+  "remote_profile_api_key_script",
+  "$HOME/.codex-hub/env",
+  "CodexHub managed launcher",
+  "CODEXHUB_REMOTE_ENV_CHANGED",
+  "CODEXHUB_CODEX_LAUNCHER_CHANGED",
+  "shell_single_quote(&shell_single_quote(api_key))"
+]) {
+  if (!rustLib.includes(token)) fail(`missing remote readiness probe token: ${token}`);
+}
+const remoteReadinessApp = read("src/App.tsx");
+const remoteReadinessModels = read("src/models.ts");
+for (const token of ["codexCommandAvailable", "apiKeyEnvPresent", "codexPathMissing", "apiEnvMissing"]) {
+  if (!remoteReadinessApp.includes(token) && !remoteReadinessModels.includes(token)) fail(`missing remote readiness UI/type token: ${token}`);
 }
 for (const token of [
   "Research Default",
@@ -667,6 +694,7 @@ for (const token of [
   "data-tone={completionTone}",
   "onPointerDownCapture={handleContentInteraction}",
   "onScrollCapture={handleContentInteraction}",
+  "onWheelCapture={handleContentInteraction}",
   "copy.settings.sidebarCompletionIndicators",
   "className=\"pillToggle\"",
   "role=\"switch\"",

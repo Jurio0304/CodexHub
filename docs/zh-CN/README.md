@@ -17,7 +17,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.4-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.5-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -59,7 +59,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 - 只写入 CodexHub 托管的 SSH config block，并在写入前备份。
 - 通过 `ssh <HostAlias> echo ok` 测试连接。
 - 探测远端 Linux 主机的系统、架构、shell、PATH、Codex CLI、`~/.codex/config.toml` 和 skills 数量。
-- 在远端用户目录安装或更新真实的 `codex` 命令，不安装 wrapper。
+- 在远端用户目录安装或更新 `codex` 命令；应用 profile 时可安装同名托管启动器，用来加载受管 env 后再执行真实 Codex。
 - 创建、预览、应用 profile 到远端 `~/.codex/config.toml`。
 - 导入本地或 GitHub skill，并安装到本机或远端目标。
 - 在 Tasks 中查看命令、stdout/stderr、退出码、耗时和失败原因，日志默认脱敏。
@@ -74,7 +74,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 - 托管 Host block 使用 `# >>> CodexHub managed host: <alias>` 和 `# <<< CodexHub managed host: <alias>` 标记。
 - 不写 Codex App 私有文件、数据库、socket、缓存或未公开 IPC。
 - 远端 Codex 配置使用 `env_key` / `apiKeyEnvVar` 引用远端环境变量。
-- 本地 credential store 中的 API key 不会写入远端 config、metadata 或 task log。
+- 显式应用带有已保存 key 的 profile 时，CodexHub 只把真实 key 写入选中远端的 `~/.codex-hub/env`，不会写入远端 config、metadata 或 task log。
 
 更多说明见：[安全策略](../../SECURITY.md)、[已知限制](../known-limitations.md)。
 
@@ -98,8 +98,8 @@ macOS 桌面应用需要：
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- Windows：下载并运行 `CodexHub_0.2.4_x64-setup.exe`。
-- macOS Apple Silicon：下载 `CodexHub_0.2.4_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。当前 macOS 构建为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- Windows：下载并运行 `CodexHub_0.2.5_x64-setup.exe`。
+- macOS Apple Silicon：下载 `CodexHub_0.2.5_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。当前 macOS 构建为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
@@ -129,15 +129,15 @@ macOS 桌面应用需要：
 ### 安装或更新 Codex
 
 - 通过 Profiles 或 Dashboard 操作执行 `check-version`、`install` 或 `update`。
-- 远端命令保持为 `codex`；CodexHub 不安装 wrapper。
+- 远端命令保持为 `codex`；应用 profile 时可安装 CodexHub 托管的 `~/.local/bin/codex` 启动器，先加载 `~/.codex-hub/env`，再执行真实 Codex。
 - 安装目标为 `$HOME/.local/bin` 和 `$HOME/.codex`。
-- PATH 修复是 `.bashrc` 或 `.zshrc` 中幂等的 CodexHub 托管 block。
+- PATH 修复会检查 `.bashrc` 或 `.zshrc`、`.profile`，以及已存在的 `.bash_profile` / `.zprofile`，并写入幂等的 CodexHub 托管 block。
 - 优先尝试官方 installer；mirror 和本地上传 fallback 会记录到日志。
 
 ### 应用 Profile
 
 - Profiles 渲染为 TOML。
-- API key 使用环境变量引用。
+- API key 使用环境变量引用；如果 profile 已保存本地 key，应用时会把真实值写入选中远端的 `~/.codex-hub/env` 并设置受限权限。
 - 应用前先预览。
 - 如果远端 config 已一致，CodexHub 报告 no changes，不创建备份。
 - 如果文件发生变化，CodexHub 创建时间戳备份，并在 Tasks 中记录结果。

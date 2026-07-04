@@ -115,11 +115,14 @@ struct Host {
     shell: String,
     path: Option<String>,
     path_has_local_bin: Option<bool>,
+    codex_command_available: Option<bool>,
     codex_installed: bool,
     codex_version: String,
     config_exists: Option<bool>,
     api_config_name: Option<String>,
     api_config_source: Option<String>,
+    api_key_env_var: Option<String>,
+    api_key_env_present: Option<bool>,
     skills_exists: Option<bool>,
     skills_count: Option<u16>,
     profile_id: Option<String>,
@@ -662,12 +665,15 @@ struct RemoteProbeResult {
     shell: String,
     path: Option<String>,
     path_has_local_bin: bool,
+    codex_command_available: bool,
     codex_installed: bool,
     codex_path: Option<String>,
     codex_version: String,
     config_exists: bool,
     api_config_name: String,
     api_config_source: String,
+    api_key_env_var: Option<String>,
+    api_key_env_present: Option<bool>,
     skills_exists: bool,
     skills_count: u16,
     task: TaskRun,
@@ -710,6 +716,7 @@ struct RemoteCodexMaintenanceResult {
     before_version: Option<String>,
     after_version: Option<String>,
     codex_path: Option<String>,
+    codex_command_available: bool,
     install_method: Option<String>,
     path_changed: bool,
     shell_config_path: Option<String>,
@@ -961,6 +968,55 @@ fn codex_version_probe_script() -> String {
     format!("{CODEX_RESOLVER_SCRIPT}\nprintf '%s\\n' \"$best_version\"")
 }
 
+const CODEX_COMMAND_AVAILABLE_SCRIPT: &str = r#"if command -v codex >/dev/null 2>&1; then
+  command -v codex
+  exit 0
+fi
+login_shell="${SHELL:-}"
+if [ -n "$login_shell" ] && [ -x "$login_shell" ]; then
+  login_codex=$("$login_shell" -lc 'command -v codex 2>/dev/null' 2>/dev/null | head -n 1 || true)
+  if [ -n "$login_codex" ]; then
+    printf '%s\n' "$login_codex"
+    exit 0
+  fi
+fi
+printf 'no\n'
+exit 1
+"#;
+
+const REMOTE_CONFIG_API_ENV_VAR_SCRIPT: &str = r#"if [ -f "$HOME/.codex/config.toml" ]; then
+  sed -n -E 's/^[[:space:]]*(env_key|apiKeyEnvVar)[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p' "$HOME/.codex/config.toml" 2>/dev/null | head -n 1
+fi
+"#;
+
+const REMOTE_API_ENV_PRESENT_SCRIPT: &str = r#"if [ ! -f "$HOME/.codex/config.toml" ]; then
+  printf 'unknown\n'
+  exit 0
+fi
+api_env=$(sed -n -E 's/^[[:space:]]*(env_key|apiKeyEnvVar)[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p' "$HOME/.codex/config.toml" 2>/dev/null | head -n 1)
+case "$api_env" in
+  "" | [0-9]* | *[!A-Za-z0-9_]*)
+    printf 'unknown\n'
+    exit 0
+    ;;
+esac
+if printenv "$api_env" >/dev/null 2>&1; then
+  printf 'yes\n'
+  exit 0
+fi
+if [ -f "$HOME/.codex-hub/env" ]; then
+  set -a
+  . "$HOME/.codex-hub/env" >/dev/null 2>&1 || true
+  set +a
+  if printenv "$api_env" >/dev/null 2>&1; then
+    printf 'yes\n'
+    exit 0
+  fi
+fi
+printf 'no\n'
+exit 1
+"#;
+
 fn remote_skill_count_script() -> &'static str {
     r#"count=0
 count_skill_dir() {
@@ -1006,16 +1062,6 @@ const CODEX_PATH_REPAIR_SCRIPT: &str = r##"set -u
 local_bin="$HOME/.local/bin"
 mkdir -p "$local_bin"
 
-case ":$PATH:" in
-  *":$local_bin:"*)
-    printf 'CODEXHUB_PATH_CHANGED=no\n'
-    printf 'CODEXHUB_SHELL_CONFIG_PATH=\n'
-    printf 'CODEXHUB_BACKUP_PATH=\n'
-    printf 'PATH already contains %s\n' "$local_bin"
-    exit 0
-    ;;
-esac
-
 shell_value=${SHELL:-}
 shell_name=${shell_value##*/}
 if [ "$shell_name" = "zsh" ]; then
@@ -1031,57 +1077,87 @@ fi
 begin_marker="# >>> CodexHub managed PATH"
 end_marker="# <<< CodexHub managed PATH"
 path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+changed=no
+checked_paths=""
+backup_paths=""
 
-if [ -f "$shell_config" ] &&
-  grep -F "$begin_marker" "$shell_config" >/dev/null 2>&1 &&
-  grep -F "$end_marker" "$shell_config" >/dev/null 2>&1 &&
-  grep -F "$path_line" "$shell_config" >/dev/null 2>&1; then
-  printf 'CODEXHUB_PATH_CHANGED=no\n'
-  printf 'CODEXHUB_SHELL_CONFIG_PATH=%s\n' "$shell_config"
-  printf 'CODEXHUB_BACKUP_PATH=\n'
-  printf 'CodexHub PATH block is already present in %s\n' "$shell_config"
-  exit 0
+repair_path_file() {
+  target=$1
+  [ -n "$target" ] || return
+  case ";$checked_paths;" in
+    *";$target;"*) return ;;
+  esac
+  checked_paths="${checked_paths}${checked_paths:+;}$target"
+
+  if [ -f "$target" ]; then
+    if grep -F "$begin_marker" "$target" >/dev/null 2>&1 &&
+      grep -F "$end_marker" "$target" >/dev/null 2>&1 &&
+      grep -F "$path_line" "$target" >/dev/null 2>&1; then
+      printf 'CodexHub PATH block is already present in %s\n' "$target"
+      return
+    fi
+    if grep -F '$HOME/.local/bin' "$target" >/dev/null 2>&1 ||
+      grep -F "$local_bin" "$target" >/dev/null 2>&1 ||
+      grep -F '~/.local/bin' "$target" >/dev/null 2>&1; then
+      printf 'PATH entry for %s already appears in %s\n' "$local_bin" "$target"
+      return
+    fi
+  fi
+
+  backup_path=""
+  if [ -f "$target" ]; then
+    backup_path="$target.codexhub.bak.$(date +%Y%m%d%H%M%S)"
+    cp -p "$target" "$backup_path"
+  else
+    : >"$target"
+  fi
+
+  tmp_file="$target.codexhub.tmp.$$"
+  if grep -F "$begin_marker" "$target" >/dev/null 2>&1 &&
+    grep -F "$end_marker" "$target" >/dev/null 2>&1; then
+    awk -v begin="$begin_marker" -v end="$end_marker" -v line="$path_line" '
+      $0 == begin {
+        print begin
+        print line
+        print end
+        in_block = 1
+        next
+      }
+      $0 == end && in_block {
+        in_block = 0
+        next
+      }
+      !in_block { print }
+    ' "$target" >"$tmp_file"
+    mv "$tmp_file" "$target"
+  else
+    rm -f "$tmp_file"
+    {
+      printf '\n%s\n' "$begin_marker"
+      printf '%s\n' "$path_line"
+      printf '%s\n' "$end_marker"
+    } >>"$target"
+  fi
+
+  changed=yes
+  if [ -n "$backup_path" ]; then
+    backup_paths="${backup_paths}${backup_paths:+;}$backup_path"
+  fi
+  printf 'Added CodexHub PATH block to %s\n' "$target"
+}
+
+repair_path_file "$shell_config"
+repair_path_file "$HOME/.profile"
+if [ -f "$HOME/.bash_profile" ]; then
+  repair_path_file "$HOME/.bash_profile"
+fi
+if [ -f "$HOME/.zprofile" ]; then
+  repair_path_file "$HOME/.zprofile"
 fi
 
-backup_path=""
-if [ -f "$shell_config" ]; then
-  backup_path="$shell_config.codexhub.bak.$(date +%Y%m%d%H%M%S)"
-  cp -p "$shell_config" "$backup_path"
-else
-  : >"$shell_config"
-fi
-
-tmp_file="$shell_config.codexhub.tmp.$$"
-if grep -F "$begin_marker" "$shell_config" >/dev/null 2>&1 &&
-  grep -F "$end_marker" "$shell_config" >/dev/null 2>&1; then
-  awk -v begin="$begin_marker" -v end="$end_marker" -v line="$path_line" '
-    $0 == begin {
-      print begin
-      print line
-      print end
-      in_block = 1
-      next
-    }
-    $0 == end && in_block {
-      in_block = 0
-      next
-    }
-    !in_block { print }
-  ' "$shell_config" >"$tmp_file"
-  mv "$tmp_file" "$shell_config"
-else
-  rm -f "$tmp_file"
-  {
-    printf '\n%s\n' "$begin_marker"
-    printf '%s\n' "$path_line"
-    printf '%s\n' "$end_marker"
-  } >>"$shell_config"
-fi
-
-printf 'CODEXHUB_PATH_CHANGED=yes\n'
-printf 'CODEXHUB_SHELL_CONFIG_PATH=%s\n' "$shell_config"
-printf 'CODEXHUB_BACKUP_PATH=%s\n' "$backup_path"
-printf 'Added CodexHub PATH block to %s\n' "$shell_config"
+printf 'CODEXHUB_PATH_CHANGED=%s\n' "$changed"
+printf 'CODEXHUB_SHELL_CONFIG_PATH=%s\n' "$checked_paths"
+printf 'CODEXHUB_BACKUP_PATH=%s\n' "$backup_paths"
 "##;
 
 const CODEX_INSTALL_SCRIPT: &str = r##"set -u
@@ -2081,11 +2157,14 @@ fn add_host(app: AppHandle, state: State<'_, AppState>, draft: HostDraft) -> Res
         shell: "Unknown".into(),
         path: None,
         path_has_local_bin: None,
+        codex_command_available: None,
         codex_installed: false,
         codex_version: "pending".into(),
         config_exists: None,
         api_config_name: None,
         api_config_source: None,
+        api_key_env_var: None,
+        api_key_env_present: None,
         skills_exists: None,
         skills_count: None,
         profile_id: None,
@@ -2160,11 +2239,14 @@ fn update_host(
         shell: "Unknown".into(),
         path: None,
         path_has_local_bin: None,
+        codex_command_available: None,
         codex_installed: false,
         codex_version: "pending".into(),
         config_exists: None,
         api_config_name: None,
         api_config_source: None,
+        api_key_env_var: None,
+        api_key_env_present: None,
         skills_exists: None,
         skills_count: None,
         profile_id: patch.profile_id,
@@ -2822,11 +2904,14 @@ fn merge_discovered_host(hosts: &mut Vec<Host>, discovered: ssh::SshConfigHost) 
             shell: "Unknown".into(),
             path: None,
             path_has_local_bin: None,
+            codex_command_available: None,
             codex_installed: false,
             codex_version: "pending".into(),
             config_exists: None,
             api_config_name: None,
             api_config_source: None,
+            api_key_env_var: None,
+            api_key_env_present: None,
             skills_exists: None,
             skills_count: None,
             profile_id: None,
@@ -3617,12 +3702,15 @@ fn run_remote_probe(
             shell: "Unknown".into(),
             path: None,
             path_has_local_bin: false,
+            codex_command_available: false,
             codex_installed: false,
             codex_path: None,
             codex_version: "not installed".into(),
             config_exists: false,
             api_config_name: "No config".into(),
             api_config_source: "none".into(),
+            api_key_env_var: None,
+            api_key_env_present: None,
             skills_exists: false,
             skills_count: 0,
             task,
@@ -3642,6 +3730,11 @@ fn run_remote_probe(
             TaskLogLevel::Info,
         ),
         ("resolve codex", codex_path_probe_script.as_str(), TaskLogLevel::Warn),
+        (
+            "check codex command in PATH",
+            CODEX_COMMAND_AVAILABLE_SCRIPT,
+            TaskLogLevel::Warn,
+        ),
         ("codex --version", codex_version_probe_script.as_str(), TaskLogLevel::Warn),
         ("echo $PATH", "printf '%s\n' \"$PATH\"", TaskLogLevel::Info),
         (
@@ -3653,6 +3746,16 @@ fn run_remote_probe(
             "read ~/.codex/config.toml base URL",
             "if [ -f \"$HOME/.codex/config.toml\" ]; then sed -n -E 's/^[[:space:]]*(openai_base_url|base_url)[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\2/p' \"$HOME/.codex/config.toml\" 2>/dev/null | head -n 1; fi",
             TaskLogLevel::Info,
+        ),
+        (
+            "read ~/.codex/config.toml API env",
+            REMOTE_CONFIG_API_ENV_VAR_SCRIPT,
+            TaskLogLevel::Info,
+        ),
+        (
+            "check remote API env",
+            REMOTE_API_ENV_PRESENT_SCRIPT,
+            TaskLogLevel::Warn,
         ),
         (
             "check ~/.codex/skills",
@@ -3699,9 +3802,13 @@ fn run_remote_probe(
         .map(|output| output.stdout.trim().to_string())
         .filter(|value| !value.is_empty());
     let codex_installed = codex_path.is_some();
+    let codex_command_available = outputs
+        .get(4)
+        .map(|output| output.success())
+        .unwrap_or(false);
     let codex_version = if codex_installed {
         outputs
-            .get(4)
+            .get(5)
             .filter(|output| output.success())
             .map(|output| output.stdout.trim().to_string())
             .filter(|value| !value.is_empty())
@@ -3710,26 +3817,44 @@ fn run_remote_probe(
         "not installed".into()
     };
     let path = outputs
-        .get(5)
+        .get(6)
         .filter(|output| output.success())
         .map(|output| output.stdout.trim().to_string())
         .filter(|value| !value.is_empty());
     let path_has_local_bin = path_has_local_bin(path.as_deref());
-    let config_exists = stdout_yes(outputs.get(6));
+    let config_exists = stdout_yes(outputs.get(7));
     let remote_config_base_url = outputs
-        .get(7)
+        .get(8)
         .filter(|output| output.success())
         .map(|output| output.stdout.trim().to_string())
         .filter(|value| !value.is_empty());
+    let api_key_env_var = outputs
+        .get(9)
+        .filter(|output| output.success())
+        .map(|output| output.stdout.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let api_key_env_present = stdout_optional_yes(outputs.get(10));
     let api_config_match =
         classify_remote_api_config(app, state, config_exists, remote_config_base_url.as_deref());
-    let skills_exists = stdout_yes(outputs.get(8));
+    let skills_exists = stdout_yes(outputs.get(11));
     let skills_count = outputs
-        .get(9)
+        .get(12)
         .and_then(|output| output.stdout.trim().parse::<u16>().ok())
         .unwrap_or(0);
+    let mut readiness_notes = Vec::new();
+    if codex_installed && !codex_command_available {
+        readiness_notes.push("codex command is not on the current shell PATH");
+    }
+    if api_key_env_present == Some(false) {
+        readiness_notes.push("API environment variable is missing");
+    }
+    let readiness_suffix = if readiness_notes.is_empty() {
+        String::new()
+    } else {
+        format!(" Warnings: {}.", readiness_notes.join("; "))
+    };
     let summary = format!(
-        "Probe completed for {alias}: {os}/{arch}, Codex {}.",
+        "Probe completed for {alias}: {os}/{arch}, Codex {}.{readiness_suffix}",
         if codex_installed {
             codex_version.as_str()
         } else {
@@ -3757,10 +3882,13 @@ fn run_remote_probe(
         &shell,
         path.clone(),
         path_has_local_bin,
+        codex_command_available,
         codex_installed,
         &codex_version,
         config_exists,
         &api_config_match,
+        api_key_env_var.clone(),
+        api_key_env_present,
         skills_exists,
         skills_count,
     );
@@ -3775,12 +3903,15 @@ fn run_remote_probe(
         shell,
         path,
         path_has_local_bin,
+        codex_command_available,
         codex_installed,
         codex_path,
         codex_version,
         config_exists,
         api_config_name: api_config_match.name,
         api_config_source: api_config_match.source,
+        api_key_env_var,
+        api_key_env_present,
         skills_exists,
         skills_count,
         task,
@@ -3885,6 +4016,7 @@ fn run_remote_manage_codex(
             before_version: None,
             after_version: None,
             codex_path: None,
+            codex_command_available: false,
             install_method: None,
             path_changed: false,
             shell_config_path: None,
@@ -3907,6 +4039,18 @@ fn run_remote_manage_codex(
         TaskLogLevel::Warn,
         Some(&progress),
     );
+    let before_command_available_output = run_codex_step(
+        &alias,
+        &task_id,
+        &mut logs,
+        &mut next_log_index,
+        "check existing codex command in PATH",
+        CODEX_COMMAND_AVAILABLE_SCRIPT,
+        timeout,
+        TaskLogLevel::Warn,
+        Some(&progress),
+    );
+    let before_command_available = before_command_available_output.success();
     let before_version_output = run_codex_step(
         &alias,
         &task_id,
@@ -3933,12 +4077,15 @@ fn run_remote_manage_codex(
             Some(&progress),
         );
         let codex_path = output_trimmed(&before_path);
-        let ok = codex_path.is_some() && before_version.is_some();
+        let installed = codex_path.is_some() && before_version.is_some();
+        let ok = installed && before_command_available;
         let version_label = before_version
             .clone()
             .unwrap_or_else(|| "not installed".into());
         let message = if ok {
             format!("Codex is available on {alias}: {version_label}.")
+        } else if installed {
+            format!("Codex is installed on {alias}: {version_label}, but `codex` is not available on the current shell PATH.")
         } else {
             format!("Codex is not available on {alias}.")
         };
@@ -3958,9 +4105,10 @@ fn run_remote_manage_codex(
         update_host_codex_status(
             state,
             &alias,
-            ok,
+            installed,
             &version_label,
             path_has_local_bin(output_trimmed(&path_output).as_deref()),
+            before_command_available,
         );
         emit_remote_codex_progress(
             Some(&progress),
@@ -3982,6 +4130,7 @@ fn run_remote_manage_codex(
             before_version: before_version.clone(),
             after_version: before_version,
             codex_path,
+            codex_command_available: before_command_available,
             install_method: None,
             path_changed: false,
             shell_config_path: None,
@@ -4043,6 +4192,17 @@ fn run_remote_manage_codex(
         TaskLogLevel::Error,
         Some(&progress),
     );
+    let after_command_available_output = run_codex_step(
+        &alias,
+        &task_id,
+        &mut logs,
+        &mut next_log_index,
+        "check codex command in PATH after maintenance",
+        CODEX_COMMAND_AVAILABLE_SCRIPT,
+        timeout,
+        TaskLogLevel::Warn,
+        Some(&progress),
+    );
     let after_version_output = run_codex_step(
         &alias,
         &task_id,
@@ -4067,13 +4227,17 @@ fn run_remote_manage_codex(
     );
 
     let codex_path = output_trimmed(&after_path);
+    let codex_command_available = after_command_available_output.success();
     let after_version = output_trimmed(&after_version_output);
-    let ok = install_output.success() && codex_path.is_some() && after_version.is_some();
+    let installed = install_output.success() && codex_path.is_some() && after_version.is_some();
+    let ok = installed && codex_command_available;
     let version_label = after_version
         .clone()
         .unwrap_or_else(|| "not installed".into());
     let message = if ok {
         format!("{action_label} completed on {alias}: {version_label}.")
+    } else if installed {
+        format!("{action_label} installed Codex on {alias}: {version_label}, but `codex` is not available on the current shell PATH.")
     } else {
         format!(
             "{action_label} failed on {alias}: {}",
@@ -4096,9 +4260,10 @@ fn run_remote_manage_codex(
     update_host_codex_status(
         state,
         &alias,
-        ok,
+        installed,
         &version_label,
         path_has_local_bin(output_trimmed(&path_output).as_deref()),
+        codex_command_available,
     );
     emit_remote_codex_progress(
         Some(&progress),
@@ -4121,6 +4286,7 @@ fn run_remote_manage_codex(
         before_version,
         after_version,
         codex_path,
+        codex_command_available,
         install_method,
         path_changed,
         shell_config_path,
@@ -5208,6 +5374,368 @@ fn profile_apply_backup_path_from_task(task: &TaskRun) -> Option<String> {
     })
 }
 
+fn configure_profile_remote_api_key(
+    app: &AppHandle,
+    state: &AppState,
+    alias: &str,
+    profile: &Profile,
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    next_log: &mut usize,
+    timeout: u64,
+) -> Option<bool> {
+    let Some(env_var) = profile
+        .api_key_env_var
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return None;
+    };
+    if !is_valid_env_var_name(env_var) {
+        logs.push(basic_log(
+            task_id,
+            *next_log,
+            TaskLogLevel::Error,
+            &format!("Remote API env var name `{env_var}` is not valid."),
+        ));
+        *next_log += 1;
+        return Some(false);
+    }
+
+    let mut api_key = match load_profile_api_key_local(&profile.id) {
+        Ok(value) => value,
+        Err(error) => {
+            logs.push(basic_log(
+                task_id,
+                *next_log,
+                TaskLogLevel::Error,
+                &format!("Could not read local stored API key: {error}"),
+            ));
+            *next_log += 1;
+            return Some(false);
+        }
+    };
+    if api_key.is_none() && profile.source == "cc-switch" {
+        api_key = migrate_cc_switch_api_key_for_profile(app, state, profile).unwrap_or(None);
+    }
+    let Some(api_key) = api_key else {
+        logs.push(basic_log(
+            task_id,
+            *next_log,
+            TaskLogLevel::Warn,
+            &format!(
+                "No local stored API key is available for {}; remote env was not updated.",
+                profile.name
+            ),
+        ));
+        *next_log += 1;
+        return None;
+    };
+    if api_key.contains('\n') || api_key.contains('\r') {
+        logs.push(basic_log(
+            task_id,
+            *next_log,
+            TaskLogLevel::Error,
+            "Stored API key contains unsupported line breaks; remote env was not updated.",
+        ));
+        *next_log += 1;
+        return Some(false);
+    }
+
+    let script = remote_profile_api_key_script(env_var, &api_key);
+    let output = ssh::run_ssh_script(alias, &script, timeout).unwrap_or_else(|error| {
+        failed_command_output(
+            format!("ssh {alias} configure remote API env"),
+            format!("Could not configure remote API environment: {error}"),
+        )
+    });
+    logs.push(command_log(
+        task_id,
+        *next_log,
+        if output.success() {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if output.success() {
+            "Wrote remote CodexHub-managed API env and launcher without exposing key material."
+        } else {
+            "Failed to write remote CodexHub-managed API env or launcher."
+        },
+        &output,
+    ));
+    *next_log += 1;
+    Some(output.success())
+}
+
+fn is_valid_env_var_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+// Writes the selected profile key only to CodexHub-managed remote env files;
+// command logs expose paths and change markers, never the key value.
+fn remote_profile_api_key_script(env_var: &str, api_key: &str) -> String {
+    format!(
+        r##"set -u
+env_dir="$HOME/.codex-hub"
+env_file="$env_dir/env"
+env_name={env_var}
+env_value={api_key}
+mkdir -p "$env_dir" "$HOME/.local/bin"
+chmod 700 "$env_dir"
+
+tmp_file="$env_file.codexhub.tmp.$$"
+backup_path=""
+if [ -f "$env_file" ]; then
+  awk -v key="$env_name" 'index($0, "export " key "=") != 1 {{ print }}' "$env_file" >"$tmp_file"
+else
+  : >"$tmp_file"
+fi
+printf 'export %s=%s\n' "$env_name" "$env_value" >>"$tmp_file"
+if [ -f "$env_file" ] && cmp -s "$tmp_file" "$env_file"; then
+  rm -f "$tmp_file"
+  env_changed=no
+else
+  if [ -f "$env_file" ]; then
+    backup_path="$env_file.codexhub.bak.$(date +%Y%m%d%H%M%S)"
+    cp -p "$env_file" "$backup_path"
+  fi
+  mv "$tmp_file" "$env_file"
+  chmod 600 "$env_file"
+  env_changed=yes
+fi
+
+begin_marker="# >>> CodexHub managed env"
+end_marker="# <<< CodexHub managed env"
+source_line='[ -f "$HOME/.codex-hub/env" ] && . "$HOME/.codex-hub/env"'
+source_paths=""
+source_backups=""
+source_changed=no
+repair_source_file() {{
+  target=$1
+  [ -n "$target" ] || return
+  case ";$source_paths;" in
+    *";$target;"*) return ;;
+  esac
+  source_paths="${{source_paths}}${{source_paths:+;}}$target"
+  if [ -f "$target" ] &&
+    grep -F "$begin_marker" "$target" >/dev/null 2>&1 &&
+    grep -F "$end_marker" "$target" >/dev/null 2>&1 &&
+    grep -F "$source_line" "$target" >/dev/null 2>&1; then
+    return
+  fi
+  target_backup=""
+  if [ -f "$target" ]; then
+    target_backup="$target.codexhub.bak.$(date +%Y%m%d%H%M%S)"
+    cp -p "$target" "$target_backup"
+  else
+    : >"$target"
+  fi
+  tmp_source="$target.codexhub.tmp.$$"
+  if grep -F "$begin_marker" "$target" >/dev/null 2>&1 &&
+    grep -F "$end_marker" "$target" >/dev/null 2>&1; then
+    awk -v begin="$begin_marker" -v end="$end_marker" -v line="$source_line" '
+      $0 == begin {{
+        print begin
+        print line
+        print end
+        in_block = 1
+        next
+      }}
+      $0 == end && in_block {{
+        in_block = 0
+        next
+      }}
+      !in_block {{ print }}
+    ' "$target" >"$tmp_source"
+    mv "$tmp_source" "$target"
+  else
+    rm -f "$tmp_source"
+    {{
+      printf '\n%s\n' "$begin_marker"
+      printf '%s\n' "$source_line"
+      printf '%s\n' "$end_marker"
+    }} >>"$target"
+  fi
+  source_changed=yes
+  if [ -n "$target_backup" ]; then
+    source_backups="${{source_backups}}${{source_backups:+;}}$target_backup"
+  fi
+}}
+
+shell_value=${{SHELL:-}}
+shell_name=${{shell_value##*/}}
+if [ "$shell_name" = "zsh" ]; then
+  shell_config="$HOME/.zshrc"
+else
+  shell_config="$HOME/.bashrc"
+fi
+repair_source_file "$shell_config"
+repair_source_file "$HOME/.profile"
+if [ -f "$HOME/.bash_profile" ]; then
+  repair_source_file "$HOME/.bash_profile"
+fi
+if [ -f "$HOME/.zprofile" ]; then
+  repair_source_file "$HOME/.zprofile"
+fi
+
+launcher="$HOME/.local/bin/codex"
+target_file="$env_dir/codex-target"
+launcher_backup=""
+is_codexhub_launcher() {{
+  [ -f "$launcher" ] && head -n 8 "$launcher" 2>/dev/null | grep -F "CodexHub managed launcher" >/dev/null 2>&1
+}}
+target=""
+if [ -f "$target_file" ]; then
+  target=$(sed -n '1p' "$target_file")
+fi
+if [ -z "$target" ] && [ -L "$launcher" ]; then
+  target=$(readlink -f "$launcher" 2>/dev/null || true)
+fi
+if [ -z "$target" ] && [ -x "$HOME/.codex/packages/standalone/current/bin/codex" ]; then
+  target="$HOME/.codex/packages/standalone/current/bin/codex"
+fi
+if [ -z "$target" ] && [ -e "$launcher" ] && ! is_codexhub_launcher; then
+  target="$env_dir/codex-original.$(date +%Y%m%d%H%M%S)"
+  mv "$launcher" "$target"
+  launcher_backup="$target"
+fi
+launcher_changed=no
+if [ -n "$target" ]; then
+  printf '%s\n' "$target" >"$target_file"
+  chmod 600 "$target_file"
+  if [ -e "$launcher" ] && ! is_codexhub_launcher; then
+    launcher_backup="$launcher.codexhub.bak.$(date +%Y%m%d%H%M%S)"
+    cp -P "$launcher" "$launcher_backup"
+  fi
+  launcher_tmp="$launcher.codexhub.tmp.$$"
+  cat >"$launcher_tmp" <<'CODEXHUB_CODEX_LAUNCHER'
+#!/bin/sh
+# CodexHub managed launcher: loads remote API env before running real Codex.
+if [ -f "$HOME/.codex-hub/env" ]; then
+  . "$HOME/.codex-hub/env"
+fi
+target_file="$HOME/.codex-hub/codex-target"
+if [ -f "$target_file" ]; then
+  target=$(sed -n '1p' "$target_file")
+else
+  target="$HOME/.codex/packages/standalone/current/bin/codex"
+fi
+if [ ! -x "$target" ]; then
+  printf 'CodexHub launcher target is not executable: %s\n' "$target" >&2
+  exit 127
+fi
+exec "$target" "$@"
+CODEXHUB_CODEX_LAUNCHER
+  chmod 700 "$launcher_tmp"
+  if [ -f "$launcher" ] && cmp -s "$launcher_tmp" "$launcher"; then
+    rm -f "$launcher_tmp"
+  else
+    mv "$launcher_tmp" "$launcher"
+    launcher_changed=yes
+  fi
+fi
+
+printf 'CODEXHUB_REMOTE_ENV_CHANGED=%s\n' "$env_changed"
+printf 'CODEXHUB_REMOTE_ENV_FILE=%s\n' "$env_file"
+printf 'CODEXHUB_REMOTE_ENV_BACKUP=%s\n' "$backup_path"
+printf 'CODEXHUB_REMOTE_ENV_SOURCE_CHANGED=%s\n' "$source_changed"
+printf 'CODEXHUB_REMOTE_ENV_SOURCE_PATHS=%s\n' "$source_paths"
+printf 'CODEXHUB_REMOTE_ENV_SOURCE_BACKUPS=%s\n' "$source_backups"
+printf 'CODEXHUB_CODEX_LAUNCHER_CHANGED=%s\n' "$launcher_changed"
+printf 'CODEXHUB_CODEX_LAUNCHER=%s\n' "$launcher"
+printf 'CODEXHUB_CODEX_TARGET=%s\n' "$target"
+printf 'CODEXHUB_CODEX_LAUNCHER_BACKUP=%s\n' "$launcher_backup"
+"##,
+        env_var = shell_single_quote(env_var),
+        api_key = shell_single_quote(&shell_single_quote(api_key))
+    )
+}
+
+fn check_profile_api_env(
+    alias: &str,
+    profile: &Profile,
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    next_log: &mut usize,
+    timeout: u64,
+) -> Option<bool> {
+    let Some(env_var) = profile
+        .api_key_env_var
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return None;
+    };
+    let script = format!(
+        r#"api_env={env_var}
+if printenv "$api_env" >/dev/null 2>&1; then
+  printf 'yes\n'
+  exit 0
+fi
+if [ -f "$HOME/.codex-hub/env" ]; then
+  set -a
+  . "$HOME/.codex-hub/env" >/dev/null 2>&1 || true
+  set +a
+  if printenv "$api_env" >/dev/null 2>&1; then
+    printf 'yes\n'
+    exit 0
+  fi
+fi
+printf 'no\n'
+exit 1
+"#,
+        env_var = shell_single_quote(env_var)
+    );
+    let output = ssh::run_ssh_script(alias, &script, timeout).unwrap_or_else(|error| {
+        failed_command_output(
+            format!("ssh {alias} check remote API env"),
+            format!("Could not check remote API environment variable: {error}"),
+        )
+    });
+    let present = stdout_optional_yes(Some(&output));
+    let readiness = if present.is_none() && !output.success() {
+        Some(false)
+    } else {
+        present
+    };
+    let message = match present {
+        Some(true) => format!("Remote {env_var} is present."),
+        Some(false) => format!("Remote {env_var} is missing."),
+        None => format!("Could not determine remote {env_var} presence."),
+    };
+    logs.push(command_log(
+        task_id,
+        *next_log,
+        if readiness == Some(false) || !output.success() {
+            TaskLogLevel::Warn
+        } else {
+            TaskLogLevel::Info
+        },
+        &message,
+        &output,
+    ));
+    *next_log += 1;
+    readiness
+}
+
+fn profile_api_env_label(profile: &Profile) -> String {
+    profile
+        .api_key_env_var
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("API environment variable")
+        .to_string()
+}
+
 fn apply_profile_to_host(
     app: &AppHandle,
     state: &AppState,
@@ -5343,11 +5871,46 @@ fn apply_profile_to_host(
             },
             &output,
         ));
-        let summary = if ok {
-            format!(
-                "{} already matched {} on {}; no config backup was created.",
-                profile.name, host.name, alias
+        next_log += 1;
+        let remote_env_configured = if ok {
+            configure_profile_remote_api_key(
+                app,
+                state,
+                &alias,
+                profile,
+                &task_id,
+                &mut logs,
+                &mut next_log,
+                timeout,
             )
+        } else {
+            None
+        };
+        let api_key_env_present = if ok && remote_env_configured != Some(false) {
+            check_profile_api_env(&alias, profile, &task_id, &mut logs, &mut next_log, timeout)
+        } else {
+            None
+        };
+        let summary = if ok {
+            if remote_env_configured == Some(false) {
+                format!(
+                    "{} already matched {} on {}, but remote API env setup failed.",
+                    profile.name, host.name, alias
+                )
+            } else if api_key_env_present == Some(false) {
+                format!(
+                    "{} already matched {} on {}, but remote {} is missing.",
+                    profile.name,
+                    host.name,
+                    alias,
+                    profile_api_env_label(profile)
+                )
+            } else {
+                format!(
+                    "{} already matched {} on {}; no config backup was created.",
+                    profile.name, host.name, alias
+                )
+            }
         } else {
             format!(
                 "{} matched {}, but metadata update failed.",
@@ -5355,12 +5918,12 @@ fn apply_profile_to_host(
             )
         };
         if ok {
-            update_host_profile_apply(app, state, &host.id, &alias, &profile.id, &profile.name);
+            update_host_profile_apply(app, state, &host.id, &alias, profile, api_key_env_present);
         }
         let task = profile_apply_task(
             &task_id,
             &host,
-            if ok {
+            if ok && remote_env_configured != Some(false) && api_key_env_present != Some(false) {
                 TaskStatus::Success
             } else {
                 TaskStatus::Failed
@@ -5460,18 +6023,54 @@ fn apply_profile_to_host(
         },
         &commit_output,
     ));
+    next_log += 1;
+
+    let remote_env_configured = if commit_ok {
+        configure_profile_remote_api_key(
+            app,
+            state,
+            &alias,
+            profile,
+            &task_id,
+            &mut logs,
+            &mut next_log,
+            timeout,
+        )
+    } else {
+        None
+    };
+
+    let api_key_env_present = if commit_ok && remote_env_configured != Some(false) {
+        check_profile_api_env(&alias, profile, &task_id, &mut logs, &mut next_log, timeout)
+    } else {
+        None
+    };
 
     let summary = if commit_ok {
-        update_host_profile_apply(app, state, &host.id, &alias, &profile.id, &profile.name);
-        match backup_path.filter(|value| !value.is_empty()) {
-            Some(path) => format!(
-                "{} applied to {} with backup {}.",
-                profile.name, host.name, path
-            ),
-            None => format!(
-                "{} applied to {}; no previous config backup was needed.",
+        update_host_profile_apply(app, state, &host.id, &alias, profile, api_key_env_present);
+        if remote_env_configured == Some(false) {
+            format!(
+                "{} applied to {}, but remote API env setup failed.",
                 profile.name, host.name
-            ),
+            )
+        } else if api_key_env_present == Some(false) {
+            format!(
+                "{} applied to {}, but remote {} is missing.",
+                profile.name,
+                host.name,
+                profile_api_env_label(profile)
+            )
+        } else {
+            match backup_path.filter(|value| !value.is_empty()) {
+                Some(path) => format!(
+                    "{} applied to {} with backup {}.",
+                    profile.name, host.name, path
+                ),
+                None => format!(
+                    "{} applied to {}; no previous config backup was needed.",
+                    profile.name, host.name
+                ),
+            }
         }
     } else {
         format!(
@@ -5482,7 +6081,7 @@ fn apply_profile_to_host(
     let task = profile_apply_task(
         &task_id,
         &host,
-        if commit_ok {
+        if commit_ok && remote_env_configured != Some(false) && api_key_env_present != Some(false) {
             TaskStatus::Success
         } else {
             TaskStatus::Failed
@@ -5702,8 +6301,8 @@ fn update_host_profile_apply(
     state: &AppState,
     host_id: &str,
     alias: &str,
-    profile_id: &str,
-    profile_name: &str,
+    profile: &Profile,
+    api_key_env_present: Option<bool>,
 ) {
     {
         let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
@@ -5712,14 +6311,16 @@ fn update_host_profile_apply(
             .find(|host| host.id == host_id || host.host_alias.eq_ignore_ascii_case(alias))
         {
             host.status = HostStatus::Online;
-            host.profile_id = Some(profile_id.to_string());
+            host.profile_id = Some(profile.id.clone());
             host.config_exists = Some(true);
-            host.api_config_name = Some(profile_name.to_string());
+            host.api_config_name = Some(profile.name.clone());
             host.api_config_source = Some("profile".into());
+            host.api_key_env_var = profile.api_key_env_var.clone();
+            host.api_key_env_present = api_key_env_present;
             host.last_seen = "just now".into();
         }
     }
-    if let Err(error) = sync_profile_host_links(app, state, profile_id, host_id, alias) {
+    if let Err(error) = sync_profile_host_links(app, state, &profile.id, host_id, alias) {
         eprintln!("Failed to persist profile host link: {error}");
     }
 }
@@ -5873,10 +6474,13 @@ fn update_host_probe(
     shell: &str,
     path: Option<String>,
     path_has_local_bin: bool,
+    codex_command_available: bool,
     codex_installed: bool,
     codex_version: &str,
     config_exists: bool,
     api_config_match: &RemoteApiConfigMatch,
+    api_key_env_var: Option<String>,
+    api_key_env_present: Option<bool>,
     skills_exists: bool,
     skills_count: u16,
 ) {
@@ -5893,11 +6497,14 @@ fn update_host_probe(
             host.shell = shell.to_string();
             host.path = path;
             host.path_has_local_bin = Some(path_has_local_bin);
+            host.codex_command_available = Some(codex_command_available);
             host.codex_installed = codex_installed;
             host.codex_version = codex_version.to_string();
             host.config_exists = Some(config_exists);
             host.api_config_name = Some(api_config_match.name.clone());
             host.api_config_source = Some(api_config_match.source.clone());
+            host.api_key_env_var = api_key_env_var;
+            host.api_key_env_present = api_key_env_present;
             host.profile_id = api_config_match.profile_id.clone();
             host.skills_exists = Some(skills_exists);
             host.skills_count = Some(skills_count);
@@ -5926,6 +6533,7 @@ fn update_host_codex_status(
     codex_installed: bool,
     codex_version: &str,
     path_has_local_bin: bool,
+    codex_command_available: bool,
 ) {
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
     if let Some(host) = hosts
@@ -5936,6 +6544,7 @@ fn update_host_codex_status(
         host.codex_installed = codex_installed;
         host.codex_version = codex_version.to_string();
         host.path_has_local_bin = Some(path_has_local_bin);
+        host.codex_command_available = Some(codex_command_available);
         host.last_seen = "just now".into();
     }
 }
@@ -6070,6 +6679,18 @@ fn stdout_yes(output: Option<&ssh::SshCommandOutput>) -> bool {
         .filter(|item| item.success())
         .map(|item| item.stdout.trim().eq_ignore_ascii_case("yes"))
         .unwrap_or(false)
+}
+
+fn stdout_optional_yes(output: Option<&ssh::SshCommandOutput>) -> Option<bool> {
+    let output = output?;
+    let value = output.stdout.trim();
+    if value.eq_ignore_ascii_case("yes") {
+        Some(true)
+    } else if value.eq_ignore_ascii_case("no") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn path_has_local_bin(path: Option<&str>) -> bool {
@@ -6210,11 +6831,14 @@ mod tests {
             shell: String::new(),
             path: None,
             path_has_local_bin: None,
+            codex_command_available: None,
             codex_installed: false,
             codex_version: String::new(),
             config_exists: None,
             api_config_name: None,
             api_config_source: None,
+            api_key_env_var: None,
+            api_key_env_present: None,
             skills_exists: None,
             skills_count: None,
             profile_id: None,
@@ -7296,19 +7920,44 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(CODEX_PATH_REPAIR_SCRIPT.contains("mkdir -p \"$local_bin\""));
         assert!(CODEX_PATH_REPAIR_SCRIPT.contains("# >>> CodexHub managed PATH"));
         assert!(CODEX_PATH_REPAIR_SCRIPT.contains("# <<< CodexHub managed PATH"));
-        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("CODEXHUB_PATH_CHANGED=no"));
-        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("CODEXHUB_PATH_CHANGED=yes"));
-        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("cp -p \"$shell_config\" \"$backup_path\""));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("changed=no"));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("changed=yes"));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("repair_path_file \"$shell_config\""));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("repair_path_file \"$HOME/.profile\""));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("repair_path_file \"$HOME/.bash_profile\""));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("repair_path_file \"$HOME/.zprofile\""));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("cp -p \"$target\" \"$backup_path\""));
         assert!(CODEX_PATH_REPAIR_SCRIPT.contains("grep -F \"$path_line\""));
+        assert!(CODEX_PATH_REPAIR_SCRIPT.contains("CODEXHUB_PATH_CHANGED=%s"));
         assert!(!CODEX_PATH_REPAIR_SCRIPT.contains("sudo"));
 
         let backup_index = CODEX_PATH_REPAIR_SCRIPT
-            .find("cp -p \"$shell_config\" \"$backup_path\"")
+            .find("cp -p \"$target\" \"$backup_path\"")
             .expect("backup command");
         let append_index = CODEX_PATH_REPAIR_SCRIPT
-            .find(">>\"$shell_config\"")
+            .find(">>\"$target\"")
             .expect("append command");
         assert!(backup_index < append_index);
+    }
+
+    #[test]
+    fn remote_profile_api_key_script_writes_managed_env_and_launcher() {
+        let script = remote_profile_api_key_script("OPENAI_API_KEY", "sk-test'value");
+
+        assert!(script.contains("env_file=\"$env_dir/env\""));
+        assert!(script.contains("printf 'export %s=%s\\n' \"$env_name\" \"$env_value\""));
+        assert!(script.contains("env_value='"));
+        assert!(script.contains("\"'\""));
+        assert!(!script.contains("env_value='sk-test'value'"));
+        assert!(script.contains("chmod 600 \"$env_file\""));
+        assert!(script.contains("repair_source_file \"$HOME/.profile\""));
+        assert!(script.contains("repair_source_file \"$HOME/.bash_profile\""));
+        assert!(script.contains("repair_source_file \"$HOME/.zprofile\""));
+        assert!(script.contains("CodexHub managed launcher"));
+        assert!(script.contains("target_file=\"$HOME/.codex-hub/codex-target\""));
+        assert!(script.contains("exec \"$target\" \"$@\""));
+        assert!(script.contains("CODEXHUB_REMOTE_ENV_CHANGED=%s"));
+        assert!(script.contains("CODEXHUB_CODEX_LAUNCHER_CHANGED=%s"));
     }
 }
 

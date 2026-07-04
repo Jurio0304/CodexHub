@@ -16,12 +16,12 @@ Build a desktop app that helps a user manage Codex App SSH multi-server workflow
 - Optional SSH host-block generator.
 - Optional append/update of CodexHub-managed SSH config blocks with backup.
 - SSH connectivity check through the system OpenSSH client.
-- Remote system and Codex probe: OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, `~/.codex/skills/`.
-- Single-host remote Codex CLI maintenance: Test, Install Codex, and Update Codex through SSH, installing to the remote user's home directory without a wrapper; the main UI entry is the compact readiness surface on the Profiles / 配置 page, with Dashboard shortcuts allowed.
-- Idempotent remote PATH repair for `~/.local/bin` in `~/.bashrc` or `~/.zshrc` with backup-before-write and task-log evidence.
+- Remote system and Codex probe: OS, arch, shell, PATH, installed Codex path, `command -v codex`, `codex --version`, `~/.codex/config.toml`, API env readiness, `~/.codex/skills/`.
+- Single-host remote Codex CLI maintenance: Test, Install Codex, and Update Codex through SSH, installing to the remote user's home directory while keeping the user-facing command as `codex`; the main UI entry is the compact readiness surface on the Profiles / 配置 page, with Dashboard shortcuts allowed.
+- Idempotent remote PATH repair for `~/.local/bin` in `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile` with backup-before-write and task-log evidence.
 - Remote `~/.codex/config.toml` read, diff, backup, render, and replace.
 - Local profile templates rendered to remote config, with create, update, delete, import, export, and single or selected-host batch apply.
-- Env-var-first API key config: remote TOML uses `env_key` / `apiKeyEnvVar`; optional local credential-store keys remain local and are never written to remote hosts.
+- Env-var-first API key config: remote TOML uses `env_key` / `apiKeyEnvVar`; applying a profile with a stored local key writes the real value only to the selected host's `~/.codex-hub/env` with restrictive permissions and redacted logs; readiness checks verify only whether the remote env var exists.
 - `applied-profile.json` metadata and redacted Tasks logs for each profile apply.
 - Local skill import and managed-copy persistence for directories containing `SKILL.md`.
 - Direct GitHub repository or `tree/<branch>/<skill-path>` URL download/import for skill discovery.

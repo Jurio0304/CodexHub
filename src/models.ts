@@ -66,11 +66,14 @@ export type Host = {
   shell: string;
   path: string | null;
   pathHasLocalBin: boolean | null;
+  codexCommandAvailable: boolean | null;
   codexInstalled: boolean;
   codexVersion: string;
   configExists: boolean | null;
   apiConfigName?: string | null;
   apiConfigSource?: string | null;
+  apiKeyEnvVar?: string | null;
+  apiKeyEnvPresent?: boolean | null;
   skillsExists: boolean | null;
   skillsCount: number | null;
   profileId: string | null;
@@ -382,12 +385,15 @@ export type RemoteProbeResult = {
   shell: string;
   path: string | null;
   pathHasLocalBin: boolean;
+  codexCommandAvailable: boolean;
   codexInstalled: boolean;
   codexPath: string | null;
   codexVersion: string;
   configExists: boolean;
   apiConfigName: string;
   apiConfigSource: string;
+  apiKeyEnvVar: string | null;
+  apiKeyEnvPresent: boolean | null;
   skillsExists: boolean;
   skillsCount: number;
   task: TaskRun;
@@ -417,6 +423,7 @@ export type RemoteCodexMaintenanceResult = {
   beforeVersion: string | null;
   afterVersion: string | null;
   codexPath: string | null;
+  codexCommandAvailable: boolean;
   installMethod: string | null;
   pathChanged: boolean;
   shellConfigPath: string | null;

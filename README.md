@@ -19,7 +19,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.4-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.5-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -61,7 +61,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * Imports safe aliases from the local SSH config in read-only mode (`%USERPROFILE%\.ssh\config` on Windows, `~/.ssh/config` on macOS).
 * Adds, updates, or deletes only CodexHub-managed SSH config blocks with timestamped backups.
 * Tests SSH with `ssh <HostAlias> echo ok`.
-* Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, `~/.codex/config.toml`, and skill counts.
+* Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, command availability, `~/.codex/config.toml`, API env readiness, and skill counts.
 * Installs or updates the real remote `codex` command in the remote user's home directory.
 * Manages local profile templates and applies rendered TOML to remote `~/.codex/config.toml`.
 * Imports local or GitHub skill directories containing `SKILL.md`.
@@ -78,7 +78,7 @@ CodexHub is designed to be conservative by default:
 * It does not edit unmanaged SSH config blocks.
 * It writes only marked blocks between `# >>> CodexHub managed host: <alias>` and `# <<< CodexHub managed host: <alias>`.
 * It does not write Codex App private files, databases, sockets, caches, or undocumented state.
-* Remote Codex config uses `env_key` / `apiKeyEnvVar`; local credential-store values are not written to remote hosts.
+* Remote Codex config uses `env_key` / `apiKeyEnvVar`. When you explicitly apply a profile with a stored key, CodexHub writes that key only to the selected host's `~/.codex-hub/env` file with restrictive permissions; remote config, metadata, and task logs stay key-free.
 * Mutating remote operations use previews, backups, explicit apply actions, and task-log evidence.
 
 More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-limitations.md).
@@ -103,8 +103,8 @@ For the macOS desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.2.4_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.2.4_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.2.5_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.2.5_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
@@ -134,15 +134,15 @@ For everyday use, download the latest stable build from this repository's Releas
 ### Install or Update Codex
 
 * Use Profiles or Dashboard actions to run `check-version`, `install`, or `update`.
-* The remote command remains `codex`; CodexHub does not install a wrapper.
+* The remote command remains `codex`; profile apply may install a CodexHub-managed `~/.local/bin/codex` launcher that sources `~/.codex-hub/env` and then execs the real Codex binary.
 * Installs target `$HOME/.local/bin` and `$HOME/.codex`.
-* PATH repair is an idempotent CodexHub-managed block in `.bashrc` or `.zshrc`.
+* PATH repair checks `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`, and adds an idempotent CodexHub-managed block only when no existing `$HOME/.local/bin` entry is present.
 * Official installer is tried first; mirror and local-upload fallbacks are logged.
 
 ### Apply a Profile
 
 * Profiles render to TOML.
-* API keys are configured as environment variable references.
+* API keys are configured as environment variable references. If the profile has a stored local key, applying it writes the real value to the selected host's `~/.codex-hub/env`, adds shell source blocks with backups, and checks that the env var is available.
 * Preview before applying.
 * If the remote config already matches, CodexHub reports no changes and does not create a backup.
 * If the file changes, CodexHub creates a timestamped backup and records the result in Tasks.

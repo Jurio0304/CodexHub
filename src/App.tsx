@@ -259,6 +259,11 @@ const uiCopy = {
       testSsh: "Test SSH",
       os: "OS",
       codex: "Codex",
+      codexPathMissing: "Installed, PATH missing",
+      apiEnvMissing: "API env missing",
+      apiEnvReady: "API env ready",
+      apiEnvUnknown: "API env unknown",
+      apiEnvStatusTitle: (envVar: string) => `Remote ${envVar} status`,
       latency: "Test latency"
     },
     profiles: {
@@ -739,6 +744,11 @@ const uiCopy = {
       testSsh: "测试 SSH",
       os: "系统",
       codex: "Codex",
+      codexPathMissing: "已安装，PATH 未就绪",
+      apiEnvMissing: "API 环境缺失",
+      apiEnvReady: "API 环境就绪",
+      apiEnvUnknown: "API 环境未知",
+      apiEnvStatusTitle: (envVar: string) => `远端 ${envVar} 状态`,
       latency: "测试延迟"
     },
     profiles: {
@@ -1505,11 +1515,14 @@ function App() {
                   shell: result.shell,
                   path: result.path,
                   pathHasLocalBin: result.pathHasLocalBin,
+                  codexCommandAvailable: result.codexCommandAvailable,
                   codexInstalled: result.codexInstalled,
                   codexVersion: result.codexVersion,
                   configExists: result.configExists,
                   apiConfigName: result.apiConfigName,
                   apiConfigSource: result.apiConfigSource,
+                  apiKeyEnvVar: result.apiKeyEnvVar,
+                  apiKeyEnvPresent: result.apiKeyEnvPresent,
                   skillsExists: result.skillsExists,
                   skillsCount: result.skillsCount,
                   latencyMs: result.latencyMs,
@@ -1595,6 +1608,7 @@ function App() {
               codexInstalled: Boolean(resolvedVersion),
               codexVersion: nextVersion,
               pathHasLocalBin: action === "check-version" ? host.pathHasLocalBin : result.ok || result.pathChanged ? true : host.pathHasLocalBin,
+              codexCommandAvailable: result.codexCommandAvailable,
               lastSeen: sshCheckFailed ? host.lastSeen : copy.common.justNow
             }
           : host
@@ -2267,6 +2281,7 @@ function App() {
         onKeyDownCapture={handleContentInteraction}
         onPointerDownCapture={handleContentInteraction}
         onScrollCapture={handleContentInteraction}
+        onWheelCapture={handleContentInteraction}
       >
         <header className="topBar">
           <div>
@@ -5510,7 +5525,14 @@ function HostApiConfigBadge({ copy, host, profileById }: { copy: UICopy; host: H
   const label = host.apiConfigName
     ?? (source === "profile" && host.profileId ? profileById?.get(host.profileId)?.name ?? host.profileId : null)
     ?? copy.profiles.unknownApiConfig;
-  return <Badge tone={source === "cc-switch" ? "green" : "blue"}>{label}</Badge>;
+  const envTitle = host.apiKeyEnvVar ? copy.hosts.apiEnvStatusTitle(host.apiKeyEnvVar) : undefined;
+  if (host.apiKeyEnvPresent === false) {
+    return <Badge tone="red" title={envTitle}>{`${label} · ${copy.hosts.apiEnvMissing}`}</Badge>;
+  }
+  if (host.apiKeyEnvPresent === true) {
+    return <Badge tone={source === "cc-switch" ? "green" : "blue"} title={envTitle}>{label}</Badge>;
+  }
+  return <Badge tone={source === "cc-switch" ? "yellow" : "blue"} title={envTitle}>{label}</Badge>;
 }
 
 function hostApiConfigChecked(host: Host) {
@@ -5666,6 +5688,9 @@ function hostCodexStatus(
   if (!isHostCodexTested(host)) return { label: copy.hosts.unknown, tone: "gray" };
   if (!host.codexInstalled) {
     return { label: copy.profiles.notInstalled, tone: "gray" };
+  }
+  if (host.codexCommandAvailable === false) {
+    return { label: copy.hosts.codexPathMissing, tone: "yellow" };
   }
   const label = formatCodexVersionLabel(host.codexVersion, copy.profiles.notChecked);
   return { label, tone: codexVersionTone(host.codexVersion, hosts, latestCodexVersion?.version) };

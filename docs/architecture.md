@@ -148,7 +148,7 @@ type OperationLog = {
 
 ## Release Channel Data Isolation
 
-CodexHub v0.2.4 continues to define exactly two release channels: `stable` and `dev`.
+CodexHub v0.2.5 continues to define exactly two release channels: `stable` and `dev`.
 
 - `stable` is the public release channel. It uses `src-tauri/tauri.conf.json`, `productName: CodexHub`, `identifier: app.codexhub.desktop`, and window title `CodexHub`.
 - `dev` is for development, test runs, previews, and manual acceptance. It uses `src-tauri/tauri.dev.conf.json`, `productName: CodexHub Dev`, `identifier: dev.codexhub.desktop`, and window title `CodexHub Dev`.
@@ -179,17 +179,18 @@ See [stable updater details](stable-updater.md).
 
 ## Remote Codex CLI Maintenance
 
-Single-host install/update is implemented through plain SSH and does not install a wrapper. CodexHub keeps the remote executable as `codex` and prepares the user environment only:
+Single-host install/update is implemented through plain SSH. CodexHub keeps the user-facing remote command as `codex`; profile apply may install a same-name CodexHub-managed launcher under `~/.local/bin/codex` only to source managed environment variables before execing the real Codex binary.
 
 1. Verify SSH with `ssh <HostAlias> echo ok`.
 2. Record the current Codex path and `codex --version` using the resolver that also checks `~/.local/bin/codex`.
 3. Ensure `~/.local/bin` exists.
-4. If `~/.local/bin` is not already in PATH, choose `~/.bashrc` or `~/.zshrc`, create a timestamped backup before writing, and add or replace a CodexHub-managed PATH block idempotently.
-5. Run the official standalone installer from `https://chatgpt.com/codex/install.sh` with user-directory environment variables.
-6. If the official installer fails or cannot be reached, download the platform-native `@openai/codex` package from `https://registry.npmmirror.com` into `~/.codex/packages/standalone/releases/<version>` and symlink `~/.local/bin/codex`.
-7. If remote downloads are blocked or redirected but SSH/SCP still works, download the same npmmirror native package on the local Windows machine, upload it with `scp`, and install it into the same user-owned remote paths.
-8. If the native package fallback is not available, run `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`.
-9. Re-run the resolver and `codex --version`, then store the complete task log.
+4. Check whether the current remote shell can resolve `command -v codex`; this is stored separately from "installed" because the resolver can find `~/.local/bin/codex` even when the user's shell PATH cannot.
+5. Check `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`, create timestamped backups before writing, and add or replace a CodexHub-managed PATH block idempotently only when no existing `$HOME/.local/bin` entry is present.
+6. Run the official standalone installer from `https://chatgpt.com/codex/install.sh` with user-directory environment variables.
+7. If the official installer fails or cannot be reached, download the platform-native `@openai/codex` package from `https://registry.npmmirror.com` into `~/.codex/packages/standalone/releases/<version>` and symlink `~/.local/bin/codex`.
+8. If remote downloads are blocked or redirected but SSH/SCP still works, download the same npmmirror native package on the local Windows machine, upload it with `scp`, and install it into the same user-owned remote paths.
+9. If the native package fallback is not available, run `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`.
+10. Re-run the resolver, `command -v codex`, and `codex --version`, then store the complete task log.
 
 For long install/update runs, the Rust backend executes the blocking SSH/curl/scp work off the window-responsive command path and emits `remote-codex-progress` events keyed by a frontend `requestId`. The compact progress modal consumes these events to show step changes, streamed stdout/stderr lines, and heartbeat messages before the final `TaskRun` is returned.
 
@@ -216,13 +217,15 @@ Window 5 profile switching is file-based and implemented through the direct SSH/
 
 - CodexHub stores structured profile templates locally and supports CRUD plus import/export.
 - API key handling is env-var-first. Rendered TOML uses `env_key` / `apiKeyEnvVar` so the remote host resolves its own environment variable.
-- An optional API key value can be stored in the local OS credential store for local convenience, but only a `credentialStored` boolean is kept in profile JSON and the stored credential is never written into remote config, apply metadata, or task logs.
+- An optional API key value can be stored in the local OS credential store for local convenience, but only a `credentialStored` boolean is kept in profile JSON.
+- When a profile with a stored key is explicitly applied to selected hosts, CodexHub writes the real key only to `~/.codex-hub/env` with mode `600`, creates a timestamped backup before replacing an existing env file, and adds managed source blocks to `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`.
+- The same apply step records the real Codex target in `~/.codex-hub/codex-target` and installs a command-preserving `~/.local/bin/codex` launcher that sources `~/.codex-hub/env` before execing the real binary.
 - Applying a profile renders the entire desired `~/.codex/config.toml`.
-- CodexHub replaces the remote config after diff/backup and writes local/remote apply metadata.
+- CodexHub replaces the remote config after diff/backup, writes local/remote apply metadata, and checks whether the referenced remote API env var exists without printing its value.
 - Apply can target one host or a selected-host batch, with each host producing a separate redacted task log.
 - The user starts a new Codex session or follows the reconnect fallback in Codex App.
 
-This avoids a remote wrapper and avoids assumptions about Codex App internals. A future wrapper can be added as an opt-in enhancement for hosts where runtime `codex --profile <name>` orchestration is desired.
+This avoids a separate user-facing wrapper command and avoids assumptions about Codex App internals. A future profile-selection wrapper can be added as an opt-in enhancement for hosts where runtime `codex --profile <name>` orchestration is desired.
 
 ## Skill Management
 
@@ -258,7 +261,9 @@ Optional write behavior must follow these rules:
 - Do not store SSH private keys or passphrases in CodexHub data files.
 - Prefer Windows OpenSSH agent, Windows credential store, or references to existing key paths.
 - If an API key must be remembered locally, store only through the OS credential store and keep profile JSON to non-secret credential state.
-- Remote config must use `env_key` / `apiKeyEnvVar`; CodexHub must never write the stored local credential or an API key value to remote hosts.
+- Remote config must use `env_key` / `apiKeyEnvVar`; CodexHub must never write the stored local credential or an API key value to remote config, apply metadata, app JSON, or task logs.
+- Profile apply may upload the stored key only to the selected host's CodexHub-managed `~/.codex-hub/env` file with mode `600` and redacted logs.
+- Probes and profile apply tasks may report an env var as missing, but they must not print the env var value.
 - Operation logs must redact usernames only when requested, but always redact key material, passphrases, tokens, and private host secrets.
 
 ## Codex App Fallback UX

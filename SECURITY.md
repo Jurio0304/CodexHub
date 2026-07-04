@@ -16,7 +16,7 @@ CodexHub must not store these values in plaintext app files, repository files, r
 - OpenAI API keys or provider tokens.
 - Remote host secrets.
 
-The UI may display and copy public keys. Optional profile credentials are stored through the local OS credential store and are represented in profile JSON only as credential state.
+The UI may display and copy public keys. Optional profile credentials are stored through the local OS credential store and are represented in profile JSON only as credential state. When a user explicitly applies a profile to selected remote hosts, CodexHub may copy that stored API key only into the CodexHub-managed remote `~/.codex-hub/env` file with restrictive permissions and redacted task logs.
 
 ## Local SSH Config Boundary
 
@@ -29,10 +29,12 @@ CodexHub must not rewrite, reorder, delete, or normalize unmanaged user SSH conf
 CodexHub writes only explicit remote targets selected by the user, primarily:
 
 - `~/.codex/config.toml`
+- `~/.codex-hub/env`
+- `~/.codex-hub/codex-target`
 - `~/.codex/skills/`
 - `~/.codex/superpowers/skills/` for detection
 - `~/.local/bin/codex`
-- managed PATH blocks in `.bashrc` or `.zshrc`
+- managed PATH or env source blocks in `.bashrc`, `.zshrc`, `.profile`, `.bash_profile`, or `.zprofile`
 
 Remote writes should be previewable, backed up when replacing existing files, and logged with redaction.
 

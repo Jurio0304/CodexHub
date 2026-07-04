@@ -32,7 +32,7 @@ The documented Codex App remote flow targets Linux remote machines with SSH acce
 
 Remote Codex install/update also expects a writable `~/.local/bin` and `~/.codex`. The first install path needs `curl` or `wget` for the official standalone installer. If the official endpoint is unreachable, CodexHub falls back to the npmmirror native package path, which currently needs `python3`, `tar`, and a supported Linux CPU architecture (`x86_64` or `aarch64`). If that fallback is unavailable, CodexHub tries `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`. If remote downloads are blocked or redirected but SSH/SCP still works, CodexHub can download the npmmirror native package on the local Windows machine, upload the tarball with `scp`, and install it into the same user-owned remote paths.
 
-Some SSH non-interactive shells do not read `~/.bashrc` or `~/.zshrc`, so a plain `ssh <HostAlias> 'codex --version'` may still miss the repaired PATH until the next interactive shell. CodexHub's resolver checks `~/.local/bin/codex` directly so Check Version and follow-up install/update verification still work.
+Some SSH non-interactive shells do not read user startup files, so a plain `ssh <HostAlias> 'codex --version'` may still miss the repaired PATH until the next login or interactive shell. CodexHub repairs `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`; the resolver also checks `~/.local/bin/codex` directly, and probes run `command -v codex` in both the current shell and the configured login shell before showing a PATH warning.
 
 If a remote host's CA bundle rejects HTTPS downloads with a self-signed certificate error, the safer long-term fix is to repair that host's trust store. For first-run recovery, CodexHub keeps the official installer strict but may retry npmmirror native package downloads with certificate checks disabled, limited to npmmirror URLs and marked as `npm-mirror-native-insecure-tls` in the task log. If the insecure retry returns HTML instead of package metadata, CodexHub reports the likely captive portal or network authentication issue and then attempts the local-download plus `scp` upload fallback.
 
@@ -60,10 +60,10 @@ New CodexHub-managed hosts may be bootstrapped with a one-time remote password. 
 
 ## No Wrapper Dependency
 
-The MVP intentionally does not require a remote Codex wrapper. This limits runtime control over live Codex sessions but keeps the first version aligned with public interfaces and minimizes remote installation risk.
+The MVP intentionally does not require a separate remote Codex wrapper command. The user-facing command stays `codex`; when a stored profile key is applied, CodexHub may install a same-name `~/.local/bin/codex` launcher only to source `~/.codex-hub/env` and exec the real binary. This limits runtime control over live Codex sessions while keeping the first version aligned with public interfaces.
 
 ## Security
 
 CodexHub must not store SSH private keys, passphrases, OpenAI tokens, or remote secrets in plaintext. Local profile data may contain a credential-store key reference, but not the credential value.
 
-Profile API key handling is env-var-first. Remote config writes must use `env_key` / `apiKeyEnvVar` so the remote host reads its own environment variable. The optional stored local credential key is never written to remote `~/.codex/config.toml`, `applied-profile.json`, or task logs.
+Profile API key handling is env-var-first. Remote config writes must use `env_key` / `apiKeyEnvVar` so the remote host reads its own environment variable. When a profile with a stored local credential is explicitly applied, CodexHub writes the value only to the selected host's `~/.codex-hub/env` with restrictive permissions and shell-source backups. The key is never written to remote `~/.codex/config.toml`, `applied-profile.json`, app JSON, or task logs. Probes and profile apply tasks check whether the referenced remote env var exists without printing its value.
