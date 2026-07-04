@@ -366,6 +366,9 @@ for (const command of [
 for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDATE_ENDPOINT", "CODEXHUB_STABLE_UPDATER_PUBKEY", "tauri_plugin_updater::Builder::new().build()", "UpdaterExt", "stable_updater_configured", "normalize_updater_pubkey", "extract_minisign_public_key"]) {
   if (!rustLib.includes(token)) fail(`missing stable updater backend token: ${token}`);
 }
+if (!cargoToml.includes('tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }')) {
+  fail("stable updater must use native TLS so release checks can use the OS trust store");
+}
 for (const token of ["app_update_check_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status))", "Check app update"]) {
   if (!rustLib.includes(token)) fail(`missing stable updater task token: ${token}`);
 }

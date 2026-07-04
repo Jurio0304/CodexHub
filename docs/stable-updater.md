@@ -10,6 +10,7 @@ This document records the internal updater foundation. Public user-facing instal
 - `stable` is the only channel eligible for Tauri updater checks.
 - `dev` never auto-updates. It remains limited to local source builds, preview packages, and test artifacts.
 - The Rust backend initializes `tauri-plugin-updater` and exposes `get_app_update_status`, `check_stable_update`, and `install_stable_update`.
+- `tauri-plugin-updater` is built with `native-tls` and `zip` only, so stable feed checks use the OS trust store instead of the default Rustls web PKI path. This avoids false failures on Windows/macOS networks that rely on system-managed certificates or inspection roots.
 - Settings shows a compact `Version info` table below Local keys with software name, current version, install time, latest version, and last update-check time.
 - The check button is available on `stable` builds. If the feed or public key is absent, the backend returns `pending-configuration` instead of pretending a real update check ran.
 - Every check attempt records a `Check app update` task run. After an updater error, Settings must not display the latest-version cell as `Not checked` / `未检查`; it should show the failed state, open a log dialog with the failure evidence, and keep the same run reviewable from Tasks.
