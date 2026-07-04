@@ -28,5 +28,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
 tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "time"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 url = "2"

@@ -369,6 +369,12 @@ for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDAT
 if (!cargoToml.includes('tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }')) {
   fail("stable updater must use native TLS so release checks can use the OS trust store");
 }
+if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }')) {
+  fail("stable updater GitHub feed resolver must use reqwest with native TLS");
+}
+for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos"]) {
+  if (!rustLib.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
+}
 for (const token of ["app_update_check_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status))", "Check app update"]) {
   if (!rustLib.includes(token)) fail(`missing stable updater task token: ${token}`);
 }

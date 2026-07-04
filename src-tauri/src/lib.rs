@@ -33,6 +33,8 @@ const STABLE_UPDATER_PUBKEY_ENV: &str = "CODEXHUB_STABLE_UPDATER_PUBKEY";
 const STABLE_IDENTIFIER: &str = "app.codexhub.desktop";
 const DEV_IDENTIFIER: &str = "dev.codexhub.desktop";
 const APP_UPDATE_CHECK_TIMEOUT_SECS: u64 = 30;
+const GITHUB_API_ACCEPT: &str = "application/vnd.github+json";
+const OCTET_STREAM_ACCEPT: &str = "application/octet-stream";
 const MAIN_WINDOW_LABEL: &str = "main";
 const CLOSE_BUTTON_BEHAVIOR_REQUESTED_EVENT: &str = "close-button-behavior-requested";
 const TRAY_ID: &str = "codexhub-main-tray";
@@ -79,6 +81,17 @@ struct AppUpdateStatus {
 struct StableUpdaterConfig {
     endpoint: Option<String>,
     pubkey: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitHubReleaseAsset {
+    name: String,
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct GitHubReleaseResponse {
+    assets: Vec<GitHubReleaseAsset>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1548,15 +1561,8 @@ async fn check_stable_update_status(app: AppHandle) -> AppUpdateStatus {
     }
 
     let pubkey = config.pubkey.clone().unwrap_or_default();
-    let updater = match app
-        .updater_builder()
-        .pubkey(pubkey)
-        .endpoints(vec![endpoint])
-        .and_then(|builder| {
-            builder
-                .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS))
-                .build()
-        }) {
+    let endpoints = stable_update_endpoints(&endpoint).await;
+    let updater = match stable_updater(&app, pubkey, endpoints) {
         Ok(updater) => updater,
         Err(error) => {
             return app_update_status(
@@ -1665,15 +1671,8 @@ async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String
     }
 
     let pubkey = config.pubkey.clone().unwrap_or_default();
-    let updater = match app
-        .updater_builder()
-        .pubkey(pubkey)
-        .endpoints(vec![endpoint])
-        .and_then(|builder| {
-            builder
-                .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS))
-                .build()
-        }) {
+    let endpoints = stable_update_endpoints(&endpoint).await;
+    let updater = match stable_updater(&app, pubkey, endpoints) {
         Ok(updater) => updater,
         Err(error) => {
             return Ok(app_update_status(
@@ -1845,6 +1844,79 @@ fn minisign_key_id(value: &str) -> Option<String> {
 
 fn stable_updater_configured(config: &StableUpdaterConfig) -> bool {
     config.endpoint.is_some() && config.pubkey.is_some()
+}
+
+async fn stable_update_endpoints(endpoint: &Url) -> Vec<Url> {
+    let mut endpoints = Vec::new();
+    if let Some(github_asset_endpoint) = resolve_github_latest_json_asset_endpoint(endpoint).await {
+        endpoints.push(github_asset_endpoint);
+    }
+    endpoints.push(endpoint.clone());
+    endpoints.dedup();
+    endpoints
+}
+
+fn stable_updater(
+    app: &AppHandle,
+    pubkey: String,
+    endpoints: Vec<Url>,
+) -> std::result::Result<tauri_plugin_updater::Updater, tauri_plugin_updater::Error> {
+    let use_asset_api = endpoints.iter().any(is_github_release_asset_api_endpoint);
+    let mut builder = app
+        .updater_builder()
+        .pubkey(pubkey)
+        .endpoints(endpoints)?
+        .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS));
+    if use_asset_api {
+        builder = builder.header("Accept", OCTET_STREAM_ACCEPT)?;
+    }
+    builder.build()
+}
+
+async fn resolve_github_latest_json_asset_endpoint(endpoint: &Url) -> Option<Url> {
+    let api_url = github_release_api_url(endpoint)?;
+    let client = reqwest::Client::builder()
+        .user_agent("CodexHub updater feed resolver")
+        .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS))
+        .build()
+        .ok()?;
+    let response = client
+        .get(api_url)
+        .header("Accept", GITHUB_API_ACCEPT)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let release = response.json::<GitHubReleaseResponse>().await.ok()?;
+    let asset = release
+        .assets
+        .into_iter()
+        .find(|asset| asset.name == "latest.json")?;
+    Url::parse(&asset.url).ok()
+}
+
+fn github_release_api_url(endpoint: &Url) -> Option<String> {
+    if endpoint.scheme() != "https" || endpoint.host_str() != Some("github.com") {
+        return None;
+    }
+    let segments = endpoint.path_segments()?.collect::<Vec<_>>();
+    match segments.as_slice() {
+        [owner, repo, "releases", "latest", "download", "latest.json"] => {
+            Some(format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"))
+        }
+        [owner, repo, "releases", "download", tag, "latest.json"] => Some(format!(
+            "https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+        )),
+        _ => None,
+    }
+}
+
+fn is_github_release_asset_api_endpoint(endpoint: &Url) -> bool {
+    endpoint.scheme() == "https"
+        && endpoint.host_str() == Some("api.github.com")
+        && endpoint.path().contains("/releases/assets/")
 }
 
 fn app_update_status_for_channel(
@@ -6879,6 +6951,29 @@ mod tests {
 
         assert_eq!(status.latest_version.as_deref(), Some("0.2.0"));
         assert_eq!(status.checked_at.as_deref(), Some("2026-07-03 15:05:35"));
+    }
+
+    #[test]
+    fn github_release_api_url_supports_latest_and_tagged_feeds() {
+        let latest =
+            Url::parse("https://github.com/Jurio0304/CodexHub/releases/latest/download/latest.json")
+                .unwrap();
+        let tagged =
+            Url::parse("https://github.com/Jurio0304/CodexHub/releases/download/v0.2.5/latest.json")
+                .unwrap();
+        let asset_api =
+            Url::parse("https://api.github.com/repos/Jurio0304/CodexHub/releases/assets/123")
+                .unwrap();
+
+        assert_eq!(
+            github_release_api_url(&latest).as_deref(),
+            Some("https://api.github.com/repos/Jurio0304/CodexHub/releases/latest")
+        );
+        assert_eq!(
+            github_release_api_url(&tagged).as_deref(),
+            Some("https://api.github.com/repos/Jurio0304/CodexHub/releases/tags/v0.2.5")
+        );
+        assert!(is_github_release_asset_api_endpoint(&asset_api));
     }
 
     #[test]
