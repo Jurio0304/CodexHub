@@ -65,7 +65,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.2.5") fail("package version should be 0.2.5");
+if (packageJson.version !== "0.2.6") fail("package version should be 0.2.6");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -90,11 +90,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.2.5") fail("stable Tauri version should be 0.2.5");
+if (tauriConfig.version !== "0.2.6") fail("stable Tauri version should be 0.2.6");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.2.5") fail("dev Tauri version should be 0.2.5");
+if (devTauriConfig.version !== "0.2.6") fail("dev Tauri version should be 0.2.6");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -190,7 +190,7 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.2.5_aarch64.dmg"],
+  [readme, "CodexHub_0.2.6_aarch64.dmg"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
@@ -671,8 +671,11 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing close-button UI token: ${token}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "createLocalAppUpdateTask", "footer={("]) {
+for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.dailyUpdateCheck", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "createLocalAppUpdateTask", "footer={("]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
+}
+for (const token of ["APP_UPDATE_DAILY_CHECK_HOUR = 4", "nextDailyAppUpdateCheckAt", "runStableUpdateCheck(\"daily\")", "scheduleNextAppUpdateCheck", "appUpdateStatusRef", "appUpdateBusyRef"]) {
+  if (!app.includes(token)) fail(`missing daily stable updater check token: ${token}`);
 }
 for (const token of ["function appVersionTone", "function appUpdateLatestVersionLabel", "function appLatestVersionTone", "isCodexVersionBehind(current, latest) ? \"red\" : \"green\"", "status.state === \"error\" && status.checkedAt", "status.state === \"pending-configuration\""]) {
   if (!app.includes(token)) fail(`missing app version badge tone token: ${token}`);
@@ -680,7 +683,7 @@ for (const token of ["function appVersionTone", "function appUpdateLatestVersion
 for (const label of ["Version info", "版本信息", "Software", "软件名", "Installed at", "安装时间", "Updated at", "更新时间", "Check failed", "检查失败", "Pending setup", "待配置"]) {
   if (!app.includes(label)) fail(`missing version info UI label: ${label}`);
 }
-for (const token of ["canInstallStableUpdate", "appUpdateStatus.state === \"available\"", "onInstallStableUpdate", "api.installStableUpdate"]) {
+for (const token of ["canInstallStableUpdate", "appUpdateStatus.state === \"available\"", "onInstallStableUpdate", "api.installStableUpdate", "showSidebarStableUpdateButton", "canInstallSidebarStableUpdate", "sidebarUpdateButton", "copy.settings.sidebarInstallStableUpdate"]) {
   if (!app.includes(token)) fail(`stable updater install UI must stay gated by available update: ${token}`);
 }
 if (!app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "stable" && !appUpdateBusy')) {
@@ -864,8 +867,10 @@ for (const token of [
 if (!app.includes("CodexOperationModal")) fail("Install/update should show a compact Codex operation progress modal");
 if (!app.includes("codexOperationModal")) fail("Codex operation modal state should be wired in App");
 if (!app.includes("RemoteCodexProgressEvent")) fail("Codex operation modal should consume real progress events");
+if (!app.includes("CodexUninstallConfirmModal") || !app.includes("uninstallCodexConfirmBody") || !app.includes('runRemoteCodexAction(target.hostAlias, "uninstall")')) fail("Remote Codex uninstall should require an explicit confirmation modal before execution");
 if (app.includes('event.status === "success" ? "success"') || app.includes('event.status === "failed" ? "failed"')) fail("Codex operation modal status should only change from the final result or catch path");
 if (!app.includes("logRowsRef") || !app.includes("logRows.scrollTop = logRows.scrollHeight") || !app.includes("ref={logRowsRef}")) fail("Codex operation log should auto-scroll to the latest row");
+if (app.includes("<code>{compactProgressLogDetail") || app.includes("<code>{compactTaskLogDetail") || app.includes("{log.detail ? <code>")) fail("Codex operation modal should show compact log summaries without console-style detail rows");
 if (app.includes('<div className="eyebrow">{copy.codexOperation.title}</div>') || app.includes("{operation.hostName} · {operation.hostAlias}")) fail("Codex operation header should only keep the title and status badge");
 if (app.includes("profileCard")) fail("Profiles page should use a compact table list instead of profile cards");
 if (!app.includes("function ProfilesView(")) fail("Profiles page should be implemented");
@@ -939,7 +944,7 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing compact Profiles UI label: ${token}`);
 }
-for (const token of ["ProfileEditModal", "ProfileHostSelectModal", "ProfileApplyPreviewModal", "ProfileModelCombobox", "ProfileStorageBadge", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileRowActions", "profileApplyTable", "profileHostSelectModal", "profileFastModeSegment"]) {
+for (const token of ["ProfileEditModal", "ProfileHostSelectModal", "ProfileApplyPreviewModal", "ProfileApplyOperationModal", "ProfileModelCombobox", "ProfileStorageBadge", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileRowActions", "profileApplyTable", "profileHostSelectModal", "profileFastModeSegment"]) {
   if (!app.includes(token)) fail(`missing Profiles modal/action token: ${token}`);
 }
 for (const token of [
@@ -955,7 +960,10 @@ for (const token of [
   "result.profiles.length > 0",
   "result.hosts.length > 0",
   "const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()])",
-  "selectedAppliedHostIds",
+  "selectedApplyHostIds",
+  "profileApplyEligibleHostIds",
+  "profileApplyRunningHostIdSet",
+  "copy.profiles.alreadyApplied",
   "hostSourceLabel(copy, host)",
   "copy.profiles.applyColumn",
   "copy.profiles.selectHosts",
@@ -963,7 +971,8 @@ for (const token of [
   "copy.profiles.apiConfig",
   "copy.profiles.noApiConfig",
   "copy.profiles.unknownApiConfig",
-  "copy.profiles.applySuccess",
+  "copy.profiles.applyOperationTitle",
+  "copy.profiles.applyOperationStarted",
   'profile.source === "cc-switch"',
   "copy.profiles.thirdPartyImport",
   "copy.profiles.localStorageLabel",
@@ -1087,8 +1096,21 @@ for (const [action, token] of [
 ]) {
   if (!app.includes(token)) fail(`missing profile apply ${action} action token: ${token}`);
 }
-if (!app.includes('className="profilesStack"') || !app.includes("profileLibraryActions") || !app.includes("profileTable") || !app.includes("profileRowActions") || !app.includes("profileApplyPanel") || !app.includes("profileApplyTable") || !app.includes("profileHostSelectCell")) {
-  fail("Profiles page should use compact stack, library actions, row actions, table, apply panel, and host-table tokens");
+if (!app.includes('className="profilesStack"') || !app.includes("profileLibraryActions") || !app.includes("profileTable") || !app.includes("profileRowActions") || !app.includes("profileApplyPanel") || !app.includes("profileApplyTable") || !app.includes("profileApplyOperationModal")) {
+  fail("Profiles page should use compact stack, library actions, row actions, table, apply panel, and operation-log tokens");
+}
+const profileApplyTableStart = app.indexOf('className="sshHostsTable profileApplyTable"');
+const profileApplyTableEnd = profileApplyTableStart >= 0 ? app.indexOf("</table>", profileApplyTableStart) : -1;
+const profileApplyTableBlock = profileApplyTableStart >= 0 && profileApplyTableEnd >= 0 ? app.slice(profileApplyTableStart, profileApplyTableEnd) : "";
+if (!profileApplyTableBlock) fail("missing profile apply table block");
+if (profileApplyTableBlock.includes('type="checkbox"') || profileApplyTableBlock.includes("data-selected")) {
+  fail("Profile apply table should not use checkbox or selected-row state for applied config");
+}
+for (const token of ["const alreadyApplied = selectedProfile ? profileMatchesConfirmedHostApiConfig(selectedProfile, host) : false", "disabled={!selectedProfile || alreadyApplied || profileApplyRunningHostIdSet.has(host.id)}"]) {
+  if (!profileApplyTableBlock.includes(token)) fail(`missing profile apply applied-state token: ${token}`);
+}
+for (const token of ["setSelectedHostIds([])", "const alreadyApplied = profileMatchesConfirmedHostApiConfig(profile, host)", "const disabled = alreadyApplied || applying", "disabled={disabled}", "setSelectedHostIds(eligibleHostIds)"]) {
+  if (!app.includes(token)) fail(`missing profile host picker eligibility token: ${token}`);
 }
 for (const token of [
   "<th>{copy.profiles.approval}</th>",
@@ -1105,8 +1127,9 @@ for (const token of [
 ]) {
   if (app.includes(token)) fail(`Profiles UI should stay minimal and not render: ${token}`);
 }
-if (!app.includes('onManageCodex(sshHost.alias, "install")') || !app.includes('onManageCodex(sshHost.alias, "update")')) fail("SSH Hosts table should expose remote Codex install/update actions");
-if (!app.includes('installCodex: "安装"') || !app.includes('updateCodex: "更新"')) fail("SSH Hosts Codex buttons should use short install/update labels");
+if (!app.includes('onManageCodex(sshHost.alias, "install")') || !app.includes('onManageCodex(sshHost.alias, "update")') || !app.includes('onManageCodex(sshHost.alias, "uninstall")')) fail("SSH Hosts table should expose remote Codex install/update/uninstall actions");
+if (!rustLib.includes('remove_path "$CODEX_HOME"') || !rustLib.includes('remove_path "$hub_dir"') || rustLib.includes("codexhub.uninstall.bak")) fail("Remote Codex uninstall should directly delete Codex config/env paths without backups");
+if (!app.includes('installCodex: "安装"') || !app.includes('updateCodex: "更新"') || !app.includes('uninstallCodex: "卸载"')) fail("SSH Hosts Codex buttons should use short install/update/uninstall labels");
 for (const token of ["onUpdateOutdatedCodexHosts", "handleUpdateOutdatedCodexHosts", "Promise.allSettled", "outdatedCodexAliases", "copy.hosts.updateOutdatedCodex"]) {
   if (!app.includes(token)) fail(`missing one-click outdated Codex update token: ${token}`);
 }
@@ -1320,7 +1343,7 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
-for (const token of ["appUpdatePanel", "versionInfoTable", "taskLogModalHint", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
+for (const token of ["appUpdatePanel", "appUpdateSchedule", "sidebarUpdateButton", "versionInfoTable", "taskLogModalHint", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
   if (!styles.includes(token)) fail(`missing stable updater Settings style token: ${token}`);
 }
 const versionInfoTableStyle = styles.match(/\.versionInfoTable\s*\{[^}]*\}/)?.[0] ?? "";
@@ -1384,7 +1407,7 @@ for (const token of ["modalBackdrop", "bootstrapLogCard", "stepIcon.success", "s
 for (const token of ["sshHostsTable", "table-layout: auto", "flex-wrap: nowrap", ".sshHostsCodexCol", ".sshHostsLatestVersionCol"]) {
   if (!styles.includes(token)) fail(`missing SSH Hosts responsive table style token: ${token}`);
 }
-for (const token of ["profilesStack", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileTable", "profileRowActions", "profileApplyPanel", "profileApplyTable", "profileHostSelectCell", "profileHostSelectModal", "profileHostSelectList", "profileModelCombobox", "profileModelOptions", "profileModelOption", "profileFastModeSegment", "profileFastModeOption"]) {
+for (const token of ["profilesStack", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileTable", "profileRowActions", "profileApplyPanel", "profileApplyTable", "profileApplyOperationModal", "profileHostSelectModal", "profileHostSelectList", "profileHostSelectStatus", "profileModelCombobox", "profileModelOptions", "profileModelOption", "profileFastModeSegment", "profileFastModeOption"]) {
   if (!styles.includes(token)) fail(`missing compact Profiles style token: ${token}`);
 }
 for (const token of ["simpleDeleteModal", "credentialVisibilityButton", "credentialEyeIcon", ".sshHostModal.ProfileEditModal .fieldGroup", ".sshHostModal:not(.ProfileEditModal) .fieldGroup input", "::-ms-reveal", ".passwordInputWrap .credentialVisibilityButton"]) {

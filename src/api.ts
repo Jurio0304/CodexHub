@@ -705,9 +705,17 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
 function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
   const host = fallbackHostForAlias(hostAlias);
   const actionLabel =
-    action === "check-version" ? "Check Codex version" : action === "install" ? "Install Codex" : "Update Codex";
-  const nextVersion = host.codexInstalled && action === "check-version" ? host.codexVersion : "codex-cli 0.32.0";
-  const message = `Mock ${actionLabel.toLowerCase()} completed for ${host.hostAlias}: ${nextVersion}.`;
+    action === "check-version"
+      ? "Check Codex version"
+      : action === "install"
+        ? "Install Codex"
+        : action === "update"
+          ? "Update Codex"
+          : "Uninstall Codex";
+  const nextVersion =
+    action === "uninstall" ? null : host.codexInstalled && action === "check-version" ? host.codexVersion : "codex-cli 0.32.0";
+  const versionLabel = nextVersion ?? "not installed";
+  const message = `Mock ${actionLabel.toLowerCase()} completed for ${host.hostAlias}: ${versionLabel}.`;
   const task: TaskRun = {
     id: `mock-codex-${Date.now()}`,
     hostId: host.id,
@@ -725,7 +733,7 @@ function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): Re
         timestamp: "now",
         message: "Mock remote Codex maintenance command completed.",
         command: `ssh ${host.hostAlias} codex maintenance ${action}`,
-        stdout: nextVersion,
+        stdout: versionLabel,
         stderr: "",
         exitCode: 0,
         durationMs: 48,
@@ -739,12 +747,17 @@ function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): Re
     action,
     beforeVersion: host.codexInstalled ? host.codexVersion : null,
     afterVersion: nextVersion,
-    codexPath: "$HOME/.local/bin/codex",
-    codexCommandAvailable: true,
+    codexPath: action === "uninstall" ? null : "$HOME/.local/bin/codex",
+    codexCommandAvailable: action !== "uninstall",
     installMethod: action === "check-version" ? null : "mock",
-    pathChanged: action !== "check-version" && !host.pathHasLocalBin,
-    shellConfigPath: action === "check-version" ? null : "$HOME/.bashrc",
-    backupPath: action === "check-version" ? null : "$HOME/.bashrc.codexhub.bak.mock",
+    pathChanged: action !== "check-version" && action !== "uninstall" && !host.pathHasLocalBin,
+    shellConfigPath: action === "check-version" || action === "uninstall" ? null : "$HOME/.bashrc",
+    backupPath:
+      action === "check-version"
+        ? null
+        : action === "uninstall"
+          ? null
+          : "$HOME/.bashrc.codexhub.bak.mock",
     message,
     task
   };
@@ -778,11 +791,12 @@ async function mockRemoteManageCodexWithProgress(
   emit("ssh-check", "running", `Checking SSH connection to ${host.hostAlias}.`);
   await delay(80);
   emit("ssh-check", "success", `SSH connection to ${host.hostAlias} returned ok.`);
-  emit(action === "install" ? "Install Codex" : "Update Codex", "running", "Starting remote Codex maintenance.");
+  const operationStep = action === "install" ? "Install Codex" : action === "update" ? "Update Codex" : "Uninstall Codex";
+  emit(operationStep, "running", "Starting remote Codex maintenance.");
   await delay(100);
-  emit(action === "install" ? "Install Codex" : "Update Codex", "stdout", "Downloading Codex package.", "Downloading Codex package.");
+  emit(operationStep, "stdout", action === "uninstall" ? "Removing Codex package." : "Downloading Codex package.", action === "uninstall" ? "Removing Codex package." : "Downloading Codex package.");
   await delay(100);
-  emit("codex --version after maintenance", "stdout", "codex-cli 0.32.0", "codex-cli 0.32.0");
+  emit("codex --version after maintenance", action === "uninstall" ? "failed" : "stdout", action === "uninstall" ? "codex not installed" : "codex-cli 0.32.0", action === "uninstall" ? "codex not installed" : "codex-cli 0.32.0");
   await delay(60);
   const result = mockRemoteManageCodex(hostAlias, action);
   emit("summary", result.ok ? "success" : "failed", result.message);

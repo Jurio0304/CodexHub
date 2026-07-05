@@ -399,7 +399,7 @@ export type RemoteProbeResult = {
   task: TaskRun;
 };
 
-export type RemoteCodexAction = "check-version" | "install" | "update";
+export type RemoteCodexAction = "check-version" | "install" | "update" | "uninstall";
 
 export type RemoteCodexProgressEvent = {
   requestId: string;

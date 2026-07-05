@@ -65,6 +65,20 @@ type CodexOperationModalState = {
   message?: string;
   error?: string;
 };
+type CodexUninstallConfirmState = {
+  hostAlias: string;
+  hostName: string;
+};
+type ProfileApplyOperationModalState = {
+  requestId: string;
+  profileName: string;
+  hostNames: string[];
+  status: CodexOperationModalStatus;
+  logs: Array<{ level: "info" | "warn" | "error"; message: string }>;
+  tasks: TaskRun[];
+  message?: string;
+  error?: string;
+};
 
 const CODEX_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2", "gpt-5-codex"];
 const REASONING_EFFORT_OPTIONS = ["low", "medium", "high", "xhigh"];
@@ -72,6 +86,10 @@ const DEFAULT_PROFILE_MODEL = "gpt-5-codex";
 const DEFAULT_PROFILE_PROVIDER = "openai";
 const DEFAULT_PROFILE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_PROFILE_API_KEY_ENV_VAR = "OPENAI_API_KEY";
+const APP_UPDATE_DAILY_CHECK_HOUR = 4;
+const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
+const PREVIEW_SIDEBAR_UPDATE_BUTTON =
+  viteEnv?.DEV === true && viteEnv?.VITE_CODEXHUB_PREVIEW_UPDATE_BUTTON === "1";
 const appLogoUrl = new URL("../figs/app-logo.png", import.meta.url).href;
 
 const uiCopy = {
@@ -228,6 +246,12 @@ const uiCopy = {
       installingCodex: "Installing...",
       updateCodex: "Update",
       updatingCodex: "Updating...",
+      uninstallCodex: "Uninstall",
+      uninstallingCodex: "Uninstalling...",
+      uninstallCodexConfirmTitle: (alias: string) => `Uninstall Codex from ${alias}`,
+      uninstallCodexConfirmBody:
+        "This will permanently delete the remote Codex installation, ~/.codex, CodexHub-managed env/API key files, and related Codex config/cache directories. No backup will be created.",
+      confirmUninstallCodex: "Uninstall",
       details: "Host details",
       detailsTitle: (alias: string) => `🖥️ Host · ${alias}`,
       detailsBody: "Connection status and remote Codex readiness from the latest test.",
@@ -331,6 +355,12 @@ const uiCopy = {
       noProfilesBody: "Create or import a profile to render remote Codex TOML.",
       noHostTargets: "No hosts available.",
       applySuccess: (name: string, count: number) => `${name} applied to ${count} host${count === 1 ? "" : "s"}.`,
+      applyOperationTitle: "Apply API config",
+      applyOperationStarted: (name: string, count: number) => `Applying ${name} to ${count} selected host${count === 1 ? "" : "s"}.`,
+      applyOperationWaiting: "Running remote config scripts...",
+      applyOperationSuccess: (name: string, count: number) => `${name} finished on ${count} host${count === 1 ? "" : "s"}.`,
+      applyOperationFailed: "One or more hosts failed to apply this API config.",
+      alreadyApplied: "Already applied",
       importReady: (count: number) => `${count} profiles imported.`,
       deleteConfirm: (name: string) => `Delete profile ${name}?`,
       ccSwitchFound: (count: number) => `${count} cc-switch profiles detected.`,
@@ -356,6 +386,7 @@ const uiCopy = {
       waiting: "Waiting for remote output...",
       installHint: "Install can try official download, mirror fallback, local upload, then version check.",
       updateHint: "Update can try official download, mirror fallback, local upload, then version check.",
+      uninstallHint: "Uninstall permanently deletes remote Codex files, config, and CodexHub-managed env/API key files.",
       noLogs: "No task log returned yet.",
       hide: "Hide",
       close: "Close",
@@ -458,6 +489,7 @@ const uiCopy = {
         "Check Codex version": "Check Codex version",
         "Install Codex": "Install Codex",
         "Update Codex": "Update Codex",
+        "Uninstall Codex": "Uninstall Codex",
         "List remote skills": "List remote skills",
         "Preview skill install": "Preview skill install",
         "Install skill": "Install skill",
@@ -483,6 +515,7 @@ const uiCopy = {
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
       appUpdates: "🧭 Version info",
+      dailyUpdateCheck: "Daily check: 04:00",
       closeButton: "⚙️ Other",
       closeButtonBehavior: "Program close button behavior",
       softwareName: "Software",
@@ -497,6 +530,8 @@ const uiCopy = {
       checkStableUpdate: "Check",
       updateChecking: "Checking...",
       installStableUpdate: "Update",
+      sidebarInstallStableUpdate: "Update",
+      previewUpdateButtonNotice: "Dev preview: this button is shown for visual inspection only.",
       updateInstalling: "Installing...",
       refresh: "Refresh",
       generating: "Generating...",
@@ -713,6 +748,12 @@ const uiCopy = {
       installingCodex: "安装中...",
       updateCodex: "更新",
       updatingCodex: "更新中...",
+      uninstallCodex: "卸载",
+      uninstallingCodex: "卸载中...",
+      uninstallCodexConfirmTitle: (alias: string) => `卸载 ${alias} 上的 Codex`,
+      uninstallCodexConfirmBody:
+        "这会永久删除远端 Codex 安装、~/.codex、CodexHub 管理的 env/API key 文件，以及相关 Codex 配置/缓存目录。不会创建备份。",
+      confirmUninstallCodex: "卸载",
       details: "主机详情",
       detailsTitle: (alias: string) => `🖥️ 主机 · ${alias}`,
       detailsBody: "展示最近一次测试得到的连接状态与远端 Codex 就绪度。",
@@ -816,6 +857,12 @@ const uiCopy = {
       noProfilesBody: "新建或导入配置后即可渲染远端 Codex TOML。",
       noHostTargets: "暂无可用主机。",
       applySuccess: (name: string, count: number) => `已将 ${name} 应用到 ${count} 台主机。`,
+      applyOperationTitle: "应用 API 配置",
+      applyOperationStarted: (name: string, count: number) => `正在将 ${name} 应用到 ${count} 台已选主机。`,
+      applyOperationWaiting: "正在执行远端配置脚本...",
+      applyOperationSuccess: (name: string, count: number) => `${name} 已在 ${count} 台主机完成。`,
+      applyOperationFailed: "部分主机应用 API 配置失败。",
+      alreadyApplied: "已应用",
       importReady: (count: number) => `已导入 ${count} 个配置。`,
       deleteConfirm: (name: string) => `删除配置 ${name}？`,
       ccSwitchFound: (count: number) => `检测到 ${count} 个 cc-switch 配置。`,
@@ -841,6 +888,7 @@ const uiCopy = {
       waiting: "正在等待远端输出...",
       installHint: "安装会尝试官方下载、镜像兜底、本地上传，然后检查版本。",
       updateHint: "更新会尝试官方下载、镜像兜底、本地上传，然后检查版本。",
+      uninstallHint: "卸载会永久删除远端 Codex 文件、配置以及 CodexHub 管理的 env/API key 文件。",
       noLogs: "尚未返回任务日志。",
       hide: "隐藏",
       close: "关闭",
@@ -943,6 +991,7 @@ const uiCopy = {
         "Check Codex version": "检查 Codex 版本",
         "Install Codex": "安装 Codex",
         "Update Codex": "更新 Codex",
+        "Uninstall Codex": "卸载 Codex",
         "List remote skills": "列出远端 Skills",
         "Preview skill install": "预览 Skill 安装",
         "Install skill": "安装 Skill",
@@ -968,6 +1017,7 @@ const uiCopy = {
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
       appUpdates: "🧭 版本信息",
+      dailyUpdateCheck: "每日 04:00 自动检查",
       closeButton: "⚙️ 其他",
       closeButtonBehavior: "程序关闭按钮行为",
       softwareName: "软件名",
@@ -982,6 +1032,8 @@ const uiCopy = {
       checkStableUpdate: "检查",
       updateChecking: "检查中...",
       installStableUpdate: "更新",
+      sidebarInstallStableUpdate: "更新",
+      previewUpdateButtonNotice: "Dev 预览：此按钮仅用于视觉检查。",
       updateInstalling: "安装中...",
       refresh: "刷新",
       generating: "生成中...",
@@ -1054,6 +1106,13 @@ function visibleSshConfigHostsForHosts(configHosts: SshConfigHost[], appHosts: H
   return configHosts.filter((host) => aliases.has(host.alias.toLowerCase()));
 }
 
+function nextDailyAppUpdateCheckAt(now = new Date()) {
+  const next = new Date(now);
+  next.setHours(APP_UPDATE_DAILY_CHECK_HOUR, 0, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  return next;
+}
+
 function sectionOperationTone(result: unknown): SectionCompletionTone {
   if (result && typeof result === "object") {
     const candidate = result as { ok?: unknown; state?: unknown; status?: unknown; message?: unknown; task?: TaskRun };
@@ -1094,6 +1153,7 @@ function App() {
   const [hostModalOpen, setHostModalOpen] = useState(false);
   const [newProfileRequest, setNewProfileRequest] = useState(0);
   const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
+  const [codexUninstallConfirm, setCodexUninstallConfirm] = useState<CodexUninstallConfirmState | null>(null);
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("language");
   const [setupGuideSshConfigHosts, setSetupGuideSshConfigHosts] = useState<SshConfigHost[]>([]);
@@ -1103,14 +1163,32 @@ function App() {
   const [sectionCompletionSignals, setSectionCompletionSignals] = useState<SectionCompletionSignals>({});
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
   const sidebarCompletionIndicatorsRef = useRef(settings.sidebarCompletionIndicators);
+  const appUpdateStatusRef = useRef(fallbackAppUpdateStatus);
+  const appUpdateBusyRef = useRef(false);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
+  const appUpdateBusy = appUpdateChecking || appUpdateInstalling;
+  const previewSidebarStableUpdateButton = PREVIEW_SIDEBAR_UPDATE_BUTTON && appUpdateStatus.channel === "dev";
+  const showSidebarStableUpdateButton =
+    previewSidebarStableUpdateButton ||
+    (appUpdateStatus.channel === "stable" && (appUpdateStatus.state === "available" || appUpdateInstalling));
+  const canInstallSidebarStableUpdate =
+    previewSidebarStableUpdateButton ||
+    (appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy);
 
   useEffect(() => {
     sidebarCompletionIndicatorsRef.current = settings.sidebarCompletionIndicators;
     if (!settings.sidebarCompletionIndicators) setSectionCompletionSignals({});
   }, [settings.sidebarCompletionIndicators]);
+
+  useEffect(() => {
+    appUpdateStatusRef.current = appUpdateStatus;
+  }, [appUpdateStatus]);
+
+  useEffect(() => {
+    appUpdateBusyRef.current = appUpdateChecking || appUpdateInstalling;
+  }, [appUpdateChecking, appUpdateInstalling]);
 
   const clearSectionCompletionSignal = useCallback((section: SectionId) => {
     setSectionCompletionSignals((current) => {
@@ -1209,50 +1287,61 @@ function App() {
     return latest;
   };
 
-  const refreshTasks = async () => {
+  const refreshTasks = useCallback(async () => {
     const nextTasks = normalizeTaskRunsForUi(await api.listTasks());
     setTasks(nextTasks);
     return nextTasks;
-  };
+  }, []);
+
+  const runStableUpdateCheck = useCallback(async (mode: "manual" | "daily" = "manual") => {
+    const currentStatus = appUpdateStatusRef.current;
+    if (mode === "daily" && (currentStatus.channel !== "stable" || appUpdateBusyRef.current)) {
+      return currentStatus;
+    }
+    const showFeedback = mode === "manual";
+    setAppUpdateChecking(true);
+    setAppUpdateStatus((current) => ({
+      ...current,
+      state: "checking",
+      message: copy.settings.updateChecking
+    }));
+    try {
+      const nextStatus = await api.checkStableUpdate();
+      setAppUpdateStatus(nextStatus);
+      if (showFeedback) setNotice(nextStatus.message);
+      const nextTasks = await refreshTasks();
+      if (nextStatus.state === "error") {
+        const recordedTask = latestAppUpdateTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus);
+        if (showFeedback) {
+          setAppUpdateFailureTask(recordedTask);
+        }
+        if (!nextTasks.some((task) => task.id === recordedTask.id)) {
+          setTasks((current) => [recordedTask, ...current]);
+        }
+      }
+      return nextStatus;
+    } catch (error) {
+      const message = formatError(error);
+      const task = createLocalAppUpdateTask(message, currentStatus);
+      const errorStatus = {
+        ...currentStatus,
+        state: "error" as const,
+        message
+      };
+      if (showFeedback) {
+        setNotice(message);
+        setAppUpdateFailureTask(task);
+      }
+      setAppUpdateStatus(errorStatus);
+      setTasks((current) => [task, ...current]);
+      return errorStatus;
+    } finally {
+      setAppUpdateChecking(false);
+    }
+  }, [copy.settings.updateChecking, refreshTasks]);
 
   const handleCheckStableUpdate = async () => {
-    return runSectionOperation("settings", async () => {
-      setAppUpdateChecking(true);
-      setAppUpdateStatus((current) => ({
-        ...current,
-        state: "checking",
-        message: copy.settings.updateChecking
-      }));
-      try {
-        const nextStatus = await api.checkStableUpdate();
-        setAppUpdateStatus(nextStatus);
-        setNotice(nextStatus.message);
-        const nextTasks = await refreshTasks();
-        if (nextStatus.state === "error") {
-          const recordedTask = latestAppUpdateTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus);
-          setAppUpdateFailureTask(recordedTask);
-          if (!nextTasks.some((task) => task.id === recordedTask.id)) {
-            setTasks((current) => [recordedTask, ...current]);
-          }
-        }
-        return nextStatus;
-      } catch (error) {
-        const message = formatError(error);
-        const task = createLocalAppUpdateTask(message, appUpdateStatus);
-        const errorStatus = {
-          ...appUpdateStatus,
-          state: "error" as const,
-          message
-        };
-        setNotice(message);
-        setAppUpdateStatus(errorStatus);
-        setTasks((current) => [task, ...current]);
-        setAppUpdateFailureTask(task);
-        return errorStatus;
-      } finally {
-        setAppUpdateChecking(false);
-      }
-    });
+    return runSectionOperation("settings", () => runStableUpdateCheck("manual"));
   };
 
   const handleInstallStableUpdate = async () => {
@@ -1271,7 +1360,7 @@ function App() {
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stable update install failed.";
         const errorStatus = {
-          ...appUpdateStatus,
+          ...appUpdateStatusRef.current,
           state: "error" as const,
           message
         };
@@ -1282,6 +1371,14 @@ function App() {
         setAppUpdateInstalling(false);
       }
     });
+  };
+
+  const handleSidebarStableUpdate = () => {
+    if (previewSidebarStableUpdateButton) {
+      setNotice(copy.settings.previewUpdateButtonNotice);
+      return;
+    }
+    void handleInstallStableUpdate();
   };
 
   useEffect(() => {
@@ -1321,6 +1418,25 @@ function App() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const scheduleNextAppUpdateCheck = () => {
+      const next = nextDailyAppUpdateCheckAt();
+      timer = window.setTimeout(() => {
+        if (cancelled) return;
+        void runStableUpdateCheck("daily").finally(() => {
+          if (!cancelled) scheduleNextAppUpdateCheck();
+        });
+      }, next.getTime() - Date.now());
+    };
+    scheduleNextAppUpdateCheck();
+    return () => {
+      cancelled = true;
+      if (typeof timer === "number") window.clearTimeout(timer);
+    };
+  }, [runStableUpdateCheck]);
 
   useEffect(() => {
     let mounted = true;
@@ -1596,7 +1712,7 @@ function App() {
   };
 
   const applyRemoteCodexResult = (result: RemoteCodexMaintenanceResult, action: RemoteCodexAction) => {
-    const resolvedVersion = result.afterVersion ?? result.beforeVersion;
+    const resolvedVersion = action === "uninstall" ? result.afterVersion : result.afterVersion ?? result.beforeVersion;
     const nextVersion = resolvedVersion ?? "not installed";
     const sshCheckFailed = result.message.toLowerCase().includes("ssh check failed");
     setHosts((current) =>
@@ -1617,13 +1733,13 @@ function App() {
     setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
   };
 
-  const handleRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
+  const runRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
     const section = activeSection;
     return runSectionOperation(section, async () => {
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
       const hostAlias = target?.hostAlias ?? idOrAlias;
       const hostName = target?.name ?? hostAlias;
-      const showProgressModal = action === "install" || action === "update";
+      const showProgressModal = action === "install" || action === "update" || action === "uninstall";
       const requestId = showProgressModal ? `codex-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
       setHostBusy((current) => ({ ...current, [hostAlias]: action }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
@@ -1689,6 +1805,19 @@ function App() {
         });
       }
     });
+  };
+
+  const handleRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
+    const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
+    const hostAlias = target?.hostAlias ?? idOrAlias;
+    if (action === "uninstall") {
+      setCodexUninstallConfirm({
+        hostAlias,
+        hostName: target?.name ?? hostAlias
+      });
+      return { ok: true };
+    }
+    return runRemoteCodexAction(hostAlias, action);
   };
 
   const handleUpdateOutdatedCodexHosts = async (aliases: string[]) => {
@@ -2272,6 +2401,16 @@ function App() {
           <div>
             <strong>{copy.common.backendMode}</strong>
           </div>
+          {showSidebarStableUpdateButton ? (
+            <button
+              className="sidebarUpdateButton"
+              disabled={!canInstallSidebarStableUpdate}
+              type="button"
+              onClick={handleSidebarStableUpdate}
+            >
+              {appUpdateInstalling ? copy.settings.updateInstalling : copy.settings.sidebarInstallStableUpdate}
+            </button>
+          ) : null}
         </div>
       </aside>
 
@@ -2299,6 +2438,18 @@ function App() {
 
         {renderContent()}
       </main>
+      {codexUninstallConfirm ? (
+        <CodexUninstallConfirmModal
+          copy={copy}
+          target={codexUninstallConfirm}
+          onCancel={() => setCodexUninstallConfirm(null)}
+          onConfirm={() => {
+            const target = codexUninstallConfirm;
+            setCodexUninstallConfirm(null);
+            void runRemoteCodexAction(target.hostAlias, "uninstall");
+          }}
+        />
+      ) : null}
       {codexOperationModal ? (
         <CodexOperationModal
           copy={copy}
@@ -2564,6 +2715,39 @@ function EmptyListState({
   );
 }
 
+function CodexUninstallConfirmModal({
+  copy,
+  target,
+  onCancel,
+  onConfirm
+}: {
+  copy: UICopy;
+  target: CodexUninstallConfirmState;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal simpleDeleteModal" role="dialog" aria-modal="true" aria-labelledby="codex-uninstall-confirm-title">
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="codex-uninstall-confirm-title">{copy.hosts.uninstallCodexConfirmTitle(target.hostAlias)}</h2>
+            <p>{copy.hosts.uninstallCodexConfirmBody}</p>
+          </div>
+        </div>
+        <div className="modalActions">
+          <button className="secondaryButton" type="button" onClick={onCancel}>
+            {copy.hosts.cancel}
+          </button>
+          <button className="primaryButton dangerButton" type="button" onClick={onConfirm}>
+            {copy.hosts.confirmUninstallCodex}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function CodexOperationModal({
   copy,
   operation,
@@ -2586,7 +2770,7 @@ function CodexOperationModal({
     { level: "info" as const, message: copy.codexOperation.waiting, detail: actionLabel },
     {
       level: "warn" as const,
-      message: operation.action === "install" ? copy.codexOperation.installHint : copy.codexOperation.updateHint,
+      message: codexOperationHint(copy, operation.action),
       detail: ""
     }
   ];
@@ -2626,7 +2810,6 @@ function CodexOperationModal({
                   <div className="codexOperationLogRow" data-level={progressLogLevel(log)} key={`${log.step}-${log.status}-${index}`}>
                     <strong>{progressLogLabel(copy, log)}</strong>
                     <span>{log.message}</span>
-                    {compactProgressLogDetail(log) ? <code>{compactProgressLogDetail(log)}</code> : null}
                   </div>
                 ))
               : operation.status === "running"
@@ -2634,7 +2817,6 @@ function CodexOperationModal({
                   <div className="codexOperationLogRow" data-level={log.level} key={`${log.message}-${index}`}>
                     <strong>{copy.status.log[log.level]}</strong>
                     <span>{log.message}</span>
-                    {log.detail ? <code>{log.detail}</code> : null}
                   </div>
                 ))
                 : taskLogs.length > 0
@@ -2642,7 +2824,6 @@ function CodexOperationModal({
                     <div className="codexOperationLogRow" data-level={log.level} key={log.id}>
                       <strong>{copy.status.log[log.level]}</strong>
                       <span>{log.message}</span>
-                      {compactTaskLogDetail(log) ? <code>{compactTaskLogDetail(log)}</code> : null}
                     </div>
                   ))
                   : (
@@ -3019,6 +3200,7 @@ function HostsView({
                   const codexTested = isHostCodexTested(host);
                   const installDisabled = Boolean(busy) || !codexTested || Boolean(host?.codexInstalled);
                   const updateDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled || !isCodexVersionBehind(host.codexVersion, latestCodexVersion?.version);
+                  const uninstallDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled;
 
                   return (
                     <tr className="selectableRow" data-selected={selectedHostAlias === sshHost.alias} key={sshHost.alias} onClick={() => setSelectedHostAlias(sshHost.alias)}>
@@ -3045,6 +3227,9 @@ function HostsView({
                           </button>
                           <button className="miniButton" disabled={updateDisabled} type="button" onClick={(event) => { event.stopPropagation(); onManageCodex(sshHost.alias, "update"); }}>
                             {remoteCodexButtonLabel(copy, busy, "update")}
+                          </button>
+                          <button className="miniButton danger" disabled={uninstallDisabled} type="button" onClick={(event) => { event.stopPropagation(); onManageCodex(sshHost.alias, "uninstall"); }}>
+                            {remoteCodexButtonLabel(copy, busy, "uninstall")}
                           </button>
                         </div>
                       </td>
@@ -3392,6 +3577,17 @@ function HostDetailsPanel({
   );
 }
 
+function profileApplyEligibleHostIds(profile: Profile | null, hosts: Host[], hostIds: string[]) {
+  if (!profile) return [];
+  const requested = new Set(hostIds);
+  // Only hosts not already confirmed on this API config should be sent to apply.
+  return hosts.filter((host) => requested.has(host.id) && !profileMatchesConfirmedHostApiConfig(profile, host)).map((host) => host.id);
+}
+
+function profileApplyHostDisplayName(host: Host) {
+  return host.name === host.hostAlias ? host.name : `${host.name} (${host.hostAlias})`;
+}
+
 function ProfilesView({
   copy,
   hosts,
@@ -3430,9 +3626,11 @@ function ProfilesView({
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(profiles[0]?.id ?? null);
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? profiles[0] ?? null;
-  const [selectedHostIds, setSelectedHostIds] = useState<string[]>(() => selectedProfile?.hostIds ?? []);
+  const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<ProfileApplyPreview | null>(null);
   const [applyResult, setApplyResult] = useState<ProfileApplyBatchResult | null>(null);
+  const [profileApplyOperation, setProfileApplyOperation] = useState<ProfileApplyOperationModalState | null>(null);
+  const [profileApplyRunningHostIds, setProfileApplyRunningHostIds] = useState<string[]>([]);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [hostPickerProfileId, setHostPickerProfileId] = useState<string | null>(null);
@@ -3462,12 +3660,11 @@ function ProfilesView({
     }
     return new Map(Array.from(counts.entries()).map(([profileId, profileHosts]) => [profileId, profileHosts.size]));
   }, [hosts, profiles]);
-  const selectedAppliedHostIds = useMemo(() => {
-    if (!selectedProfile) return [];
-    return hosts
-      .filter((host) => profileMatchesConfirmedHostApiConfig(selectedProfile, host))
-      .map((host) => host.id);
-  }, [hosts, selectedProfile]);
+  const selectedApplyHostIds = useMemo(
+    () => profileApplyEligibleHostIds(selectedProfile, hosts, selectedHostIds),
+    [hosts, selectedHostIds, selectedProfile]
+  );
+  const profileApplyRunningHostIdSet = useMemo(() => new Set(profileApplyRunningHostIds), [profileApplyRunningHostIds]);
 
   useEffect(() => {
     if (!selectedProfileId && profiles[0]) setSelectedProfileId(profiles[0].id);
@@ -3477,10 +3674,10 @@ function ProfilesView({
   }, [profiles, selectedProfileId]);
 
   useEffect(() => {
-    setSelectedHostIds(selectedAppliedHostIds);
+    setSelectedHostIds([]);
     setPreview(null);
     setApplyResult(null);
-  }, [selectedProfile?.id, selectedAppliedHostIds]);
+  }, [selectedProfile?.id]);
 
   useEffect(() => {
     if (newProfileRequest === lastNewProfileRequestRef.current) return;
@@ -3555,16 +3752,6 @@ function ProfilesView({
     return updated;
   };
 
-  const clearApplyState = () => {
-    setPreview(null);
-    setApplyResult(null);
-  };
-
-  const handleSelectAllHosts = () => {
-    setSelectedHostIds(hosts.map((host) => host.id));
-    clearApplyState();
-  };
-
   const handlePreview = async (hostIds = selectedHostIds) => {
     if (!selectedProfile || hostIds.length === 0) return;
     setSelectedHostIds(hostIds);
@@ -3575,28 +3762,77 @@ function ProfilesView({
     setPreview(result);
   };
 
-  const runProfileApply = async (profile: Profile, hostIds: string[], syncSelection = false) => {
-    if (hostIds.length === 0) return null;
-    if (syncSelection) {
-      setSelectedProfileId(profile.id);
-      setSelectedHostIds(hostIds);
-    }
-    const result = await runBusy("apply", () => onRunProfileApply(profile.id, hostIds));
-    if (syncSelection || selectedProfile?.id === profile.id) {
+  const runProfileApply = async (profile: Profile, hostIds: string[]) => {
+    const targetHostIds = profileApplyEligibleHostIds(profile, hosts, hostIds);
+    if (targetHostIds.length === 0) return null;
+    const targetHostIdSet = new Set(targetHostIds);
+    const targetHosts = hosts.filter((host) => targetHostIdSet.has(host.id));
+    const requestId = `profile-apply-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const hostNames = targetHosts.map(profileApplyHostDisplayName);
+    setSelectedProfileId(profile.id);
+    setSelectedHostIds(targetHostIds);
+    setApplyResult(null);
+    setProfileApplyRunningHostIds((current) => Array.from(new Set([...current, ...targetHostIds])));
+    setHostPickerProfileId((current) => (current === profile.id ? null : current));
+    setPreviewModalOpen(false);
+    setProfileApplyOperation({
+      requestId,
+      profileName: profile.name,
+      hostNames,
+      status: "running",
+      tasks: [],
+      message: copy.profiles.applyOperationStarted(profile.name, targetHostIds.length),
+      logs: [
+        { level: "info", message: copy.profiles.applyOperationStarted(profile.name, targetHostIds.length) },
+        { level: "info", message: copy.profiles.applyOperationWaiting }
+      ]
+    });
+    await waitForNextFrame();
+    try {
+      const result = await onRunProfileApply(profile.id, targetHostIds);
       setApplyResult(result);
       setPreview((current) => (current && current.profileId === profile.id ? { ...current, hostResults: result.results } : current));
+      const completedCount = result.results.filter((row) => row.status === "success" || row.status === "no-change").length;
+      const failedMessage = result.results.find((row) => row.status === "failed")?.message;
+      const resultLogs = result.results.map((row) => ({
+        level: row.status === "failed" ? ("error" as const) : ("info" as const),
+        message: `${row.hostName}: ${row.message}`
+      }));
+      setProfileApplyOperation((current) =>
+        current?.requestId === requestId
+          ? {
+              ...current,
+              status: result.ok ? "success" : "failed",
+              tasks: result.tasks,
+              message: result.ok
+                ? copy.profiles.applyOperationSuccess(profile.name, completedCount)
+                : failedMessage ?? copy.profiles.applyOperationFailed,
+              logs: [...current.logs, ...resultLogs].slice(-80)
+            }
+          : current
+      );
+      return result;
+    } catch (error) {
+      const errorMessage = formatError(error);
+      setProfileApplyOperation((current) =>
+        current?.requestId === requestId
+          ? {
+              ...current,
+              status: "failed",
+              error: errorMessage,
+              logs: [...current.logs, { level: "error" as const, message: errorMessage }].slice(-80)
+            }
+          : current
+      );
+      return null;
+    } finally {
+      setProfileApplyRunningHostIds((current) => current.filter((hostId) => !targetHostIdSet.has(hostId)));
     }
-    return result;
   };
 
   const handleApply = async (hostIds = selectedHostIds) => {
     if (!selectedProfile || hostIds.length === 0) return null;
-    return runProfileApply(selectedProfile, hostIds, true);
-  };
-
-  const toggleHost = (hostId: string) => {
-    setSelectedHostIds((current) => (current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]));
-    clearApplyState();
+    return runProfileApply(selectedProfile, hostIds);
   };
 
   const previewWithResults = preview && applyResult ? { ...preview, hostResults: applyResult.results } : preview;
@@ -3688,7 +3924,7 @@ function ProfilesView({
                     <td>
                       <button
                         className="miniButton"
-                        disabled={hosts.length === 0 || busy === "apply"}
+                        disabled={hosts.length === 0}
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
@@ -3712,10 +3948,6 @@ function ProfilesView({
           <div>
             <h2>{copy.profiles.applyConfig}</h2>
           </div>
-          <div className="topActions">
-            <button className="secondaryButton" disabled={hosts.length === 0} type="button" onClick={handleSelectAllHosts}>{copy.profiles.selectAll}</button>
-            <button className="primaryButton" disabled={!selectedProfile || selectedHostIds.length === 0 || busy === "apply"} type="button" onClick={() => void handleApply()}>{copy.profiles.applySelected}</button>
-          </div>
         </div>
 
         {hosts.length === 0 ? (
@@ -3735,20 +3967,14 @@ function ProfilesView({
               </thead>
               <tbody>
                 {hosts.map((host) => {
-                  const selected = selectedHostIds.includes(host.id);
+                  const alreadyApplied = selectedProfile ? profileMatchesConfirmedHostApiConfig(selectedProfile, host) : false;
                   const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
                   return (
                     <tr
-                      className="selectableRow"
-                      data-selected={selected}
                       key={host.id}
-                      onClick={() => toggleHost(host.id)}
                     >
                       <td className="sshHostsAliasCol">
-                        <label className="profileHostSelectCell" onClick={(event) => event.stopPropagation()}>
-                          <input checked={selected} type="checkbox" onChange={() => toggleHost(host.id)} />
-                          <strong>{host.hostAlias}</strong>
-                        </label>
+                        <strong>{host.hostAlias}</strong>
                       </td>
                       <td className="sshHostsSourceCol"><Badge tone={host.source === "managed" ? "blue" : "gray"}>{hostSourceLabel(copy, host)}</Badge></td>
                       <td className="sshHostsAddressCol">{host.address}</td>
@@ -3759,7 +3985,7 @@ function ProfilesView({
                           <button className="miniButton" disabled={!selectedProfile || busy === "preview"} type="button" onClick={(event) => { event.stopPropagation(); void handlePreview([host.id]); }}>
                             {copy.profiles.previewApply}
                           </button>
-                          <button className="miniButton" disabled={!selectedProfile || busy === "apply"} type="button" onClick={(event) => { event.stopPropagation(); void handleApply([host.id]); }}>
+                          <button className="miniButton" disabled={!selectedProfile || alreadyApplied || profileApplyRunningHostIdSet.has(host.id)} type="button" onClick={(event) => { event.stopPropagation(); void handleApply([host.id]); }}>
                             {copy.profiles.applyOne}
                           </button>
                         </div>
@@ -3785,13 +4011,13 @@ function ProfilesView({
       />
 
       <ProfileHostSelectModal
-        busy={busy}
+        applyingHostIds={profileApplyRunningHostIds}
         copy={copy}
         hosts={hosts}
         open={Boolean(hostPickerProfile)}
         profile={hostPickerProfile}
         profileById={profileById}
-        onApply={(profile, hostIds) => runProfileApply(profile, hostIds, true)}
+        onApply={(profile, hostIds) => runProfileApply(profile, hostIds)}
         onClose={() => setHostPickerProfileId(null)}
       />
 
@@ -3800,10 +4026,17 @@ function ProfilesView({
         copy={copy}
         open={previewModalOpen}
         preview={previewWithResults}
-        selectedCount={selectedHostIds.length}
+        selectedCount={selectedApplyHostIds.length}
         onApplySelected={() => void handleApply()}
         onClose={() => setPreviewModalOpen(false)}
       />
+      {profileApplyOperation ? (
+        <ProfileApplyOperationModal
+          copy={copy}
+          operation={profileApplyOperation}
+          onClose={() => setProfileApplyOperation(null)}
+        />
+      ) : null}
       {deleteProfile ? (
         <SimpleDeleteConfirmModal
           busy={busy === "delete"}
@@ -3819,7 +4052,7 @@ function ProfilesView({
 }
 
 function ProfileHostSelectModal({
-  busy,
+  applyingHostIds,
   copy,
   hosts,
   open,
@@ -3828,7 +4061,7 @@ function ProfileHostSelectModal({
   onApply,
   onClose
 }: {
-  busy: string | null;
+  applyingHostIds: string[];
   copy: UICopy;
   hosts: Host[];
   open: boolean;
@@ -3839,45 +4072,44 @@ function ProfileHostSelectModal({
 }) {
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const applyingHostIdSet = useMemo(() => new Set(applyingHostIds), [applyingHostIds]);
+  const eligibleHosts = useMemo(
+    () => profile ? hosts.filter((host) => !profileMatchesConfirmedHostApiConfig(profile, host) && !applyingHostIdSet.has(host.id)) : [],
+    [applyingHostIdSet, hosts, profile]
+  );
+  const eligibleHostIds = useMemo(() => eligibleHosts.map((host) => host.id), [eligibleHosts]);
+  const eligibleHostIdSet = useMemo(() => new Set(eligibleHostIds), [eligibleHostIds]);
+  const selectedEligibleHostIds = useMemo(
+    () => selectedHostIds.filter((hostId) => eligibleHostIdSet.has(hostId)),
+    [eligibleHostIdSet, selectedHostIds]
+  );
 
   useEffect(() => {
     if (!open || !profile) return;
-    setSelectedHostIds(
-      hosts
-        .filter((host) => profileMatchesConfirmedHostApiConfig(profile, host))
-        .map((host) => host.id)
-    );
+    setSelectedHostIds([]);
     setMessage(null);
-  }, [open, profile, hosts]);
+  }, [open, profile?.id]);
 
   if (!open || !profile) return null;
 
-  const toggleHost = (hostId: string) => {
+  const toggleHost = (host: Host) => {
+    if (profileMatchesConfirmedHostApiConfig(profile, host) || applyingHostIdSet.has(host.id)) return;
+    const hostId = host.id;
     setSelectedHostIds((current) => (current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]));
     setMessage(null);
   };
 
-  const handleApply = async () => {
-    if (selectedHostIds.length === 0 || busy === "apply") return;
+  const handleApply = () => {
+    if (selectedEligibleHostIds.length === 0) return;
     setMessage(null);
-    try {
-      const result = await onApply(profile, selectedHostIds);
-      if (!result) return;
-      if (!result.ok) {
-        setMessage(result.results.find((row) => row.status === "failed")?.message ?? copy.profiles.operationFailed);
-        return;
-      }
-      setMessage(copy.profiles.applySuccess(profile.name, selectedHostIds.length));
-      window.setTimeout(() => onClose(), 650);
-    } catch (error) {
-      setMessage(formatError(error));
-    }
+    void onApply(profile, selectedEligibleHostIds);
+    onClose();
   };
 
   return (
     <div className="modalBackdrop" role="presentation">
       <div className="sshHostModal profileHostSelectModal ProfileHostSelectModal" role="dialog" aria-modal="true" aria-labelledby="profile-host-select-title">
-        <button className="modalCloseButton" disabled={busy === "apply"} type="button" onClick={onClose} aria-label="Close">&times;</button>
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">&times;</button>
         <div className="modalHero">
           <h2 id="profile-host-select-title">🖥️ {copy.profiles.selectHosts}</h2>
         </div>
@@ -3885,11 +4117,17 @@ function ProfileHostSelectModal({
         <div className="profileHostSelectList">
           {hosts.map((host) => {
             const selected = selectedHostIds.includes(host.id);
+            const alreadyApplied = profileMatchesConfirmedHostApiConfig(profile, host);
+            const applying = applyingHostIdSet.has(host.id);
+            const disabled = alreadyApplied || applying;
             return (
-              <label className="profileHostSelectRow" data-selected={selected} key={host.id}>
-                <input checked={selected} disabled={busy === "apply"} type="checkbox" onChange={() => toggleHost(host.id)} />
+              <label className="profileHostSelectRow" data-disabled={disabled} data-selected={selected} key={host.id}>
+                <input checked={selected} disabled={disabled} type="checkbox" onChange={() => toggleHost(host)} />
                 <strong>{host.name}</strong>
-                <HostApiConfigBadge copy={copy} host={host} profileById={profileById} />
+                <span className="profileHostSelectStatus">
+                  <HostApiConfigBadge copy={copy} host={host} profileById={profileById} />
+                  {alreadyApplied ? <Badge tone="green">{copy.profiles.alreadyApplied}</Badge> : null}
+                </span>
               </label>
             );
           })}
@@ -3898,17 +4136,85 @@ function ProfileHostSelectModal({
         {message ? <p className="profileHostSelectMessage" role="status">{message}</p> : null}
 
         <div className="modalActions profileHostSelectActions">
-          <button className="secondaryButton" disabled={hosts.length === 0 || busy === "apply"} type="button" onClick={() => {
-            setSelectedHostIds(hosts.map((host) => host.id));
+          <button className="secondaryButton" disabled={eligibleHosts.length === 0} type="button" onClick={() => {
+            setSelectedHostIds(eligibleHostIds);
             setMessage(null);
           }}>
             {copy.profiles.selectAll}
           </button>
-          <button className="primaryButton" disabled={selectedHostIds.length === 0 || busy === "apply"} type="button" onClick={() => void handleApply()}>
+          <button className="primaryButton" disabled={selectedEligibleHostIds.length === 0} type="button" onClick={handleApply}>
             {copy.profiles.applySelected}
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProfileApplyOperationModal({
+  copy,
+  operation,
+  onClose
+}: {
+  copy: UICopy;
+  operation: ProfileApplyOperationModalState;
+  onClose: () => void;
+}) {
+  const statusTone = operation.status === "success" ? "green" : operation.status === "failed" ? "red" : "yellow";
+  const logRows = operation.logs.slice(-24);
+  const logRowsRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const logRowsElement = logRowsRef.current;
+    if (!logRowsElement) return;
+    logRowsElement.scrollTop = logRowsElement.scrollHeight;
+  }, [operation.logs.length, operation.status]);
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="codexOperationModal profileApplyOperationModal ProfileApplyOperationModal" role="dialog" aria-modal="true" aria-labelledby="profile-apply-operation-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}>
+          &times;
+        </button>
+        <div className="codexOperationHeader">
+          <div>
+            <h2 id="profile-apply-operation-title">{copy.profiles.applyOperationTitle}</h2>
+          </div>
+          <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
+        </div>
+
+        <div className="codexOperationSummary">
+          <span>{copy.codexOperation.summary}</span>
+          <strong>{operation.message ?? operation.error ?? copy.profiles.applyOperationWaiting}</strong>
+          <small>{operation.hostNames.join(", ")}</small>
+        </div>
+
+        <div className="codexOperationLog">
+          <div className="codexOperationLogTitle">
+            <span>{copy.codexOperation.latestLog}</span>
+            {operation.status === "running" ? <i aria-hidden="true" /> : null}
+          </div>
+          <div className="codexOperationLogRows" ref={logRowsRef}>
+            {logRows.length > 0 ? logRows.map((log, index) => (
+              <div className="codexOperationLogRow" data-level={log.level} key={`${log.message}-${index}`}>
+                <strong>{copy.status.log[log.level]}</strong>
+                <span>{log.message}</span>
+              </div>
+            )) : (
+              <div className="codexOperationLogRow" data-level={operation.status === "failed" ? "error" : "info"}>
+                <strong>{operation.status === "failed" ? copy.status.log.error : copy.status.log.info}</strong>
+                <span>{operation.error ?? copy.profiles.applyOperationWaiting}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="modalActions codexOperationActions">
+          <button className="secondaryButton" type="button" onClick={onClose}>
+            {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -5407,6 +5713,7 @@ function SettingsView({
         <div className="panelHeader compact">
           <div>
             <h2>{copy.settings.appUpdates}</h2>
+            <p className="appUpdateSchedule">{copy.settings.dailyUpdateCheck}</p>
           </div>
           <div className="topActions">
             <button className="secondaryButton" disabled={!canCheckStableUpdate} type="button" onClick={() => void onCheckStableUpdate()}>
@@ -5889,19 +6196,19 @@ function remoteCodexButtonLabel(copy: UICopy, busy: HostBusyAction | undefined, 
   if (busy === action) {
     if (action === "check-version") return copy.hosts.checkingVersion;
     if (action === "install") return copy.hosts.installingCodex;
+    if (action === "uninstall") return copy.hosts.uninstallingCodex;
     return copy.hosts.updatingCodex;
   }
   if (action === "check-version") return copy.hosts.checkVersion;
   if (action === "install") return copy.hosts.installCodex;
+  if (action === "uninstall") return copy.hosts.uninstallCodex;
   return copy.hosts.updateCodex;
 }
 
-function compactTaskLogDetail(log: TaskRun["logs"][number]) {
-  const detail = firstOutputLine(log.stderr) || firstOutputLine(log.stdout);
-  if (detail) return detail;
-  if (typeof log.exitCode === "number") return `exit ${log.exitCode}`;
-  if (typeof log.durationMs === "number") return `${log.durationMs} ms`;
-  return "";
+function codexOperationHint(copy: UICopy, action: RemoteCodexAction) {
+  if (action === "install") return copy.codexOperation.installHint;
+  if (action === "uninstall") return copy.codexOperation.uninstallHint;
+  return copy.codexOperation.updateHint;
 }
 
 function progressLogLevel(log: RemoteCodexProgressEvent): "info" | "warn" | "error" {
@@ -5912,19 +6219,6 @@ function progressLogLevel(log: RemoteCodexProgressEvent): "info" | "warn" | "err
 
 function progressLogLabel(copy: UICopy, log: RemoteCodexProgressEvent) {
   return copy.status.log[progressLogLevel(log)];
-}
-
-function compactProgressLogDetail(log: RemoteCodexProgressEvent) {
-  if (log.stderr) return log.stderr;
-  if (log.stdout) return log.stdout;
-  if (log.detail) return log.detail;
-  if (typeof log.exitCode === "number") return `exit ${log.exitCode}`;
-  if (typeof log.durationMs === "number") return `${log.durationMs} ms`;
-  return log.step;
-}
-
-function firstOutputLine(value: string | null | undefined) {
-  return value?.trim().split(/\r?\n/).find(Boolean) ?? "";
 }
 
 function waitForNextFrame() {

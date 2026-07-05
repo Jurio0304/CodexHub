@@ -263,6 +263,26 @@ dd {
 .sidebarFooter div {
   display: grid;
   gap: 2px;
+  min-width: 0;
+}
+
+.sidebarUpdateButton {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid color-mix(in srgb, var(--blue) 70%, var(--border));
+  border-radius: 10px;
+  padding: 6px 10px;
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 88%, #ffffff), var(--blue));
+  box-shadow: 0 7px 16px color-mix(in srgb, var(--blue) 18%, transparent);
+}
+
+.sidebarUpdateButton:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .statusDot {
@@ -890,13 +910,6 @@ tr:last-child td {
   min-width: 0;
 }
 
-.profileHostSelectCell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .profileApplyTable {
   width: 100%;
   min-width: 0;
@@ -922,6 +935,11 @@ tr:last-child td {
   width: 18%;
 }
 
+.profileApplyTable .sshHostsAliasCol strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .profileApplyTable .sshHostsSourceCol {
   width: 13%;
 }
@@ -941,10 +959,6 @@ tr:last-child td {
 .profileApplyTable .sshHostsActionsCol {
   width: 16%;
   white-space: normal;
-}
-
-.profileApplyTable .profileHostSelectCell {
-  flex-wrap: wrap;
 }
 
 .profileApplyTable .tableActions,
@@ -1656,6 +1670,13 @@ tr:last-child td {
   flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.appUpdateSchedule {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 .versionInfoTableWrap {
@@ -2587,6 +2608,7 @@ tr:last-child td {
   border-radius: 12px;
   padding: 9px;
   background: var(--surface-solid);
+  cursor: pointer;
 }
 
 .profileHostSelectRow[data-selected="true"] {
@@ -2594,9 +2616,27 @@ tr:last-child td {
   background: color-mix(in srgb, var(--blue) 8%, var(--surface-solid));
 }
 
+.profileHostSelectRow[data-disabled="true"] {
+  opacity: 0.68;
+  background: var(--surface-muted);
+  cursor: not-allowed;
+}
+
+.profileHostSelectRow[data-disabled="true"] input {
+  cursor: not-allowed;
+}
+
 .profileHostSelectRow strong {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.profileHostSelectStatus {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
 }
 
 .profileHostSelectMessage {
@@ -2951,6 +2991,10 @@ button:disabled {
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
 }
 
+.profileApplyOperationModal {
+  width: min(620px, 100%);
+}
+
 .codexOperationHeader {
   display: flex;
   align-items: center;
@@ -2987,6 +3031,14 @@ button:disabled {
   color: var(--text);
   font-size: 0.92rem;
   line-height: 1.45;
+}
+
+.codexOperationSummary small {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .codexOperationLog {

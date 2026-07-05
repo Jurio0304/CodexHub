@@ -718,6 +718,7 @@ enum RemoteCodexAction {
     CheckVersion,
     Install,
     Update,
+    Uninstall,
 }
 
 #[derive(Clone, Serialize)]
@@ -1438,6 +1439,214 @@ fi
 
 printf 'CODEXHUB_INSTALL_METHOD=failed\n'
 exit "$npm_status"
+"##;
+
+const CODEX_UNINSTALL_SCRIPT: &str = r##"set -u
+export CODEX_INSTALL_DIR="${CODEX_INSTALL_DIR:-$HOME/.local/bin}"
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+export PATH="$CODEX_INSTALL_DIR:$PATH"
+
+bin_path="$CODEX_INSTALL_DIR/codex"
+standalone_root="$CODEX_HOME/packages/standalone"
+hub_dir="$HOME/.codex-hub"
+hub_target_file="$hub_dir/codex-target"
+removed_paths=""
+
+append_marker_value() {
+  current=$1
+  value=$2
+  if [ -n "$current" ]; then
+    printf '%s;%s\n' "$current" "$value"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
+record_removed() {
+  target=$1
+  removed_paths=$(append_marker_value "$removed_paths" "$target")
+}
+
+remove_path() {
+  target=$1
+  case "$target" in
+    "" | "/" | "$HOME" | "$HOME/")
+      printf 'Refusing unsafe Codex uninstall path: %s\n' "$target" >&2
+      exit 2
+      ;;
+  esac
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    rm -rf "$target"
+    record_removed "$target"
+    printf 'Deleted %s\n' "$target"
+  fi
+}
+
+remove_marked_block() {
+  target=$1
+  begin=$2
+  end=$3
+  [ -f "$target" ] || return 0
+  if ! grep -F "$begin" "$target" >/dev/null 2>&1; then
+    return 0
+  fi
+  tmp_file="$target.codexhub.uninstall.tmp.$$"
+  awk -v begin="$begin" -v end="$end" '
+    $0 == begin { in_block = 1; next }
+    $0 == end && in_block { in_block = 0; next }
+    !in_block { print }
+  ' "$target" >"$tmp_file"
+  mv "$tmp_file" "$target"
+  printf 'Removed shell block from %s\n' "$target"
+}
+
+remove_shell_blocks() {
+  checked=""
+  for target in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zprofile"; do
+    case ";$checked;" in
+      *";$target;"*) continue ;;
+    esac
+    checked="${checked}${checked:+;}$target"
+    remove_marked_block "$target" "# >>> Codex installer >>>" "# <<< Codex installer <<<"
+    remove_marked_block "$target" "# >>> CodexHub managed PATH" "# <<< CodexHub managed PATH"
+    remove_marked_block "$target" "# >>> CodexHub managed env" "# <<< CodexHub managed env"
+  done
+}
+
+is_codexhub_launcher() {
+  [ -f "$bin_path" ] && head -n 8 "$bin_path" 2>/dev/null | grep -F "CodexHub managed launcher" >/dev/null 2>&1
+}
+
+read_real_path() {
+  target=$1
+  if command -v readlink >/dev/null 2>&1; then
+    readlink -f "$target" 2>/dev/null || readlink "$target" 2>/dev/null || printf '%s\n' "$target"
+  else
+    printf '%s\n' "$target"
+  fi
+}
+
+actual_path=""
+launcher_is_codexhub=no
+if is_codexhub_launcher; then
+  launcher_is_codexhub=yes
+  if [ -f "$hub_target_file" ]; then
+    actual_path=$(sed -n '1p' "$hub_target_file")
+  fi
+fi
+if [ -z "$actual_path" ]; then
+  if [ -e "$bin_path" ] || [ -L "$bin_path" ]; then
+    actual_path="$bin_path"
+  else
+    actual_path=$(command -v codex 2>/dev/null || true)
+  fi
+fi
+real_path=""
+if [ -n "$actual_path" ]; then
+  real_path=$(read_real_path "$actual_path")
+fi
+
+method=""
+command_to_run=""
+case "$real_path" in
+  "$standalone_root"/*)
+    method="official-standalone"
+    ;;
+esac
+if [ -z "$method" ] && { [ -e "$standalone_root" ] || [ -L "$standalone_root" ]; }; then
+  case "$actual_path" in
+    "$bin_path" | "")
+      method="official-standalone"
+      ;;
+  esac
+fi
+if [ -z "$method" ] && [ -n "$actual_path" ]; then
+  case "$actual_path" in
+    /opt/homebrew/* | /usr/local/*)
+      if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+        method="brew"
+        command_to_run="brew uninstall --cask codex"
+      fi
+      ;;
+  esac
+fi
+if [ -z "$method" ] && [ -f "$actual_path" ] && grep -F "#!/usr/bin/env node" "$actual_path" >/dev/null 2>&1; then
+  case "$actual_path" in
+    *".bun"*)
+      method="bun"
+      command_to_run="bun remove -g @openai/codex"
+      ;;
+    *)
+      method="npm"
+      case "$actual_path" in
+        "$HOME/.local/"* | "$CODEX_INSTALL_DIR/"*)
+          command_to_run="npm uninstall -g @openai/codex --prefix \"$HOME/.local\""
+          ;;
+        *)
+          command_to_run="npm uninstall -g @openai/codex"
+          ;;
+      esac
+      ;;
+  esac
+fi
+
+if [ -z "$method" ]; then
+  if [ -z "$actual_path" ] && { [ ! -e "$CODEX_HOME" ] && [ ! -L "$CODEX_HOME" ]; } && { [ ! -e "$hub_dir" ] && [ ! -L "$hub_dir" ]; }; then
+    printf 'Codex is already absent from the current user PATH.\n'
+    printf 'CODEXHUB_UNINSTALL_METHOD=not-installed\n'
+    printf 'CODEXHUB_REMOVED_PATH=\n'
+    printf 'CODEXHUB_BACKUP_PATH=\n'
+    exit 0
+  fi
+  method="direct-known-paths"
+fi
+
+case "$method" in
+  official-standalone)
+    printf 'Removing official standalone Codex files.\n'
+    ;;
+  brew | bun | npm)
+    command_name=${command_to_run%% *}
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+      printf '%s is required for official %s-managed Codex uninstall.\n' "$command_name" "$method" >&2
+      printf 'CODEXHUB_UNINSTALL_METHOD=%s\n' "$method"
+      printf 'CODEXHUB_REMOVED_PATH=%s\n' "$removed_paths"
+      printf 'CODEXHUB_BACKUP_PATH=\n'
+      exit 127
+    fi
+    printf 'Running official uninstall command: %s\n' "$command_to_run"
+    sh -c "$command_to_run"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      printf 'Official %s-managed Codex uninstall failed with status %s.\n' "$method" "$status" >&2
+      printf 'CODEXHUB_UNINSTALL_METHOD=%s\n' "$method"
+      printf 'CODEXHUB_REMOVED_PATH=%s\n' "$removed_paths"
+      printf 'CODEXHUB_BACKUP_PATH=\n'
+      exit "$status"
+    fi
+    ;;
+  direct-known-paths)
+    printf 'Removing Codex files from known user-scoped paths.\n'
+    ;;
+esac
+
+remove_path "$bin_path"
+remove_path "$CODEX_HOME"
+remove_path "$hub_dir"
+remove_path "$HOME/.cache/codex"
+remove_path "$HOME/.config/codex"
+remove_path "$HOME/.local/share/codex"
+remove_path "$HOME/.local/state/codex"
+remove_path "$HOME/.local/lib/node_modules/@openai/codex"
+remove_path "$HOME/.local/lib/node_modules/.bin/codex"
+if [ -d "$CODEX_INSTALL_DIR" ]; then
+  find "$CODEX_INSTALL_DIR" -mindepth 1 -maxdepth 1 -name '.codex.*' -exec rm -f {} +
+fi
+remove_shell_blocks
+
+printf 'CODEXHUB_UNINSTALL_METHOD=%s\n' "$method"
+printf 'CODEXHUB_REMOVED_PATH=%s\n' "$removed_paths"
+printf 'CODEXHUB_BACKUP_PATH=\n'
 "##;
 
 const CODEX_NATIVE_PLATFORM_SCRIPT: &str = r#"set -u
@@ -4212,6 +4421,141 @@ fn run_remote_manage_codex(
         };
     }
 
+    if action == RemoteCodexAction::Uninstall {
+        let uninstall_output = run_codex_step(
+            &alias,
+            &task_id,
+            &mut logs,
+            &mut next_log_index,
+            action_label,
+            CODEX_UNINSTALL_SCRIPT,
+            timeout,
+            TaskLogLevel::Error,
+            Some(&progress),
+        );
+        let uninstall_method = marker_value(&uninstall_output.stdout, "CODEXHUB_UNINSTALL_METHOD")
+            .filter(|value| value != "unsupported");
+        let backup_path = marker_value(&uninstall_output.stdout, "CODEXHUB_BACKUP_PATH");
+        let after_path = run_codex_step(
+            &alias,
+            &task_id,
+            &mut logs,
+            &mut next_log_index,
+            "resolve codex after uninstall",
+            &codex_path_probe_script(),
+            timeout,
+            TaskLogLevel::Warn,
+            Some(&progress),
+        );
+        let after_command_available_output = run_codex_step(
+            &alias,
+            &task_id,
+            &mut logs,
+            &mut next_log_index,
+            "check codex command in PATH after uninstall",
+            CODEX_COMMAND_AVAILABLE_SCRIPT,
+            timeout,
+            TaskLogLevel::Warn,
+            Some(&progress),
+        );
+        let after_version_output = run_codex_step(
+            &alias,
+            &task_id,
+            &mut logs,
+            &mut next_log_index,
+            "codex --version after uninstall",
+            &codex_version_probe_script(),
+            timeout,
+            TaskLogLevel::Warn,
+            Some(&progress),
+        );
+        let path_output = run_codex_step(
+            &alias,
+            &task_id,
+            &mut logs,
+            &mut next_log_index,
+            "echo $PATH after uninstall",
+            "printf '%s\n' \"$PATH\"",
+            timeout,
+            TaskLogLevel::Info,
+            Some(&progress),
+        );
+
+        let codex_path = output_trimmed(&after_path);
+        let codex_command_available = after_command_available_output.success();
+        let after_version = output_trimmed(&after_version_output);
+        let installed = codex_path.is_some() || after_version.is_some();
+        let ok = uninstall_output.success() && !installed && !codex_command_available;
+        let version_label = after_version.clone().unwrap_or_else(|| {
+            if codex_path.is_some() {
+                "unknown".into()
+            } else {
+                "not installed".into()
+            }
+        });
+        let message = if ok {
+            format!("{action_label} completed on {alias}; Codex is no longer available.")
+        } else if uninstall_output.success() {
+            format!(
+                "{action_label} completed on {alias}, but another Codex command is still available: {version_label}."
+            )
+        } else {
+            format!(
+                "{action_label} failed on {alias}: {}",
+                command_detail(&uninstall_output)
+            )
+        };
+        let task = codex_maintenance_task(
+            &task_id,
+            &host_id,
+            &host_name,
+            action_label,
+            if ok {
+                TaskStatus::Success
+            } else {
+                TaskStatus::Failed
+            },
+            &message,
+            logs,
+        );
+        update_host_codex_status(
+            state,
+            &alias,
+            installed,
+            &version_label,
+            path_has_local_bin(output_trimmed(&path_output).as_deref()),
+            codex_command_available,
+        );
+        emit_remote_codex_progress(
+            Some(&progress),
+            "summary",
+            if ok { "success" } else { "failed" },
+            message.clone(),
+            uninstall_method.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        record_task(state, task.clone());
+        return RemoteCodexMaintenanceResult {
+            host_alias: alias.clone(),
+            ok,
+            action: action.clone(),
+            before_version,
+            after_version,
+            codex_path,
+            codex_command_available,
+            install_method: uninstall_method,
+            path_changed: false,
+            shell_config_path: None,
+            backup_path,
+            message,
+            task,
+        };
+    }
+
     let path_repair_output = run_codex_step(
         &alias,
         &task_id,
@@ -5271,6 +5615,7 @@ fn remote_codex_action_label(action: &RemoteCodexAction) -> &'static str {
         RemoteCodexAction::CheckVersion => "Check Codex version",
         RemoteCodexAction::Install => "Install Codex",
         RemoteCodexAction::Update => "Update Codex",
+        RemoteCodexAction::Uninstall => "Uninstall Codex",
     }
 }
 
@@ -6956,22 +7301,22 @@ mod tests {
     #[test]
     fn github_release_api_url_supports_latest_and_tagged_feeds() {
         let latest =
-            Url::parse("https://github.com/Jurio0304/CodexHub/releases/latest/download/latest.json")
+            Url::parse("https://github.com/example-owner/CodexHub/releases/latest/download/latest.json")
                 .unwrap();
         let tagged =
-            Url::parse("https://github.com/Jurio0304/CodexHub/releases/download/v0.2.5/latest.json")
+            Url::parse("https://github.com/example-owner/CodexHub/releases/download/v0.2.6/latest.json")
                 .unwrap();
         let asset_api =
-            Url::parse("https://api.github.com/repos/Jurio0304/CodexHub/releases/assets/123")
+            Url::parse("https://api.github.com/repos/example-owner/CodexHub/releases/assets/123")
                 .unwrap();
 
         assert_eq!(
             github_release_api_url(&latest).as_deref(),
-            Some("https://api.github.com/repos/Jurio0304/CodexHub/releases/latest")
+            Some("https://api.github.com/repos/example-owner/CodexHub/releases/latest")
         );
         assert_eq!(
             github_release_api_url(&tagged).as_deref(),
-            Some("https://api.github.com/repos/Jurio0304/CodexHub/releases/tags/v0.2.5")
+            Some("https://api.github.com/repos/example-owner/CodexHub/releases/tags/v0.2.6")
         );
         assert!(is_github_release_asset_api_endpoint(&asset_api));
     }
@@ -7899,6 +8244,10 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert_eq!(
             serde_json::from_str::<RemoteCodexAction>("\"update\"").expect("deserialize"),
             RemoteCodexAction::Update
+        );
+        assert_eq!(
+            serde_json::to_string(&RemoteCodexAction::Uninstall).expect("serialize"),
+            "\"uninstall\""
         );
     }
 

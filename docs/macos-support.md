@@ -1,6 +1,6 @@
 # CodexHub macOS Support
 
-Status: macOS release-build support is merged into `master`. The v0.2.5 macOS public artifact is unsigned/ad-hoc and still requires real Mac validation before treating behavior as fully verified.
+Status: macOS release-build support is merged into `master`. The v0.2.6 macOS public artifact is unsigned/ad-hoc and still requires real Mac validation before treating behavior as fully verified.
 
 CodexHub remains conservative: it writes CodexHub-managed SSH blocks to the user's SSH config, avoids Codex App private state, and keeps remote Codex work on the existing SSH/SFTP path. macOS support is buildable and mock-testable from Windows, but GUI behavior, installed app behavior, Gatekeeper, signing, and notarization require a real Mac.
 
