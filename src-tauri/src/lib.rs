@@ -7353,7 +7353,7 @@ mod tests {
         )
         .unwrap();
         let tagged = Url::parse(
-            "https://github.com/example-owner/CodexHub/releases/download/v0.2.6/latest.json",
+            "https://github.com/example-owner/CodexHub/releases/download/v0.2.7/latest.json",
         )
         .unwrap();
         let asset_api =
@@ -7366,7 +7366,7 @@ mod tests {
         );
         assert_eq!(
             github_release_api_url(&tagged).as_deref(),
-            Some("https://api.github.com/repos/example-owner/CodexHub/releases/tags/v0.2.6")
+            Some("https://api.github.com/repos/example-owner/CodexHub/releases/tags/v0.2.7")
         );
         assert!(is_github_release_asset_api_endpoint(&asset_api));
     }
