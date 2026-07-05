@@ -30,6 +30,21 @@ export type AppUpdateStatus = {
   message: string;
 };
 
+export type NetworkProxyCandidate = {
+  source: string;
+  url: string | null;
+  available: boolean;
+  message: string;
+};
+
+export type NetworkProxyStatus = {
+  mode: "auto" | "direct" | "manual";
+  proxyUrl: string | null;
+  source: string | null;
+  message: string;
+  candidates: NetworkProxyCandidate[];
+};
+
 export type LatestCodexVersion = {
   version: string | null;
   checkedAt: string | null;

@@ -45,7 +45,7 @@ import type {
   TaskStatus
 } from "./models";
 import { applyAppSettings, fontPresets, loadLocalSettings } from "./settings";
-import type { AppSettings, CloseButtonBehavior, FontPreset, PlatformAppearance, ThemeChoice } from "./settings";
+import type { AppSettings, CloseButtonBehavior, FontPreset, NetworkProxyMode, PlatformAppearance, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
 type Locale = "en" | "zh";
@@ -514,7 +514,8 @@ const uiCopy = {
         "Delete SSH Host": "Delete SSH Host",
         "Delete profile": "Delete profile",
         "Delete skill": "Delete skill",
-        "Check app update": "Check app update"
+        "Check app update": "Check app update",
+        "Install app update": "Install app update"
       }
     },
     settings: {
@@ -536,6 +537,17 @@ const uiCopy = {
       dailyUpdateCheck: "Daily check: 04:00",
       closeButton: "⚙️ Other",
       closeButtonBehavior: "Program close button behavior",
+      networkProxy: "Network proxy",
+      networkProxyOptions: {
+        auto: "Auto",
+        direct: "Direct",
+        manual: "Manual"
+      },
+      networkProxyUrl: "Proxy URL",
+      networkProxyManualTitle: "Manual proxy",
+      networkProxyPort: "Proxy port",
+      networkProxyPortPlaceholder: "7890",
+      networkProxySave: "Save proxy",
       softwareName: "Software",
       currentVersion: "Current version",
       installedAt: "Installed at",
@@ -1031,7 +1043,8 @@ const uiCopy = {
         "Delete SSH Host": "删除 SSH Host",
         "Delete profile": "删除配置",
         "Delete skill": "删除 Skill",
-        "Check app update": "检查程序版本"
+        "Check app update": "检查程序版本",
+        "Install app update": "安装程序更新"
       }
     },
     settings: {
@@ -1053,6 +1066,17 @@ const uiCopy = {
       dailyUpdateCheck: "每日 04:00 自动检查",
       closeButton: "⚙️ 其他",
       closeButtonBehavior: "程序关闭按钮行为",
+      networkProxy: "网络代理",
+      networkProxyOptions: {
+        auto: "自动",
+        direct: "直连",
+        manual: "手动"
+      },
+      networkProxyUrl: "代理地址",
+      networkProxyManualTitle: "手动代理",
+      networkProxyPort: "代理端口",
+      networkProxyPortPlaceholder: "7890",
+      networkProxySave: "保存代理",
       softwareName: "软件名",
       currentVersion: "当前版本",
       installedAt: "安装时间",
@@ -1193,6 +1217,7 @@ function App() {
   const [setupGuideBusy, setSetupGuideBusy] = useState(false);
   const [closeButtonPromptOpen, setCloseButtonPromptOpen] = useState(false);
   const [closeButtonPromptBusy, setCloseButtonPromptBusy] = useState(false);
+  const [networkProxyManualOpen, setNetworkProxyManualOpen] = useState(false);
   const [sectionCompletionSignals, setSectionCompletionSignals] = useState<SectionCompletionSignals>({});
   const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
   const sidebarCompletionIndicatorsRef = useRef(settings.sidebarCompletionIndicators);
@@ -1389,9 +1414,18 @@ function App() {
         const nextStatus = await api.installStableUpdate();
         setAppUpdateStatus(nextStatus);
         setNotice(nextStatus.message);
+        const nextTasks = await refreshTasks();
+        if (nextStatus.state === "error") {
+          const recordedTask = latestAppInstallTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus, "Install app update");
+          setAppUpdateFailureTask(recordedTask);
+          if (!nextTasks.some((task) => task.id === recordedTask.id)) {
+            setTasks((current) => [recordedTask, ...current]);
+          }
+        }
         return nextStatus;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Stable update install failed.";
+        const task = createLocalAppUpdateTask(message, appUpdateStatusRef.current, "Install app update");
         const errorStatus = {
           ...appUpdateStatusRef.current,
           state: "error" as const,
@@ -1399,6 +1433,8 @@ function App() {
         };
         setAppUpdateStatus(errorStatus);
         setNotice(message);
+        setAppUpdateFailureTask(task);
+        setTasks((current) => [task, ...current]);
         return errorStatus;
       } finally {
         setAppUpdateInstalling(false);
@@ -2413,6 +2449,8 @@ function App() {
             onCopyPublicKey={handleCopyPublicKey}
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
             onGenerateEd25519Key={handleGenerateEd25519Key}
+            onNetworkProxyModeChange={(networkProxyMode) => persistSettings({ ...settings, networkProxyMode })}
+            onNetworkProxyManualRequest={() => setNetworkProxyManualOpen(true)}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
             onRefreshSsh={async () => {
               await runSectionOperation("settings", refreshSshState);
@@ -2549,6 +2587,17 @@ function App() {
               </div>
             </>
           )}
+        />
+      ) : null}
+      {networkProxyManualOpen ? (
+        <NetworkProxyManualModal
+          copy={copy}
+          initialValue={settings.networkProxyUrl}
+          onClose={() => setNetworkProxyManualOpen(false)}
+          onSave={(networkProxyUrl) => {
+            persistSettings({ ...settings, networkProxyMode: "manual", networkProxyUrl });
+            setNetworkProxyManualOpen(false);
+          }}
         />
       ) : null}
       {setupGuideOpen ? (
@@ -5437,6 +5486,63 @@ function SkillDownloadModal({
   );
 }
 
+function NetworkProxyManualModal({
+  copy,
+  initialValue,
+  onClose,
+  onSave
+}: {
+  copy: UICopy;
+  initialValue: string;
+  onClose: () => void;
+  onSave: (proxyPort: string) => void;
+}) {
+  const [proxyPort, setProxyPort] = useState(initialValue.trim() || "7890");
+  const canSubmit = proxyPort.trim().length > 0;
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    onSave(proxyPort.trim());
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="network-proxy-manual-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="network-proxy-manual-title">{copy.settings.networkProxyManualTitle}</h2>
+          </div>
+        </div>
+        <form className="skillDownloadForm networkProxyManualForm" onSubmit={handleSubmit}>
+          <label className="fieldGroup">
+            <span>{copy.settings.networkProxyPort}</span>
+            <input
+              autoFocus
+              inputMode="text"
+              onChange={(event) => setProxyPort(event.target.value)}
+              placeholder={copy.settings.networkProxyPortPlaceholder}
+              required
+              value={proxyPort}
+            />
+          </label>
+          <div className="modalActions">
+            <button className="secondaryButton" type="button" onClick={onClose}>
+              {copy.hosts.cancel}
+            </button>
+            <button className="primaryButton" disabled={!canSubmit} type="submit">
+              {copy.settings.networkProxySave}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function SkillPreviewModal({
   copy,
   skill,
@@ -6138,6 +6244,8 @@ function SettingsView({
   onCopyPublicKey,
   onFontPresetChange,
   onGenerateEd25519Key,
+  onNetworkProxyModeChange,
+  onNetworkProxyManualRequest,
   onPlatformAppearanceChange,
   onRefreshSsh,
   onSidebarCompletionIndicatorsChange,
@@ -6156,6 +6264,8 @@ function SettingsView({
   onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
   onGenerateEd25519Key: () => Promise<unknown>;
+  onNetworkProxyModeChange: (mode: NetworkProxyMode) => void;
+  onNetworkProxyManualRequest: () => void;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
   onRefreshSsh: () => Promise<unknown>;
   onSidebarCompletionIndicatorsChange: (enabled: boolean) => void;
@@ -6178,6 +6288,14 @@ function SettingsView({
     if (!publicKey) return;
     const copied = await onCopyPublicKey(publicKey);
     setPublicKeyCopied(copied);
+  };
+
+  const handleNetworkProxyChoice = (choice: NetworkProxyMode) => {
+    if (choice === "manual") {
+      onNetworkProxyManualRequest();
+      return;
+    }
+    onNetworkProxyModeChange(choice);
   };
 
   return (
@@ -6331,6 +6449,22 @@ function SettingsView({
               ))}
             </div>
           </div>
+
+          <div className="settingControlRow">
+            <span>{copy.settings.networkProxy}</span>
+            <div className="segmentedControl networkProxyControl" role="group" aria-label={copy.settings.networkProxy}>
+              {(["auto", "direct", "manual"] as NetworkProxyMode[]).map((choice) => (
+                <button
+                  data-active={settings.networkProxyMode === choice}
+                  key={choice}
+                  onClick={() => handleNetworkProxyChoice(choice)}
+                  type="button"
+                >
+                  {copy.settings.networkProxyOptions[choice]}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -6440,14 +6574,18 @@ function latestAppUpdateTask(tasks: TaskRun[]) {
   return tasks.find((task) => task.action === "Check app update") ?? null;
 }
 
-function createLocalAppUpdateTask(message: string, status: AppUpdateStatus): TaskRun {
+function latestAppInstallTask(tasks: TaskRun[]) {
+  return tasks.find((task) => task.action === "Install app update") ?? null;
+}
+
+function createLocalAppUpdateTask(message: string, status: AppUpdateStatus, action = "Check app update"): TaskRun {
   const now = new Date().toISOString();
   const taskId = `task-app-update-check-local-${Date.now()}`;
   return {
     id: taskId,
     hostId: "local-app",
     hostName: status.softwareName || "CodexHub",
-    action: "Check app update",
+    action,
     status: "failed",
     startedAt: now,
     endedAt: now,
@@ -6459,7 +6597,7 @@ function createLocalAppUpdateTask(message: string, status: AppUpdateStatus): Tas
         level: "error",
         timestamp: now,
         message,
-        command: "check_stable_update",
+        command: action === "Install app update" ? "install_stable_update" : "check_stable_update",
         stdout: [
           `softwareName: ${status.softwareName || "CodexHub"}`,
           `channel: ${status.channel}`,

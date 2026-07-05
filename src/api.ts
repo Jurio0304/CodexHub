@@ -14,6 +14,7 @@ import type {
   LatestCodexVersion,
   LocalCodexStatus,
   CcSwitchDetection,
+  NetworkProxyStatus,
   Profile,
   ProfileApiKeyResult,
   ProfileApplyBatchResult,
@@ -82,6 +83,14 @@ export const fallbackLatestCodexVersion: LatestCodexVersion = {
   checkedAt: "mock",
   source: "npm",
   error: null
+};
+
+export const fallbackNetworkProxyStatus: NetworkProxyStatus = {
+  mode: "auto",
+  proxyUrl: null,
+  source: null,
+  message: "The desktop backend is required to detect local proxy ports.",
+  candidates: []
 };
 
 export function fallbackLocalCodexStatus(): LocalCodexStatus {
@@ -1158,6 +1167,7 @@ export const api = {
   getAppUpdateStatus: () => safeInvoke<AppUpdateStatus>("get_app_update_status", undefined, fallbackAppUpdateStatus),
   checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update"),
   installStableUpdate: () => requiredInvoke<AppUpdateStatus>("install_stable_update"),
+  detectNetworkProxy: () => safeInvoke<NetworkProxyStatus>("detect_network_proxy", undefined, fallbackNetworkProxyStatus),
   getSettings: () =>
     safeInvoke<AppSettings>("get_settings", undefined, () => loadLocalSettings()).then((settings) => {
       const normalized = normalizeSettings(settings);

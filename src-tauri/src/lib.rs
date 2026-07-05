@@ -11,6 +11,7 @@ use std::env;
 use std::fmt::Display;
 use std::fs;
 use std::io::Write;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -822,6 +823,33 @@ enum CloseButtonBehavior {
     MinimizeToTray,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum NetworkProxyMode {
+    Auto,
+    Direct,
+    Manual,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkProxyCandidate {
+    source: String,
+    url: Option<String>,
+    available: bool,
+    message: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NetworkProxyStatus {
+    mode: NetworkProxyMode,
+    proxy_url: Option<String>,
+    source: Option<String>,
+    message: String,
+    candidates: Vec<NetworkProxyCandidate>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -831,6 +859,10 @@ struct AppSettings {
     platform_appearance: PlatformAppearance,
     #[serde(default = "default_close_button_behavior")]
     close_button_behavior: CloseButtonBehavior,
+    #[serde(default = "default_network_proxy_mode")]
+    network_proxy_mode: NetworkProxyMode,
+    #[serde(default)]
+    network_proxy_url: String,
     #[serde(default = "default_true")]
     sidebar_completion_indicators: bool,
     #[serde(default)]
@@ -844,6 +876,8 @@ impl Default for AppSettings {
             font_preset: FontPreset::English,
             platform_appearance: PlatformAppearance::Auto,
             close_button_behavior: CloseButtonBehavior::Ask,
+            network_proxy_mode: NetworkProxyMode::Auto,
+            network_proxy_url: String::new(),
             sidebar_completion_indicators: true,
             setup_guide_dismissed: false,
         }
@@ -1734,30 +1768,36 @@ async fn check_stable_update(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppUpdateStatus, String> {
-    let status = check_stable_update_status(app).await;
-    record_task(&state, app_update_check_task(&status));
+    let (status, attempts) = check_stable_update_status(app).await;
+    record_task(&state, app_update_check_task(&status, &attempts));
     Ok(status)
 }
 
-async fn check_stable_update_status(app: AppHandle) -> AppUpdateStatus {
+async fn check_stable_update_status(app: AppHandle) -> (AppUpdateStatus, Vec<String>) {
     let channel = current_app_channel(&app);
     let current_version = current_app_version(&app);
     if channel != "stable" {
-        return app_update_status_for_channel(
-            channel,
-            current_version,
-            Some(AppUpdateState::Disabled),
-            None,
+        return (
+            app_update_status_for_channel(
+                channel,
+                current_version,
+                Some(AppUpdateState::Disabled),
+                None,
+            ),
+            Vec::new(),
         );
     }
 
     let config = stable_updater_config();
     if !stable_updater_configured(&config) {
-        return app_update_status_for_channel(
-            channel,
-            current_version,
-            Some(AppUpdateState::PendingConfiguration),
-            None,
+        return (
+            app_update_status_for_channel(
+                channel,
+                current_version,
+                Some(AppUpdateState::PendingConfiguration),
+                None,
+            ),
+            Vec::new(),
         );
     }
 
@@ -1768,88 +1808,123 @@ async fn check_stable_update_status(app: AppHandle) -> AppUpdateStatus {
     {
         Some(endpoint) => endpoint,
         None => {
-            return app_update_status(
-                channel,
-                &current_version,
-                AppUpdateState::Error,
-                &config,
-                None,
-                Some(update_checked_at()),
-                "Stable updater endpoint is configured but invalid. Rebuild with a valid HTTPS feed URL.".into(),
+            return (
+                app_update_status(
+                    channel,
+                    &current_version,
+                    AppUpdateState::Error,
+                    &config,
+                    None,
+                    Some(update_checked_at()),
+                    "Stable updater endpoint is configured but invalid. Rebuild with a valid HTTPS feed URL.".into(),
+                ),
+                Vec::new(),
             );
         }
     };
     if endpoint.scheme() != "https" {
-        return app_update_status(
-            channel,
-            &current_version,
-            AppUpdateState::Error,
-            &config,
-            None,
-            Some(update_checked_at()),
-            "Stable updater endpoint must use HTTPS.".into(),
-        );
-    }
-
-    let pubkey = config.pubkey.clone().unwrap_or_default();
-    let endpoints = stable_update_endpoints(&endpoint).await;
-    let updater = match stable_updater(&app, pubkey, endpoints) {
-        Ok(updater) => updater,
-        Err(error) => {
-            return app_update_status(
+        return (
+            app_update_status(
                 channel,
                 &current_version,
                 AppUpdateState::Error,
                 &config,
                 None,
                 Some(update_checked_at()),
-                updater_error_message(
+                "Stable updater endpoint must use HTTPS.".into(),
+            ),
+            Vec::new(),
+        );
+    }
+
+    let pubkey = config.pubkey.clone().unwrap_or_default();
+    let settings = read_settings(&app);
+    let (routes, route_notes) = stable_update_network_routes(&settings);
+    let mut attempts = route_notes;
+    let mut last_error = None;
+
+    for route in routes {
+        let label = route.label();
+        let endpoints = stable_update_endpoints(&endpoint, route.proxy.as_ref()).await;
+        let updater = match stable_updater(&app, pubkey.clone(), endpoints, route.proxy.clone()) {
+            Ok(updater) => updater,
+            Err(error) => {
+                let message = updater_error_message(
                     "Stable updater could not initialize",
                     error,
                     "Verify the release feed and public signing key.",
-                ),
-            );
-        }
-    };
+                );
+                attempts.push(format!("{label}: {message}"));
+                last_error = Some(message);
+                continue;
+            }
+        };
 
-    match updater.check().await {
-        Ok(Some(update)) => app_update_status(
-            channel,
-            &current_version,
-            AppUpdateState::Available,
-            &config,
-            Some(update.version),
-            Some(update_checked_at()),
-            "A signed stable update is available. Use Install update to let Windows apply it."
-                .into(),
-        ),
-        Ok(None) => app_update_status(
-            channel,
-            &current_version,
-            AppUpdateState::UpToDate,
-            &config,
-            None,
-            Some(update_checked_at()),
-            "CodexHub stable is up to date.".into(),
-        ),
-        Err(error) => app_update_status(
+        match updater.check().await {
+            Ok(Some(update)) => {
+                attempts.push(format!("{label}: update {} is available", update.version));
+                return (
+                    app_update_status(
+                        channel,
+                        &current_version,
+                        AppUpdateState::Available,
+                        &config,
+                        Some(update.version),
+                        Some(update_checked_at()),
+                        format!("A signed stable update is available via {label}. Use Install update to let Windows apply it."),
+                    ),
+                    attempts,
+                );
+            }
+            Ok(None) => {
+                attempts.push(format!("{label}: CodexHub stable is up to date"));
+                return (
+                    app_update_status(
+                        channel,
+                        &current_version,
+                        AppUpdateState::UpToDate,
+                        &config,
+                        None,
+                        Some(update_checked_at()),
+                        format!("CodexHub stable is up to date via {label}."),
+                    ),
+                    attempts,
+                );
+            }
+            Err(error) => {
+                let message = updater_error_message(
+                    "Stable update check failed",
+                    error,
+                    "Verify the configured feed, signatures, and network path.",
+                );
+                attempts.push(format!("{label}: {message}"));
+                last_error = Some(message);
+            }
+        }
+    }
+
+    (
+        app_update_status(
             channel,
             &current_version,
             AppUpdateState::Error,
             &config,
             None,
             Some(update_checked_at()),
-            updater_error_message(
-                "Stable update check failed",
-                error,
-                "Verify the configured feed, signatures, and network path.",
+            format!(
+                "Stable update check failed across all network routes. {}",
+                last_error.unwrap_or_else(|| "No updater route was available.".into())
             ),
         ),
-    }
+        attempts,
+    )
 }
 
 #[tauri::command]
-async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String> {
+async fn install_stable_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AppUpdateStatus, String> {
     let channel = current_app_channel(&app);
     let current_version = current_app_version(&app);
     if channel != "stable" {
@@ -1902,77 +1977,98 @@ async fn install_stable_update(app: AppHandle) -> Result<AppUpdateStatus, String
     }
 
     let pubkey = config.pubkey.clone().unwrap_or_default();
-    let endpoints = stable_update_endpoints(&endpoint).await;
-    let updater = match stable_updater(&app, pubkey, endpoints) {
-        Ok(updater) => updater,
-        Err(error) => {
-            return Ok(app_update_status(
-                channel,
-                &current_version,
-                AppUpdateState::Error,
-                &config,
-                None,
-                Some(update_checked_at()),
-                updater_error_message(
+    let settings = read_settings(&app);
+    let (routes, route_notes) = stable_update_network_routes(&settings);
+    let mut attempts = route_notes;
+    let mut last_error = None;
+
+    for route in routes {
+        let label = route.label();
+        let endpoints = stable_update_endpoints(&endpoint, route.proxy.as_ref()).await;
+        let updater = match stable_updater(&app, pubkey.clone(), endpoints, route.proxy.clone()) {
+            Ok(updater) => updater,
+            Err(error) => {
+                let message = updater_error_message(
                     "Stable updater could not initialize",
                     error,
                     "Verify the release feed and public signing key.",
-                ),
-            ));
-        }
-    };
+                );
+                attempts.push(format!("{label}: {message}"));
+                last_error = Some(message);
+                continue;
+            }
+        };
 
-    match updater.check().await {
-        Ok(Some(update)) => {
-            let latest_version = update.version.clone();
-            match update.download_and_install(|_, _| {}, || {}).await {
-                Ok(()) => Ok(app_update_status(
+        match updater.check().await {
+            Ok(Some(update)) => {
+                let latest_version = update.version.clone();
+                attempts.push(format!("{label}: downloading update {latest_version}"));
+                match update.download_and_install(|_, _| {}, || {}).await {
+                    Ok(()) => {
+                        attempts.push(format!("{label}: installer started"));
+                        let status = app_update_status(
+                            channel,
+                            &current_version,
+                            AppUpdateState::Installing,
+                            &config,
+                            Some(latest_version),
+                            Some(update_checked_at()),
+                            format!("Stable update installer started via {label}. CodexHub will close while Windows applies the update."),
+                        );
+                        record_task(&state, app_update_install_task(&status, &attempts));
+                        return Ok(status);
+                    }
+                    Err(error) => {
+                        let message = updater_error_message(
+                            "Stable update install failed",
+                            error,
+                            "Verify the signed artifact, feed metadata, installer path, and proxy route.",
+                        );
+                        attempts.push(format!("{label}: {message}"));
+                        last_error = Some(message);
+                    }
+                }
+            }
+            Ok(None) => {
+                attempts.push(format!("{label}: CodexHub stable is up to date"));
+                let status = app_update_status(
                     channel,
                     &current_version,
-                    AppUpdateState::Installing,
+                    AppUpdateState::UpToDate,
                     &config,
-                    Some(latest_version),
+                    None,
                     Some(update_checked_at()),
-                    "Stable update installer started. CodexHub will close while Windows applies the update.".into(),
-                )),
-                Err(error) => Ok(app_update_status(
-                    channel,
-                    &current_version,
-                    AppUpdateState::Error,
-                    &config,
-                    Some(latest_version),
-                    Some(update_checked_at()),
-                    updater_error_message(
-                        "Stable update install failed",
-                        error,
-                        "Verify the signed artifact, feed metadata, and installer path.",
-                    ),
-                )),
+                    format!("CodexHub stable is up to date via {label}."),
+                );
+                record_task(&state, app_update_install_task(&status, &attempts));
+                return Ok(status);
+            }
+            Err(error) => {
+                let message = updater_error_message(
+                    "Stable update check failed",
+                    error,
+                    "Verify the configured feed, signatures, and network path.",
+                );
+                attempts.push(format!("{label}: {message}"));
+                last_error = Some(message);
             }
         }
-        Ok(None) => Ok(app_update_status(
-            channel,
-            &current_version,
-            AppUpdateState::UpToDate,
-            &config,
-            None,
-            Some(update_checked_at()),
-            "CodexHub stable is up to date.".into(),
-        )),
-        Err(error) => Ok(app_update_status(
-            channel,
-            &current_version,
-            AppUpdateState::Error,
-            &config,
-            None,
-            Some(update_checked_at()),
-            updater_error_message(
-                "Stable update check failed",
-                error,
-                "Verify the configured feed, signatures, and network path.",
-            ),
-        )),
     }
+
+    let status = app_update_status(
+        channel,
+        &current_version,
+        AppUpdateState::Error,
+        &config,
+        None,
+        Some(update_checked_at()),
+        format!(
+            "Stable update install failed across all network routes. {}",
+            last_error.unwrap_or_else(|| "No updater route was available.".into())
+        ),
+    );
+    record_task(&state, app_update_install_task(&status, &attempts));
+    Ok(status)
 }
 
 fn current_app_channel(app: &AppHandle) -> &'static str {
@@ -2077,9 +2173,223 @@ fn stable_updater_configured(config: &StableUpdaterConfig) -> bool {
     config.endpoint.is_some() && config.pubkey.is_some()
 }
 
-async fn stable_update_endpoints(endpoint: &Url) -> Vec<Url> {
+#[derive(Clone)]
+struct StableUpdateNetworkRoute {
+    source: String,
+    proxy: Option<Url>,
+}
+
+impl StableUpdateNetworkRoute {
+    fn direct() -> Self {
+        Self {
+            source: "direct".into(),
+            proxy: None,
+        }
+    }
+
+    fn label(&self) -> String {
+        match &self.proxy {
+            Some(proxy) => format!("{} {}", self.source, redact_proxy_url(proxy)),
+            None => self.source.clone(),
+        }
+    }
+}
+
+const LOCAL_PROXY_PORTS: &[u16] = &[7890, 7897, 7891, 1080, 10808, 8080, 9090, 20171];
+const PROXY_ENV_NAMES: &[&str] = &[
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+];
+
+fn normalize_proxy_url(value: &str) -> Option<Url> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(port) = trimmed.parse::<u16>() {
+        return Url::parse(&format!("http://127.0.0.1:{port}")).ok();
+    }
+    let candidate = if trimmed.contains("://") {
+        trimmed.to_owned()
+    } else {
+        format!("http://{trimmed}")
+    };
+    let url = Url::parse(&candidate).ok()?;
+    match url.scheme() {
+        "http" | "https" | "socks4" | "socks5" | "socks5h" => Some(url),
+        _ => None,
+    }
+}
+
+fn redact_proxy_url(url: &Url) -> String {
+    let mut redacted = url.clone();
+    if !redacted.username().is_empty() {
+        let _ = redacted.set_username("redacted");
+    }
+    if redacted.password().is_some() {
+        let _ = redacted.set_password(Some("redacted"));
+    }
+    redacted.to_string()
+}
+
+fn proxy_is_localhost(url: &Url) -> bool {
+    matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
+}
+
+fn localhost_proxy_port_is_open(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&address, Duration::from_millis(180)).is_ok()
+}
+
+fn proxy_candidate(source: String, url: Url) -> NetworkProxyCandidate {
+    let available = if proxy_is_localhost(&url) {
+        url.port()
+            .map(localhost_proxy_port_is_open)
+            .unwrap_or(false)
+    } else {
+        true
+    };
+    let message = if available {
+        "Proxy route is available for updater retry.".into()
+    } else {
+        "Local proxy port did not accept a TCP connection.".into()
+    };
+    NetworkProxyCandidate {
+        source,
+        url: Some(redact_proxy_url(&url)),
+        available,
+        message,
+    }
+}
+
+fn env_proxy_candidates() -> Vec<(String, Url)> {
+    let mut entries = Vec::new();
+    for name in PROXY_ENV_NAMES {
+        if let Ok(value) = env::var(name) {
+            if let Some(url) = normalize_proxy_url(&value) {
+                entries.push((format!("env:{name}"), url));
+            }
+        }
+    }
+    dedupe_proxy_entries(entries)
+}
+
+fn local_proxy_candidates() -> Vec<(String, Url)> {
+    LOCAL_PROXY_PORTS
+        .iter()
+        .filter(|port| localhost_proxy_port_is_open(**port))
+        .filter_map(|port| {
+            normalize_proxy_url(&format!("http://127.0.0.1:{port}"))
+                .map(|url| (format!("local-port:{port}"), url))
+        })
+        .collect()
+}
+
+fn dedupe_proxy_entries(entries: Vec<(String, Url)>) -> Vec<(String, Url)> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::new();
+    for (source, url) in entries {
+        let key = url.to_string();
+        if seen.insert(key) {
+            deduped.push((source, url));
+        }
+    }
+    deduped
+}
+
+fn stable_update_network_routes(
+    settings: &AppSettings,
+) -> (Vec<StableUpdateNetworkRoute>, Vec<String>) {
+    let mut routes = vec![StableUpdateNetworkRoute::direct()];
+    let mut notes = Vec::new();
+    let mut seen = BTreeSet::from(["direct".to_string()]);
+    let mut push_proxy = |routes: &mut Vec<StableUpdateNetworkRoute>, source: String, url: Url| {
+        let key = url.to_string();
+        if seen.insert(key) {
+            routes.push(StableUpdateNetworkRoute {
+                source,
+                proxy: Some(url),
+            });
+        }
+    };
+
+    match settings.network_proxy_mode {
+        NetworkProxyMode::Direct => {}
+        NetworkProxyMode::Manual => {
+            if let Some(url) = normalize_proxy_url(&settings.network_proxy_url) {
+                push_proxy(&mut routes, "manual".into(), url);
+            } else if !settings.network_proxy_url.trim().is_empty() {
+                notes.push("manual proxy URL is invalid".into());
+            }
+        }
+        NetworkProxyMode::Auto => {
+            for (source, url) in env_proxy_candidates() {
+                push_proxy(&mut routes, source, url);
+            }
+            for (source, url) in local_proxy_candidates() {
+                push_proxy(&mut routes, source, url);
+            }
+        }
+    }
+
+    (routes, notes)
+}
+
+fn detect_network_proxy_status(settings: &AppSettings) -> NetworkProxyStatus {
+    if settings.network_proxy_mode == NetworkProxyMode::Direct {
+        return NetworkProxyStatus {
+            mode: settings.network_proxy_mode.clone(),
+            proxy_url: None,
+            source: None,
+            message: "Network proxy is disabled; stable updater will use direct connections only."
+                .into(),
+            candidates: Vec::new(),
+        };
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(manual) = normalize_proxy_url(&settings.network_proxy_url) {
+        candidates.push(proxy_candidate("manual".into(), manual));
+    } else if !settings.network_proxy_url.trim().is_empty() {
+        candidates.push(NetworkProxyCandidate {
+            source: "manual".into(),
+            url: None,
+            available: false,
+            message: "Manual proxy URL is invalid.".into(),
+        });
+    }
+    for (source, url) in env_proxy_candidates() {
+        candidates.push(proxy_candidate(source, url));
+    }
+    for port in LOCAL_PROXY_PORTS {
+        let url =
+            normalize_proxy_url(&format!("http://127.0.0.1:{port}")).expect("local proxy URL");
+        candidates.push(proxy_candidate(format!("local-port:{port}"), url));
+    }
+
+    let selected = candidates
+        .iter()
+        .find(|candidate| candidate.available && candidate.url.is_some());
+    NetworkProxyStatus {
+        mode: settings.network_proxy_mode.clone(),
+        proxy_url: selected.and_then(|candidate| candidate.url.clone()),
+        source: selected.map(|candidate| candidate.source.clone()),
+        message: selected
+            .map(|candidate| format!("Detected updater proxy route from {}.", candidate.source))
+            .unwrap_or_else(|| "No local proxy port is currently reachable.".into()),
+        candidates,
+    }
+}
+
+async fn stable_update_endpoints(endpoint: &Url, proxy: Option<&Url>) -> Vec<Url> {
     let mut endpoints = Vec::new();
-    if let Some(github_asset_endpoint) = resolve_github_latest_json_asset_endpoint(endpoint).await {
+    if let Some(github_asset_endpoint) =
+        resolve_github_latest_json_asset_endpoint(endpoint, proxy).await
+    {
         endpoints.push(github_asset_endpoint);
     }
     endpoints.push(endpoint.clone());
@@ -2091,6 +2401,7 @@ fn stable_updater(
     app: &AppHandle,
     pubkey: String,
     endpoints: Vec<Url>,
+    proxy: Option<Url>,
 ) -> std::result::Result<tauri_plugin_updater::Updater, tauri_plugin_updater::Error> {
     let use_asset_api = endpoints.iter().any(is_github_release_asset_api_endpoint);
     let mut builder = app
@@ -2098,19 +2409,27 @@ fn stable_updater(
         .pubkey(pubkey)
         .endpoints(endpoints)?
         .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS));
+    if let Some(proxy) = proxy {
+        builder = builder.proxy(proxy);
+    }
     if use_asset_api {
         builder = builder.header("Accept", OCTET_STREAM_ACCEPT)?;
     }
     builder.build()
 }
 
-async fn resolve_github_latest_json_asset_endpoint(endpoint: &Url) -> Option<Url> {
+async fn resolve_github_latest_json_asset_endpoint(
+    endpoint: &Url,
+    proxy: Option<&Url>,
+) -> Option<Url> {
     let api_url = github_release_api_url(endpoint)?;
-    let client = reqwest::Client::builder()
+    let mut client_builder = reqwest::Client::builder()
         .user_agent("CodexHub updater feed resolver")
-        .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS))
-        .build()
-        .ok()?;
+        .timeout(Duration::from_secs(APP_UPDATE_CHECK_TIMEOUT_SECS));
+    if let Some(proxy) = proxy {
+        client_builder = client_builder.proxy(reqwest::Proxy::all(proxy.as_str()).ok()?);
+    }
+    let client = client_builder.build().ok()?;
     let response = client
         .get(api_url)
         .header("Accept", GITHUB_API_ACCEPT)
@@ -2207,8 +2526,34 @@ fn app_update_status(
     }
 }
 
-fn app_update_check_task(status: &AppUpdateStatus) -> TaskRun {
-    let task_id = format!("task-app-update-check-{}", timestamp_millis());
+fn app_update_check_task(status: &AppUpdateStatus, attempts: &[String]) -> TaskRun {
+    app_update_task(
+        "task-app-update-check",
+        "Check app update",
+        "check_stable_update",
+        status,
+        attempts,
+    )
+}
+
+fn app_update_install_task(status: &AppUpdateStatus, attempts: &[String]) -> TaskRun {
+    app_update_task(
+        "task-app-update-install",
+        "Install app update",
+        "install_stable_update",
+        status,
+        attempts,
+    )
+}
+
+fn app_update_task(
+    id_prefix: &str,
+    action: &str,
+    command: &str,
+    status: &AppUpdateStatus,
+    attempts: &[String],
+) -> TaskRun {
+    let task_id = format!("{id_prefix}-{}", timestamp_millis());
     let failed = matches!(&status.state, AppUpdateState::Error);
     let log_level = match &status.state {
         AppUpdateState::Error => TaskLogLevel::Error,
@@ -2218,8 +2563,13 @@ fn app_update_check_task(status: &AppUpdateStatus) -> TaskRun {
     let latest_version = status.latest_version.as_deref().unwrap_or("not checked");
     let checked_at = status.checked_at.as_deref().unwrap_or("not checked");
     let task_time = status.checked_at.clone().unwrap_or_else(update_checked_at);
+    let attempt_details = if attempts.is_empty() {
+        "networkRoutes: no route attempts recorded".into()
+    } else {
+        format!("networkRoutes:\n{}", attempts.join("\n"))
+    };
     let details = format!(
-        "softwareName: {}\nchannel: {}\ncurrentVersion: {}\nlatestVersion: {}\nstate: {}\ncheckedAt: {}\nfeedConfigured: {}\nsigningConfigured: {}",
+        "softwareName: {}\nchannel: {}\ncurrentVersion: {}\nlatestVersion: {}\nstate: {}\ncheckedAt: {}\nfeedConfigured: {}\nsigningConfigured: {}\n{}",
         status.software_name,
         status.channel,
         status.current_version,
@@ -2227,14 +2577,15 @@ fn app_update_check_task(status: &AppUpdateStatus) -> TaskRun {
         app_update_state_label(&status.state),
         checked_at,
         status.feed_configured,
-        status.signing_configured
+        status.signing_configured,
+        attempt_details
     );
 
     TaskRun {
         id: task_id.clone(),
         host_id: "local-app".into(),
         host_name: status.software_name.clone(),
-        action: "Check app update".into(),
+        action: action.into(),
         status: if failed {
             TaskStatus::Failed
         } else {
@@ -2249,7 +2600,7 @@ fn app_update_check_task(status: &AppUpdateStatus) -> TaskRun {
             level: log_level,
             timestamp: task_time,
             message: status.message.clone(),
-            command: Some("check_stable_update".into()),
+            command: Some(command.into()),
             stdout: Some(details),
             stderr: if failed {
                 Some(status.message.clone())
@@ -2341,6 +2692,12 @@ fn get_settings(app: AppHandle) -> AppSettings {
 fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
     write_settings(&app, &settings)?;
     Ok(settings)
+}
+
+#[tauri::command]
+fn detect_network_proxy(app: AppHandle) -> NetworkProxyStatus {
+    let settings = read_settings(&app);
+    detect_network_proxy_status(&settings)
 }
 
 #[tauri::command]
@@ -7418,10 +7775,40 @@ mod tests {
             settings.close_button_behavior,
             CloseButtonBehavior::Ask
         ));
+        assert!(matches!(
+            settings.network_proxy_mode,
+            NetworkProxyMode::Auto
+        ));
+        assert!(settings.network_proxy_url.is_empty());
         assert_eq!(
             serde_json::to_string(&CloseButtonBehavior::MinimizeToTray)
                 .expect("serialize behavior"),
             "\"minimize-to-tray\""
+        );
+    }
+
+    #[test]
+    fn network_proxy_detection_redacts_manual_credentials() {
+        let settings = AppSettings {
+            network_proxy_mode: NetworkProxyMode::Manual,
+            network_proxy_url: "http://user:secret@127.0.0.1:9".into(),
+            ..Default::default()
+        };
+        let status = detect_network_proxy_status(&settings);
+        let manual = status
+            .candidates
+            .iter()
+            .find(|candidate| candidate.source == "manual")
+            .expect("manual candidate");
+        let url = manual.url.as_deref().expect("manual URL");
+
+        assert!(url.contains("redacted"));
+        assert!(!url.contains("secret"));
+        assert_eq!(
+            normalize_proxy_url("7890")
+                .expect("port proxy")
+                .to_string(),
+            "http://127.0.0.1:7890/"
         );
     }
 
@@ -8509,6 +8896,7 @@ pub fn run() {
             install_stable_update,
             get_settings,
             save_settings,
+            detect_network_proxy,
             choose_close_button_behavior,
             get_ssh_status,
             generate_ed25519_key,
@@ -9256,10 +9644,7 @@ fn run_detect_installed_skills(
                     next_inventory.skills = previous.skills;
                 }
             }
-            upsert_host_inventory(
-                &mut status,
-                next_inventory,
-            );
+            upsert_host_inventory(&mut status, next_inventory);
             tasks.push(result.task);
         }
         status.first_host_scan_completed = true;
@@ -12903,6 +13288,10 @@ fn default_platform_appearance() -> PlatformAppearance {
 
 fn default_close_button_behavior() -> CloseButtonBehavior {
     CloseButtonBehavior::Ask
+}
+
+fn default_network_proxy_mode() -> NetworkProxyMode {
+    NetworkProxyMode::Auto
 }
 
 fn home_dir() -> Option<PathBuf> {

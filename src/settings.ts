@@ -5,12 +5,15 @@ export type ThemeChoice = "system" | "light" | "dark";
 export type FontPreset = "english" | "zh-cn";
 export type PlatformAppearance = "auto" | "windows" | "macos";
 export type CloseButtonBehavior = "ask" | "exit" | "minimize-to-tray";
+export type NetworkProxyMode = "auto" | "direct" | "manual";
 
 export type AppSettings = {
   theme: ThemeChoice;
   fontPreset: FontPreset;
   platformAppearance: PlatformAppearance;
   closeButtonBehavior: CloseButtonBehavior;
+  networkProxyMode: NetworkProxyMode;
+  networkProxyUrl: string;
   sidebarCompletionIndicators: boolean;
   setupGuideDismissed: boolean;
 };
@@ -28,6 +31,8 @@ export const defaultSettings: AppSettings = {
   fontPreset: "english",
   platformAppearance: "auto",
   closeButtonBehavior: "ask",
+  networkProxyMode: "auto",
+  networkProxyUrl: "",
   sidebarCompletionIndicators: true,
   setupGuideDismissed: false
 };
@@ -53,6 +58,7 @@ export const fontPresets: Record<FontPreset, FontPresetDefinition> = {
 const themeValues: ThemeChoice[] = ["system", "light", "dark"];
 const platformAppearanceValues: PlatformAppearance[] = ["auto", "windows", "macos"];
 const closeButtonBehaviorValues: CloseButtonBehavior[] = ["ask", "exit", "minimize-to-tray"];
+const networkProxyModeValues: NetworkProxyMode[] = ["auto", "direct", "manual"];
 
 function normalizeFontPreset(value: unknown): FontPreset {
   return value === "zh-cn" ? "zh-cn" : "english";
@@ -71,6 +77,10 @@ export function normalizeSettings(value: unknown): AppSettings {
     closeButtonBehavior: closeButtonBehaviorValues.includes(candidate.closeButtonBehavior as CloseButtonBehavior)
       ? (candidate.closeButtonBehavior as CloseButtonBehavior)
       : defaultSettings.closeButtonBehavior,
+    networkProxyMode: networkProxyModeValues.includes(candidate.networkProxyMode as NetworkProxyMode)
+      ? (candidate.networkProxyMode as NetworkProxyMode)
+      : defaultSettings.networkProxyMode,
+    networkProxyUrl: typeof candidate.networkProxyUrl === "string" ? candidate.networkProxyUrl.trim() : defaultSettings.networkProxyUrl,
     sidebarCompletionIndicators: candidate.sidebarCompletionIndicators !== false,
     setupGuideDismissed: candidate.setupGuideDismissed === true
   };

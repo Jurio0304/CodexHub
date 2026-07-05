@@ -315,6 +315,7 @@ for (const command of [
   "get_app_update_status",
   "check_stable_update",
   "install_stable_update",
+  "detect_network_proxy",
   "get_settings",
   "save_settings",
   "choose_close_button_behavior",
@@ -372,10 +373,10 @@ if (!cargoToml.includes('tauri-plugin-updater = { version = "2", default-feature
 if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }')) {
   fail("stable updater GitHub feed resolver must use reqwest with native TLS");
 }
-for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos"]) {
+for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos", "stable_update_network_routes", "LOCAL_PROXY_PORTS", "NetworkProxyMode", "detect_network_proxy_status", "builder.proxy(proxy)"]) {
   if (!rustLib.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
 }
-for (const token of ["app_update_check_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status))", "Check app update"]) {
+for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status, &attempts))", "Install app update", "Check app update"]) {
   if (!rustLib.includes(token)) fail(`missing stable updater task token: ${token}`);
 }
 for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)", "updater_error_message"]) {
@@ -681,9 +682,13 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing close-button UI token: ${token}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.dailyUpdateCheck", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "createLocalAppUpdateTask", "footer={("]) {
+for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.dailyUpdateCheck", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "latestAppInstallTask", "createLocalAppUpdateTask", "footer={("]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
 }
+for (const token of ["NetworkProxyManualModal", "networkProxyManualOpen", "handleNetworkProxyChoice", "copy.settings.networkProxy", "copy.settings.networkProxyOptions", "copy.settings.networkProxyManualTitle", "copy.settings.networkProxyPort", "copy.settings.networkProxySave", "onNetworkProxyModeChange", "onNetworkProxyManualRequest", "networkProxyControl"]) {
+  if (!app.includes(token)) fail(`missing network proxy Settings UI token: ${token}`);
+}
+if (app.includes("networkProxyInline")) fail("network proxy Settings UI should not expose an inline proxy input");
 for (const token of ["APP_UPDATE_DAILY_CHECK_HOUR = 4", "nextDailyAppUpdateCheckAt", "runStableUpdateCheck(\"daily\")", "scheduleNextAppUpdateCheck", "appUpdateStatusRef", "appUpdateBusyRef"]) {
   if (!app.includes(token)) fail(`missing daily stable updater check token: ${token}`);
 }
@@ -1183,7 +1188,7 @@ for (const token of ["copyPublicKeyButton", "data-success={publicKeyCopied}", "c
 }
 
 const api = read("src/api.ts");
-for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "get_app_update_status", "check_stable_update", "install_stable_update"]) {
+for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "detectNetworkProxy", "get_app_update_status", "check_stable_update", "install_stable_update", "detect_network_proxy"]) {
   if (!api.includes(token)) fail(`missing stable updater API token: ${token}`);
 }
 if (!api.includes('checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update")')) {
@@ -1355,7 +1360,7 @@ const settings = read("src/settings.ts");
 for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
   if (!settings.includes(fontPreset)) fail(`missing font preset: ${fontPreset}`);
 }
-for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
+for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "networkProxyMode", "networkProxyMode: \"auto\"", "networkProxyUrl", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
   if (!settings.includes(token)) fail(`missing settings token: ${token}`);
 }
 for (const token of [
@@ -1372,7 +1377,7 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
-for (const token of ["appUpdatePanel", "appUpdateSchedule", "sidebarUpdateButton", "versionInfoTable", "taskLogModalHint", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
+for (const token of ["appUpdatePanel", "appUpdateSchedule", "sidebarUpdateButton", "versionInfoTable", "taskLogModalHint", "networkProxyControl", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
   if (!styles.includes(token)) fail(`missing stable updater Settings style token: ${token}`);
 }
 const versionInfoTableStyle = styles.match(/\.versionInfoTable\s*\{[^}]*\}/)?.[0] ?? "";
@@ -1394,7 +1399,7 @@ if (app.includes("<select value={settings.fontPreset}")) fail("font setting shou
 if (!styles.includes('.segmentedControl[data-options="2"]')) fail("missing two-option segmented control style");
 if (!app.includes('className="settingsRows dividedSettingsRows appearanceRows"')) fail("missing divided appearance settings row group");
 const appearanceDividerCount = (app.match(/data-divider="true"/g) ?? []).length;
-if (appearanceDividerCount < 3) fail("settings cards should mark theme, sidebar hint, and close behavior rows with dividers");
+if (appearanceDividerCount < 3) fail("settings cards should keep theme, sidebar visual hint, and close behavior dividers");
 if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.theme}<\/span>/.test(app)) {
   fail("appearance card should place the first divider above the theme row");
 }
@@ -1406,6 +1411,9 @@ if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings
 }
 if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.closeButtonBehavior}<\/span>/.test(app)) {
   fail("other settings card should place a divider above the close button behavior row");
+}
+if (/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.networkProxy}<\/span>/.test(app)) {
+  fail("other settings card should not place a divider above the network proxy row");
 }
 for (const token of [
   ".dividedSettingsRows",

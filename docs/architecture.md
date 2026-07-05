@@ -44,7 +44,8 @@ flowchart LR
 Tauri command surface:
 
 - `app_health()`: smoke-test command exposed by the desktop backend.
-- `get_settings()` / `save_settings(settings)`: persist local appearance and setup-guide state.
+- `get_settings()` / `save_settings(settings)`: persist local appearance, setup-guide state, close-button behavior, and updater proxy preference.
+- `detect_network_proxy()`: inspect updater proxy configuration, environment proxy variables, and common localhost proxy ports without reading proxy credentials.
 - `get_local_codex_status()`: inspect the local Codex CLI path and version without installing anything.
 - `get_ssh_status()`: inspect local OpenSSH state and public-key availability without reading private key contents.
 - `generate_ed25519_key()`: generate a non-overwriting local Ed25519 keypair.
@@ -171,6 +172,8 @@ macOS keeps the Dock icon in v1. Menu bar/status item behavior, close-to-hidden 
 ## Stable Updater Foundation
 
 CodexHub wires Tauri 2 updater checks only for `stable`. The backend initializes `tauri-plugin-updater` and exposes `get_app_update_status()`, `check_stable_update()`, and gated `install_stable_update()` commands so Settings can display a compact Version info table and a manual install action only after a signed update is discovered.
+
+Stable updater network access follows the persisted `settings.json` proxy fields `networkProxyMode` and `networkProxyUrl`. Auto mode tries direct access first, then configured environment proxies and reachable localhost proxy ports; Manual mode retries through the configured URL. Proxy routes are logged with credentials redacted, and Tauri signature verification still gates installation.
 
 Each `check_stable_update()` attempt records a local `Check app update` task run. Frontend update-check failures open the task log modal immediately, avoid rendering the full error inline below the Version card, and point users to the Tasks detail page for later review.
 
