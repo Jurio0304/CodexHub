@@ -1029,6 +1029,46 @@ pub fn upload_file(
     run_process_with_timeout("scp", &args, &command, timeout_ms)
 }
 
+pub fn download_file(
+    host_alias: &str,
+    remote_path: &str,
+    local_path: &Path,
+    timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
+    let host_alias = validate_ssh_alias(host_alias)?;
+    if !remote_path
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+    {
+        return Err(
+            "Remote download path contains characters CodexHub will not pass to scp.".into(),
+        );
+    }
+
+    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let connect_timeout_secs = ((timeout_ms + 999) / 1000).clamp(1, 120).to_string();
+    let remote_target = format!("{host_alias}:{remote_path}");
+    let args = vec![
+        "-q".into(),
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "NumberOfPasswordPrompts=0".into(),
+        "-o".into(),
+        format!("ConnectTimeout={connect_timeout_secs}"),
+        remote_target.clone(),
+        local_path.to_string_lossy().to_string(),
+    ];
+    let command = format!(
+        "scp -q -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={} {} {}",
+        connect_timeout_secs,
+        remote_target,
+        path_string(local_path)
+    );
+
+    run_process_with_timeout("scp", &args, &command, timeout_ms)
+}
+
 pub fn upload_file_streaming<F>(
     host_alias: &str,
     local_path: &Path,
@@ -1438,11 +1478,7 @@ fn redact_sensitive_line(line: &str) -> String {
         return "[redacted private key material]".into();
     }
 
-    let mut redacted = Vec::new();
-    for token in line.split_whitespace() {
-        redacted.push(redact_sensitive_token(token));
-    }
-    let mut next = redacted.join(" ");
+    let mut next = map_whitespace_separated_tokens(line, redact_sensitive_token);
 
     for key in [
         "password",
@@ -1456,6 +1492,29 @@ fn redact_sensitive_line(line: &str) -> String {
     }
 
     next
+}
+
+fn map_whitespace_separated_tokens<F>(line: &str, mut map_token: F) -> String
+where
+    F: FnMut(&str) -> String,
+{
+    let mut output = String::with_capacity(line.len());
+    let mut token = String::new();
+    for ch in line.chars() {
+        if ch.is_whitespace() {
+            if !token.is_empty() {
+                output.push_str(&map_token(&token));
+                token.clear();
+            }
+            output.push(ch);
+        } else {
+            token.push(ch);
+        }
+    }
+    if !token.is_empty() {
+        output.push_str(&map_token(&token));
+    }
+    output
 }
 
 fn redact_sensitive_token(token: &str) -> String {
@@ -1472,20 +1531,18 @@ fn redact_sensitive_token(token: &str) -> String {
 }
 
 fn redact_key_value(line: &str, key: &str) -> String {
-    let mut output = Vec::new();
-    for part in line.split_whitespace() {
+    map_whitespace_separated_tokens(line, |part| {
         let lower = part.to_ascii_lowercase();
         let prefix_eq = format!("{key}=");
         let prefix_colon = format!("{key}:");
         if lower.starts_with(&prefix_eq) {
-            output.push(format!("{}=[redacted]", &part[..key.len()]));
+            format!("{}=[redacted]", &part[..key.len()])
         } else if lower.starts_with(&prefix_colon) {
-            output.push(format!("{}:[redacted]", &part[..key.len()]));
+            format!("{}:[redacted]", &part[..key.len()])
         } else {
-            output.push(part.to_string());
+            part.to_string()
         }
-    }
-    output.join(" ")
+    })
 }
 
 fn ssh_dir() -> Result<PathBuf, String> {
@@ -1556,7 +1613,8 @@ fn set_ssh_dir_permissions(_path: &Path) -> Result<(), String> {
 }
 
 fn expand_local_path(input: &str) -> Result<PathBuf, String> {
-    platform::expand_home_path(input).map_err(|error| format!("{error} Cannot expand IdentityFile."))
+    platform::expand_home_path(input)
+        .map_err(|error| format!("{error} Cannot expand IdentityFile."))
 }
 
 fn public_key_path_for(private_path: &Path) -> PathBuf {
@@ -2266,7 +2324,10 @@ mod tests {
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].alias, "lab");
         assert_eq!(hosts[0].host_name, "10.0.0.5");
-        assert_eq!(hosts[0].identity_file, r"C:\Users\Example User\.ssh\id_ed25519");
+        assert_eq!(
+            hosts[0].identity_file,
+            r"C:\Users\Example User\.ssh\id_ed25519"
+        );
     }
 
     #[test]
@@ -2648,6 +2709,17 @@ mod tests {
         assert!(!output.contains("sk-test123"));
         assert!(!output.contains("hunter2"));
         assert!(!output.contains("abc123"));
+    }
+
+    #[test]
+    fn redaction_preserves_tab_delimited_markers() {
+        let output = redact_sensitive(
+            "CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/me/.codex/skills/.system/imagegen\tGenerate token=sk-test123 helper",
+        );
+
+        assert!(output.contains("CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid"));
+        assert!(output.contains("Generate token=[redacted] helper"));
+        assert!(!output.contains("sk-test123"));
     }
 
     #[test]

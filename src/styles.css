@@ -1161,6 +1161,10 @@ tr:last-child td {
   grid-template-columns: minmax(0, 3fr) minmax(0, 7fr);
 }
 
+.taskLogModalMeta.installedSkillPreviewMeta {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) minmax(0, 5fr);
+}
+
 .skillPreviewDetails {
   display: grid;
   gap: 8px;
@@ -1248,6 +1252,15 @@ tr:last-child td {
   gap: 8px;
 }
 
+.skillPreviewActions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skillOperationModal {
+  width: min(620px, 100%);
+}
+
 .dangerButton {
   color: var(--red);
 }
@@ -1309,15 +1322,24 @@ tr:last-child td {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
+  appearance: none;
+  cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--skill-color) 70%, var(--border));
   border-radius: 999px;
   padding: 4px 8px;
   color: color-mix(in srgb, var(--skill-color) 76%, var(--text));
+  font: inherit;
   font-size: 0.74rem;
   font-weight: 760;
   line-height: 1;
   background: color-mix(in srgb, var(--skill-color) 13%, transparent);
   overflow-wrap: anywhere;
+}
+
+.installedSkillTag:hover,
+.installedSkillTag:focus-visible {
+  border-color: color-mix(in srgb, var(--skill-color) 86%, var(--border));
+  background: color-mix(in srgb, var(--skill-color) 20%, transparent);
 }
 
 .tasksGrid .spanWide {
@@ -2125,8 +2147,14 @@ tr:last-child td {
   .logLine summary,
   .logMetaGrid,
   .streamGrid,
+  .taskLogMetaGrid,
+  .taskLogStreamGrid,
   .detailGrid {
     grid-template-columns: 1fr;
+  }
+
+  .taskLogFlowDetails {
+    padding: 10px 12px 12px;
   }
 
   .topActions {
@@ -3121,6 +3149,120 @@ button:disabled {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.taskLogDetailModal {
+  width: min(820px, 100%);
+}
+
+.taskLogSummary small {
+  font-family: var(--font-ui);
+}
+
+.taskLogFlowRows {
+  max-height: min(560px, 58vh);
+}
+
+.taskLogFlowRow {
+  display: block;
+}
+
+.taskLogFlowRow summary.codexOperationLogRow {
+  cursor: pointer;
+  list-style: none;
+}
+
+.taskLogFlowRow summary.codexOperationLogRow::-webkit-details-marker {
+  display: none;
+}
+
+.taskLogFlowRow:last-child > summary.codexOperationLogRow:not(:only-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.taskLogFlowRow:last-child:not([open]) > summary.codexOperationLogRow {
+  border-bottom: 0;
+}
+
+.taskLogFlowRow summary.codexOperationLogRow span {
+  display: grid;
+  gap: 3px;
+}
+
+.taskLogFlowRow summary.codexOperationLogRow em {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-style: normal;
+  line-height: 1.2;
+}
+
+.taskLogFlowDetails {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px 12px 88px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-muted) 78%, var(--surface-solid));
+}
+
+.taskLogFlowRow:last-child .taskLogFlowDetails {
+  border-bottom: 0;
+}
+
+.taskLogMetaGrid,
+.taskLogStreamGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.taskLogMetaGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.taskLogStreamGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.taskLogMetaGrid div,
+.taskLogStreamGrid div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.taskLogMetaGrid span,
+.taskLogStreamGrid span {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.taskLogMetaGrid code {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.taskLogStreamGrid pre {
+  min-height: 96px;
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px;
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: color-mix(in srgb, var(--bg-strong) 82%, black 6%);
 }
 
 .codexOperationActions {

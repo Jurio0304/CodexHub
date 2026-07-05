@@ -3,7 +3,7 @@ mod ssh;
 
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone};
-use flate2::{write::GzEncoder, Compression};
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
@@ -11,10 +11,10 @@ use std::env;
 use std::fmt::Display;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tar::Builder as TarBuilder;
+use tar::{Archive as TarArchive, Builder as TarBuilder};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -408,6 +408,8 @@ struct RemoteSkill {
     path: String,
     has_skill_md: bool,
     status: String,
+    #[serde(default)]
+    description: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -545,6 +547,26 @@ struct SkillTargetOperationResult {
     skills: Vec<SkillPack>,
     tasks: Vec<TaskRun>,
     results: Vec<SkillTargetOperationItem>,
+    message: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledSkillRequest {
+    target_type: String,
+    host_alias: Option<String>,
+    skill_name: String,
+    path: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstalledSkillDownloadResult {
+    imported: Vec<SkillPack>,
+    skipped: Vec<String>,
+    skills: Vec<SkillPack>,
+    status: SkillInventoryStatus,
+    tasks: Vec<TaskRun>,
     message: String,
 }
 
@@ -2112,9 +2134,9 @@ fn github_release_api_url(endpoint: &Url) -> Option<String> {
     }
     let segments = endpoint.path_segments()?.collect::<Vec<_>>();
     match segments.as_slice() {
-        [owner, repo, "releases", "latest", "download", "latest.json"] => {
-            Some(format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"))
-        }
+        [owner, repo, "releases", "latest", "download", "latest.json"] => Some(format!(
+            "https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        )),
         [owner, repo, "releases", "download", tag, "latest.json"] => Some(format!(
             "https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
         )),
@@ -3120,6 +3142,32 @@ async fn delete_library_skill(
     run_blocking_command("delete_library_skill", move || {
         let state = app.state::<AppState>();
         run_delete_library_skill(&app, &state, skill_id, uninstall_first, timeout_ms)
+    })
+    .await?
+}
+
+#[tauri::command]
+async fn download_installed_skill(
+    app: AppHandle,
+    request: InstalledSkillRequest,
+    timeout_ms: Option<u64>,
+) -> Result<InstalledSkillDownloadResult, String> {
+    run_blocking_command("download_installed_skill", move || {
+        let state = app.state::<AppState>();
+        run_download_installed_skill(&app, &state, request, timeout_ms)
+    })
+    .await?
+}
+
+#[tauri::command]
+async fn uninstall_installed_skill(
+    app: AppHandle,
+    request: InstalledSkillRequest,
+    timeout_ms: Option<u64>,
+) -> Result<SkillTargetOperationResult, String> {
+    run_blocking_command("uninstall_installed_skill", move || {
+        let state = app.state::<AppState>();
+        run_uninstall_installed_skill(&app, &state, request, timeout_ms)
     })
     .await?
 }
@@ -7300,12 +7348,14 @@ mod tests {
 
     #[test]
     fn github_release_api_url_supports_latest_and_tagged_feeds() {
-        let latest =
-            Url::parse("https://github.com/example-owner/CodexHub/releases/latest/download/latest.json")
-                .unwrap();
-        let tagged =
-            Url::parse("https://github.com/example-owner/CodexHub/releases/download/v0.2.6/latest.json")
-                .unwrap();
+        let latest = Url::parse(
+            "https://github.com/example-owner/CodexHub/releases/latest/download/latest.json",
+        )
+        .unwrap();
+        let tagged = Url::parse(
+            "https://github.com/example-owner/CodexHub/releases/download/v0.2.6/latest.json",
+        )
+        .unwrap();
         let asset_api =
             Url::parse("https://api.github.com/repos/example-owner/CodexHub/releases/assets/123")
                 .unwrap();
@@ -8003,13 +8053,14 @@ mod tests {
     #[test]
     fn remote_skill_list_parser_extracts_validity_and_paths() {
         let stdout = "CODEXHUB_SKILL_ROOT=/home/test/.codex/skills\n\
-CODEXHUB_REMOTE_SKILL\texample-skill\tyes\tvalid\t/home/test/.codex/skills/example-skill\n\
-CODEXHUB_REMOTE_SKILL\tdraft-helper\tno\tmissing-skill-md\t/home/test/.codex/skills/draft-helper\n";
+CODEXHUB_REMOTE_SKILL\texample-skill\tyes\tvalid\t/home/test/.codex/skills/example-skill\tRun example workflow\n\
+CODEXHUB_REMOTE_SKILL\tdraft-helper\tno\tmissing-skill-md\t/home/test/.codex/skills/draft-helper\t\n";
 
         let skills = parse_remote_skill_list(stdout);
 
         assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].name, "example-skill");
+        assert_eq!(skills[0].description, "Run example workflow");
         assert!(skills[0].has_skill_md);
         assert_eq!(skills[1].status, "missing-skill-md");
         assert!(!skills[1].has_skill_md);
@@ -8018,7 +8069,7 @@ CODEXHUB_REMOTE_SKILL\tdraft-helper\tno\tmissing-skill-md\t/home/test/.codex/ski
     #[test]
     fn remote_skill_list_parser_accepts_space_delimited_output() {
         let stdout = "CODEXHUB_SKILL_ROOT=/home/jy/.codex/skills\n\
-CODEXHUB_REMOTE_SKILL imagegen yes valid /home/jy/.codex/skills/.system/imagegen\n\
+CODEXHUB_REMOTE_SKILL imagegen yes valid /home/jy/.codex/skills/.system/imagegen Generate or edit raster images\n\
 CODEXHUB_REMOTE_SKILL openai-docs yes valid /home/jy/.codex/skills/.system/openai-docs\n\
 CODEXHUB_SKILL_ROOT=/home/jy/.codex/superpowers/skills\n\
 CODEXHUB_REMOTE_SKILL brainstorming yes valid /home/jy/.codex/superpowers/skills/brainstorming\n\
@@ -8028,6 +8079,7 @@ CODEXHUB_SKILL_COUNT=3\n";
 
         assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].name, "imagegen");
+        assert_eq!(skills[0].description, "Generate or edit raster images");
         assert_eq!(
             skills[2].path,
             "/home/jy/.codex/superpowers/skills/brainstorming"
@@ -8059,6 +8111,11 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(script.contains("scan_root \"$HOME/.codex/skills\""));
         assert!(script.contains("scan_root \"$HOME/.codex/superpowers/skills\""));
         assert!(script.contains("emit_skill_dir \"$nested\""));
+        assert!(script.contains("extract_skill_description"));
+        assert!(script.contains("description=$(extract_skill_description \"$dir\")"));
+        assert!(script.contains("CODEXHUB_REMOTE_SKILL\\t%s\\t%s\\t%s\\t%s\\t%s"));
+        assert!(script.contains("scan_find_fallback"));
+        assert!(script.contains("find \"$root\" -mindepth 1 -maxdepth 3 -type f -name SKILL.md"));
         assert!(!script.contains("roots=\""));
     }
 
@@ -8116,13 +8173,39 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
     }
 
     #[test]
-    fn remote_skill_delete_script_moves_to_backup_instead_of_hard_deleting() {
+    fn remote_skill_delete_script_hard_deletes_after_directory_check() {
         let script = remote_skill_delete_script("$HOME/.codex/skills", "example-skill", "12345");
 
-        assert!(script.contains("codexhub.deleted.$timestamp"));
-        assert!(script.contains("mv \"$target\" \"$backup\""));
+        assert!(script.contains("rm -rf \"$target\""));
         assert!(script.contains("CODEXHUB_SKILL_COUNT"));
-        assert!(!script.contains("rm -rf \"$target\""));
+        assert!(!script.contains("codexhub.deleted.$timestamp"));
+        assert!(!script.contains("mv \"$target\" \"$backup\""));
+        assert!(!script.contains("sudo "));
+    }
+
+    #[test]
+    fn installed_skill_download_script_packages_exact_cached_path() {
+        let script = remote_installed_skill_archive_script(
+            "/home/me/.codex/superpowers/skills/.system/example-skill",
+            "/tmp/codexhub-skill-download-test.tgz",
+        );
+
+        assert!(
+            script.contains("target='/home/me/.codex/superpowers/skills/.system/example-skill'")
+        );
+        assert!(script.contains("tar -czf \"$archive\" -C \"$parent\" \"$base\""));
+        assert!(script.contains("CODEXHUB_SKILL_ARCHIVE"));
+        assert!(!script.contains("sudo "));
+    }
+
+    #[test]
+    fn installed_skill_delete_script_hard_deletes_exact_cached_path() {
+        let script = remote_installed_skill_delete_script("/home/me/.codex/skills/example-skill");
+
+        assert!(script.contains("target='/home/me/.codex/skills/example-skill'"));
+        assert!(script.contains("rm -rf \"$target\""));
+        assert!(script.contains("CODEXHUB_SKILL_COUNT"));
+        assert!(!script.contains("codexhub.deleted"));
         assert!(!script.contains("sudo "));
     }
 
@@ -8468,6 +8551,8 @@ pub fn run() {
             install_skill_targets,
             uninstall_skill_targets,
             delete_library_skill,
+            download_installed_skill,
+            uninstall_installed_skill,
             list_tasks,
             list_skill_packs
         ])
@@ -9111,6 +9196,7 @@ fn run_detect_installed_skills(
                         } else {
                             "invalid".into()
                         },
+                        description: detected.description.clone(),
                     });
                     if let Some(existing) = skills.iter().find(|item| item.id == detected_id) {
                         let mut merged = detected;
@@ -9144,15 +9230,35 @@ fn run_detect_installed_skills(
         for host in hosts {
             let result = run_remote_skill_list(state, host.host_alias.clone(), timeout_ms)?;
             let ok = matches!(result.task.status, TaskStatus::Success);
+            let previous_inventory = status
+                .host_inventories
+                .iter()
+                .find(|item| item.host_alias.eq_ignore_ascii_case(&result.host_alias))
+                .cloned();
+            let mut next_inventory = HostSkillInventory {
+                host_alias: result.host_alias.clone(),
+                scanned_at: timestamp_label(),
+                ok,
+                message: result.task.summary.clone(),
+                skills: result.skills.clone(),
+            };
+            if ok && result.skills.is_empty() {
+                if let Some(previous) = previous_inventory
+                    .filter(|inventory| inventory.ok && !inventory.skills.is_empty())
+                {
+                    let previous_count = previous.skills.len().min(u16::MAX as usize) as u16;
+                    update_host_skills(state, &result.host_alias, true, previous_count);
+                    next_inventory.message = format!(
+                        "Latest scan returned no skills; kept previous cached {} skill(s). {}",
+                        previous.skills.len(),
+                        result.task.summary
+                    );
+                    next_inventory.skills = previous.skills;
+                }
+            }
             upsert_host_inventory(
                 &mut status,
-                HostSkillInventory {
-                    host_alias: result.host_alias.clone(),
-                    scanned_at: timestamp_label(),
-                    ok,
-                    message: result.task.summary.clone(),
-                    skills: result.skills.clone(),
-                },
+                next_inventory,
             );
             tasks.push(result.task);
         }
@@ -9333,6 +9439,7 @@ fn update_host_inventory_skill(
     skill_name: &str,
     path: &str,
     installed: bool,
+    description: Option<&str>,
 ) -> Result<(), String> {
     let mut status = load_skill_inventory_status(app)?;
     if let Some(inventory) = status
@@ -9351,6 +9458,7 @@ fn update_host_inventory_skill(
                 path: path.to_string(),
                 has_skill_md: true,
                 status: "valid".into(),
+                description: description.unwrap_or_default().to_string(),
             });
         }
         inventory
@@ -9367,6 +9475,7 @@ fn update_host_inventory_skill(
                 path: path.to_string(),
                 has_skill_md: true,
                 status: "valid".into(),
+                description: description.unwrap_or_default().to_string(),
             }],
         });
     }
@@ -9378,6 +9487,7 @@ fn update_local_inventory_skill(
     skill_name: &str,
     path: &str,
     installed: bool,
+    description: Option<&str>,
 ) -> Result<(), String> {
     let mut status = load_skill_inventory_status(app)?;
     status.local_skill_root = local_codex_skills_root().to_string_lossy().into_owned();
@@ -9390,12 +9500,107 @@ fn update_local_inventory_skill(
             path: path.to_string(),
             has_skill_md: true,
             status: "valid".into(),
+            description: description.unwrap_or_default().to_string(),
         });
     }
     status
         .local_skills
         .sort_by_key(|skill| skill.name.to_ascii_lowercase());
     save_skill_inventory_status(app, &status)
+}
+
+fn resolve_installed_skill_request(
+    app: &AppHandle,
+    request: InstalledSkillRequest,
+) -> Result<InstalledSkillRequest, String> {
+    let skill_name = validate_remote_skill_dir_name(&request.skill_name)?;
+    let requested_path = request.path.trim();
+    if requested_path.is_empty() {
+        return Err("Installed skill path is required.".into());
+    }
+    let status = load_skill_inventory_status(app)?;
+    match request.target_type.as_str() {
+        "local" => {
+            let Some(installed) = status.local_skills.iter().find(|skill| {
+                skill.has_skill_md
+                    && skill.name.eq_ignore_ascii_case(&skill_name)
+                    && skill.path == requested_path
+            }) else {
+                return Err(format!(
+                    "Installed skill {skill_name} was not found in the local cached inventory."
+                ));
+            };
+            Ok(InstalledSkillRequest {
+                target_type: "local".into(),
+                host_alias: None,
+                skill_name: installed.name.clone(),
+                path: installed.path.clone(),
+            })
+        }
+        "host" => {
+            let alias = request
+                .host_alias
+                .as_deref()
+                .ok_or_else(|| "Host alias is required.".to_string())
+                .and_then(ssh::validate_ssh_alias)?;
+            let Some(inventory) = status
+                .host_inventories
+                .iter()
+                .find(|item| item.host_alias.eq_ignore_ascii_case(&alias) && item.ok)
+            else {
+                return Err(format!(
+                    "Host {alias} does not have a usable cached skill inventory."
+                ));
+            };
+            let Some(installed) = inventory.skills.iter().find(|skill| {
+                skill.has_skill_md
+                    && skill.name.eq_ignore_ascii_case(&skill_name)
+                    && skill.path == requested_path
+            }) else {
+                return Err(format!(
+                    "Installed skill {skill_name} was not found in the cached inventory for {alias}."
+                ));
+            };
+            validate_cached_remote_skill_path(&installed.path)?;
+            Ok(InstalledSkillRequest {
+                target_type: "host".into(),
+                host_alias: Some(alias),
+                skill_name: installed.name.clone(),
+                path: installed.path.clone(),
+            })
+        }
+        _ => Err("Installed skill target type must be local or host.".into()),
+    }
+}
+
+fn validate_cached_remote_skill_path(path: &str) -> Result<(), String> {
+    if path.trim().is_empty() || path.contains(char::is_control) {
+        return Err("Cached remote skill path is empty or contains control characters.".into());
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err("Cached remote skill path contains an unsafe parent segment.".into());
+    }
+    if !path.contains("/.codex/skills/") && !path.contains("/.codex/superpowers/skills/") {
+        return Err("Cached remote skill path is outside known Codex skill roots.".into());
+    }
+    Ok(())
+}
+
+fn skill_matches_installed_request(skill: &SkillPack, request: &InstalledSkillRequest) -> bool {
+    skill.id.eq_ignore_ascii_case(&request.skill_name)
+        || skill.name.eq_ignore_ascii_case(&request.skill_name)
+}
+
+fn remove_installed_skill_application(skills: &mut [SkillPack], request: &InstalledSkillRequest) {
+    for skill in skills {
+        if !skill_matches_installed_request(skill, request) {
+            continue;
+        }
+        skill.applications.retain(|application| {
+            application.target_type != request.target_type
+                || application.host_alias != request.host_alias
+        });
+    }
 }
 
 fn download_and_import_github_skill(
@@ -9686,6 +9891,338 @@ fn run_get_skill_targets(
     })
 }
 
+fn run_download_installed_skill(
+    app: &AppHandle,
+    state: &AppState,
+    request: InstalledSkillRequest,
+    timeout_ms: Option<u64>,
+) -> Result<InstalledSkillDownloadResult, String> {
+    let request = resolve_installed_skill_request(app, request)?;
+    let mut tasks = Vec::new();
+    let import_result = if request.target_type == "local" {
+        import_skills_from_path(
+            app,
+            state,
+            PathBuf::from(&request.path),
+            "local",
+            Some(request.path.clone()),
+        )?
+    } else {
+        let (extract_dir, task) =
+            download_remote_installed_skill(app, state, &request, timeout_ms)?;
+        tasks.push(task);
+        let alias = request.host_alias.clone().unwrap_or_default();
+        import_skills_from_path(
+            app,
+            state,
+            extract_dir,
+            "host",
+            Some(format!("{alias}:{}", request.path)),
+        )?
+    };
+    let skills = load_skills(app, state)?;
+    let status = load_skill_inventory_status(app)?;
+    let message = if import_result.imported.is_empty() {
+        import_result.message.clone()
+    } else {
+        format!(
+            "Downloaded {} to the local skill library.",
+            request.skill_name
+        )
+    };
+    Ok(InstalledSkillDownloadResult {
+        imported: import_result.imported,
+        skipped: import_result.skipped,
+        skills,
+        status,
+        tasks,
+        message,
+    })
+}
+
+fn download_remote_installed_skill(
+    app: &AppHandle,
+    state: &AppState,
+    request: &InstalledSkillRequest,
+    timeout_ms: Option<u64>,
+) -> Result<(PathBuf, TaskRun), String> {
+    let alias = request
+        .host_alias
+        .as_deref()
+        .ok_or_else(|| "Host alias is required.".to_string())
+        .and_then(ssh::validate_ssh_alias)?;
+    let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(120_000)));
+    let task_id = format!("task-skill-download-{}", timestamp_millis());
+    let host_id = host_id_for_alias(state, &alias);
+    let host_name = host_name_for_alias(state, &alias);
+    let cache_root = skill_clone_cache_dir(app).join("installed-downloads");
+    fs::create_dir_all(&cache_root).map_err(|error| error.to_string())?;
+    let remote_archive = format!("/tmp/codexhub-skill-download-{task_id}.tgz");
+    let local_archive = cache_root.join(format!("{}.tgz", task_id));
+    let extract_dir = cache_root.join(format!("{task_id}-extract"));
+    let script = remote_installed_skill_archive_script(&request.path, &remote_archive);
+    let package_output = ssh::run_ssh_script(&alias, &script, timeout).unwrap_or_else(|error| {
+        failed_command_output(
+            format!("ssh {alias} package installed skill {}", request.skill_name),
+            error,
+        )
+    });
+    let mut logs = vec![command_log(
+        &task_id,
+        1,
+        if package_output.success() {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if package_output.success() {
+            "Packaged installed remote skill."
+        } else {
+            "Failed to package installed remote skill."
+        },
+        &package_output,
+    )];
+    if !package_output.success() {
+        let task = skill_task(
+            &task_id,
+            &host_id,
+            &host_name,
+            "Download installed skill",
+            TaskStatus::Failed,
+            &format!(
+                "{} could not be packaged on {alias}: {}",
+                request.skill_name,
+                command_detail(&package_output)
+            ),
+            logs,
+        );
+        record_task(state, task.clone());
+        return Err(task.summary);
+    }
+
+    let download_output = ssh::download_file(&alias, &remote_archive, &local_archive, timeout)
+        .unwrap_or_else(|error| {
+            failed_command_output(format!("scp {alias}:{remote_archive}"), error)
+        });
+    logs.push(command_log(
+        &task_id,
+        2,
+        if download_output.success() {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if download_output.success() {
+            "Downloaded installed skill archive."
+        } else {
+            "Failed to download installed skill archive."
+        },
+        &download_output,
+    ));
+    let _ = ssh::run_ssh_script(
+        &alias,
+        &format!("rm -f {}", shell_single_quote(&remote_archive)),
+        timeout,
+    );
+    if !download_output.success() {
+        let task = skill_task(
+            &task_id,
+            &host_id,
+            &host_name,
+            "Download installed skill",
+            TaskStatus::Failed,
+            &format!(
+                "{} could not be downloaded from {alias}: {}",
+                request.skill_name,
+                command_detail(&download_output)
+            ),
+            logs,
+        );
+        record_task(state, task.clone());
+        return Err(task.summary);
+    }
+
+    fs::create_dir_all(&extract_dir).map_err(|error| error.to_string())?;
+    if let Err(error) = extract_skill_archive(&local_archive, &extract_dir) {
+        logs.push(basic_log(
+            &task_id,
+            3,
+            TaskLogLevel::Error,
+            &format!("Failed to extract installed skill archive: {error}"),
+        ));
+        let task = skill_task(
+            &task_id,
+            &host_id,
+            &host_name,
+            "Download installed skill",
+            TaskStatus::Failed,
+            &format!("{} archive could not be extracted.", request.skill_name),
+            logs,
+        );
+        record_task(state, task.clone());
+        return Err(task.summary);
+    }
+    logs.push(basic_log(
+        &task_id,
+        3,
+        TaskLogLevel::Info,
+        "Extracted installed skill archive into local cache.",
+    ));
+    let task = skill_task(
+        &task_id,
+        &host_id,
+        &host_name,
+        "Download installed skill",
+        TaskStatus::Success,
+        &format!("{} downloaded from {alias}.", request.skill_name),
+        logs,
+    );
+    record_task(state, task.clone());
+    Ok((extract_dir, task))
+}
+
+fn extract_skill_archive(archive_path: &Path, destination: &Path) -> Result<(), String> {
+    let file = fs::File::open(archive_path)
+        .map_err(|error| format!("Failed to open {}: {error}", archive_path.display()))?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = TarArchive::new(decoder);
+    for entry in archive
+        .entries()
+        .map_err(|error| format!("Failed to read archive entries: {error}"))?
+    {
+        let mut entry = entry.map_err(|error| format!("Failed to read archive entry: {error}"))?;
+        let path = entry
+            .path()
+            .map_err(|error| format!("Failed to read archive path: {error}"))?
+            .to_path_buf();
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err("Downloaded skill archive contains unsafe paths.".into());
+        }
+        entry
+            .unpack_in(destination)
+            .map_err(|error| format!("Failed to extract archive entry: {error}"))?;
+    }
+    Ok(())
+}
+
+fn run_uninstall_installed_skill(
+    app: &AppHandle,
+    state: &AppState,
+    request: InstalledSkillRequest,
+    timeout_ms: Option<u64>,
+) -> Result<SkillTargetOperationResult, String> {
+    let request = resolve_installed_skill_request(app, request)?;
+    let mut skills = load_skills(app, state)?;
+    let (item, task) = if request.target_type == "local" {
+        uninstall_installed_local_skill(&request)?
+    } else {
+        let result = run_remote_installed_skill_delete(state, &request, timeout_ms)?;
+        (
+            SkillTargetOperationItem {
+                target_type: "host".into(),
+                label: result.host_alias.clone(),
+                host_alias: Some(result.host_alias),
+                ok: result.ok,
+                message: result.message,
+                task: Some(result.task.clone()),
+            },
+            result.task,
+        )
+    };
+    if request.target_type == "local" {
+        record_task(state, task.clone());
+    }
+    if item.ok {
+        remove_installed_skill_application(&mut skills, &request);
+        if request.target_type == "local" {
+            let _ = update_local_inventory_skill(app, &request.skill_name, "", false, None);
+        } else if let Some(alias) = &request.host_alias {
+            let _ = update_host_inventory_skill(
+                app,
+                alias,
+                &request.skill_name,
+                &request.path,
+                false,
+                None,
+            );
+        }
+    }
+    save_skills(app, state, &skills)?;
+    let ok = item.ok;
+    let message = if ok {
+        "uninstall-success".into()
+    } else {
+        "uninstall-partial-failure".into()
+    };
+    Ok(SkillTargetOperationResult {
+        ok,
+        skills,
+        tasks: vec![task],
+        results: vec![item],
+        message,
+    })
+}
+
+fn uninstall_installed_local_skill(
+    request: &InstalledSkillRequest,
+) -> Result<(SkillTargetOperationItem, TaskRun), String> {
+    let root = local_codex_skills_root();
+    let target = PathBuf::from(&request.path);
+    let existed = target.exists();
+    if existed {
+        ensure_child_path(&root, &target)?;
+    } else if let Some(parent) = target.parent() {
+        ensure_child_path(&root, parent)?;
+    } else {
+        return Err("Installed local skill path has no parent directory.".into());
+    }
+    let ok = if !existed {
+        true
+    } else if target.is_dir() {
+        fs::remove_dir_all(&target).map_err(|error| {
+            format!(
+                "Failed to remove local installed skill {}: {error}",
+                target.display()
+            )
+        })?;
+        true
+    } else {
+        false
+    };
+    let message = if ok {
+        if existed {
+            format!("{} removed from {}.", request.skill_name, target.display())
+        } else {
+            format!(
+                "{} was not present at {}.",
+                request.skill_name,
+                target.display()
+            )
+        }
+    } else {
+        format!(
+            "Local installed skill target is not a directory: {}.",
+            target.display()
+        )
+    };
+    let task = local_skill_task("Uninstall installed skill", &message, ok);
+    Ok((
+        SkillTargetOperationItem {
+            target_type: "local".into(),
+            label: "local".into(),
+            host_alias: None,
+            ok,
+            message,
+            task: Some(task.clone()),
+        },
+        task,
+    ))
+}
+
 fn run_install_skill_targets(
     app: &AppHandle,
     state: &AppState,
@@ -9703,7 +10240,13 @@ fn run_install_skill_targets(
             if item.ok {
                 let installed_path = application.path.clone();
                 set_skill_application(&mut skills, &skill.id, application);
-                let _ = update_local_inventory_skill(app, &skill.id, &installed_path, true);
+                let _ = update_local_inventory_skill(
+                    app,
+                    &skill.id,
+                    &installed_path,
+                    true,
+                    Some(&skill.description),
+                );
             }
             if let Some(task) = task.clone() {
                 record_task(state, task.clone());
@@ -9743,6 +10286,7 @@ fn run_install_skill_targets(
                     &skill.id,
                     &result.target_path,
                     true,
+                    Some(&skill.description),
                 );
             }
             tasks.push(result.task.clone());
@@ -9788,7 +10332,7 @@ fn run_uninstall_skill_targets(
             let (item, task) = uninstall_local_skill(&skill)?;
             if item.ok {
                 remove_skill_application(&mut skills, &skill.id, &request);
-                let _ = update_local_inventory_skill(app, &skill.id, "", false);
+                let _ = update_local_inventory_skill(app, &skill.id, "", false, None);
             }
             if let Some(task) = task.clone() {
                 record_task(state, task.clone());
@@ -9822,6 +10366,7 @@ fn run_uninstall_skill_targets(
                     &skill.id,
                     &result.target_path,
                     false,
+                    None,
                 );
             }
             tasks.push(result.task.clone());
@@ -10168,18 +10713,38 @@ fn remote_skill_target_display(
 
 fn remote_skill_list_script() -> &'static str {
     r#"count=0
+extract_skill_description() {
+  file="$1/SKILL.md"
+  [ -f "$file" ] || return
+  awk '
+    NR == 1 && $0 == "---" { in_frontmatter=1; next }
+    in_frontmatter && $0 == "---" { exit }
+    in_frontmatter {
+      line=$0
+      sub(/\r$/, "", line)
+      if (line ~ /^[[:space:]]*description[[:space:]]*:/) {
+        sub(/^[[:space:]]*description[[:space:]]*:[[:space:]]*/, "", line)
+        gsub(/^["'\''"]|["'\''"]$/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "$file" | tr '\t\r\n' '   ' | sed 's/  */ /g' | cut -c 1-500
+}
 emit_skill_dir() {
   dir=$1
   [ -d "$dir" ] || return
   name=${dir##*/}
+  description=
   if [ -f "$dir/SKILL.md" ]; then
     status=valid
     has=yes
+    description=$(extract_skill_description "$dir")
   else
     status=missing-skill-md
     has=no
   fi
-  printf 'CODEXHUB_REMOTE_SKILL\t%s\t%s\t%s\t%s\n' "$name" "$has" "$status" "$dir"
+  printf 'CODEXHUB_REMOTE_SKILL\t%s\t%s\t%s\t%s\t%s\n' "$name" "$has" "$status" "$dir" "$description"
   count=$((count + 1))
 }
 scan_child_dir() {
@@ -10211,8 +10776,22 @@ scan_root() {
     done
   fi
 }
+scan_find_fallback() {
+  root=$1
+  [ -d "$root" ] || return
+  command -v find >/dev/null 2>&1 || return
+  find "$root" -mindepth 1 -maxdepth 3 -type f -name SKILL.md 2>/dev/null | while IFS= read -r skill_md; do
+    dir=${skill_md%/SKILL.md}
+    [ -d "$dir" ] || continue
+    emit_skill_dir "$dir"
+  done
+}
 scan_root "$HOME/.codex/skills"
 scan_root "$HOME/.codex/superpowers/skills"
+if [ "$count" = 0 ]; then
+  scan_find_fallback "$HOME/.codex/skills"
+  scan_find_fallback "$HOME/.codex/superpowers/skills"
+fi
 printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
 "#
 }
@@ -10361,24 +10940,94 @@ fn parse_remote_skill_list(stdout: &str) -> Vec<RemoteSkill> {
     stdout
         .lines()
         .filter_map(|line| {
-            let parts = line.split_whitespace().collect::<Vec<_>>();
-            let [marker, name, has_skill_md, status, path] = parts.as_slice() else {
-                return None;
+            let parsed = if line.starts_with("CODEXHUB_REMOTE_SKILL\t") {
+                let parts = line.splitn(6, '\t').collect::<Vec<_>>();
+                let (marker, name, has_skill_md, status, path, description) = match parts.as_slice()
+                {
+                    [marker, name, has_skill_md, status, path, description] => {
+                        (*marker, *name, *has_skill_md, *status, *path, *description)
+                    }
+                    [marker, name, has_skill_md, status, path] => {
+                        (*marker, *name, *has_skill_md, *status, *path, "")
+                    }
+                    _ => return None,
+                };
+                if marker != "CODEXHUB_REMOTE_SKILL" {
+                    return None;
+                }
+                (
+                    name.to_string(),
+                    has_skill_md == "yes",
+                    status.to_string(),
+                    path.to_string(),
+                    description.trim().to_string(),
+                )
+            } else {
+                let parts = line.split_whitespace().collect::<Vec<_>>();
+                if parts.len() < 5 {
+                    return None;
+                }
+                let marker = parts[0];
+                if marker != "CODEXHUB_REMOTE_SKILL" {
+                    return None;
+                }
+                // Task-log redaction collapses tab-delimited marker rows to spaces,
+                // so keep the first five structural fields and treat the rest as
+                // the optional SKILL.md description.
+                (
+                    parts[1].to_string(),
+                    parts[2] == "yes",
+                    parts[3].to_string(),
+                    parts[4].to_string(),
+                    parts[5..].join(" "),
+                )
             };
-            if *marker != "CODEXHUB_REMOTE_SKILL" {
-                return None;
-            }
+            let (name, has_skill_md, status, path, description) = parsed;
             if !seen_paths.insert(path.to_ascii_lowercase()) {
                 return None;
             }
             Some(RemoteSkill {
-                name: (*name).to_string(),
-                has_skill_md: *has_skill_md == "yes",
-                status: (*status).to_string(),
-                path: (*path).to_string(),
+                name,
+                has_skill_md,
+                status,
+                path,
+                description,
             })
         })
         .collect()
+}
+
+fn remote_installed_skill_archive_script(remote_path: &str, archive_path: &str) -> String {
+    format!(
+        r#"set -u
+target={remote_path}
+archive={archive_path}
+if [ ! -d "$target" ]; then
+  printf 'Installed skill target is missing or is not a directory: %s\n' "$target" >&2
+  exit 2
+fi
+if [ ! -f "$target/SKILL.md" ]; then
+  printf 'Installed skill target does not contain SKILL.md: %s\n' "$target" >&2
+  exit 3
+fi
+if ! command -v tar >/dev/null 2>&1; then
+  printf 'tar is required on the remote host for skill download.\n' >&2
+  exit 4
+fi
+mkdir -p "${{archive%/*}}"
+rm -f "$archive"
+parent=${{target%/*}}
+base=${{target##*/}}
+if [ -z "$parent" ] || [ "$parent" = "$target" ] || [ -z "$base" ]; then
+  printf 'Installed skill target path is not usable: %s\n' "$target" >&2
+  exit 5
+fi
+tar -czf "$archive" -C "$parent" "$base"
+printf 'CODEXHUB_SKILL_ARCHIVE=%s\n' "$archive"
+"#,
+        remote_path = shell_single_quote(remote_path),
+        archive_path = shell_single_quote(archive_path)
+    )
 }
 
 fn run_remote_skill_install(
@@ -10615,6 +11264,83 @@ fn remote_count_after_skill_install(state: &AppState, alias: &str) -> u16 {
         .saturating_add(1)
 }
 
+fn run_remote_installed_skill_delete(
+    state: &AppState,
+    request: &InstalledSkillRequest,
+    timeout_ms: Option<u64>,
+) -> Result<RemoteSkillDeleteResult, String> {
+    let alias = request
+        .host_alias
+        .as_deref()
+        .ok_or_else(|| "Host alias is required.".to_string())
+        .and_then(ssh::validate_ssh_alias)?;
+    validate_cached_remote_skill_path(&request.path)?;
+    let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(30_000)));
+    let task_id = format!("task-skill-delete-{}", timestamp_millis());
+    let host_id = host_id_for_alias(state, &alias);
+    let host_name = host_name_for_alias(state, &alias);
+    let script = remote_installed_skill_delete_script(&request.path);
+    let output = ssh::run_ssh_script(&alias, &script, timeout).unwrap_or_else(|error| {
+        failed_command_output(
+            format!("ssh {alias} delete installed skill {}", request.skill_name),
+            error,
+        )
+    });
+    let ok = output.success();
+    let logs = vec![command_log(
+        &task_id,
+        1,
+        if ok {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        if ok {
+            "Permanently removed remote installed skill directory."
+        } else {
+            "Failed to permanently remove remote installed skill directory."
+        },
+        &output,
+    )];
+    let summary = if ok {
+        let count = marker_value(&output.stdout, "CODEXHUB_SKILL_COUNT")
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or_else(|| remote_count_after_skill_delete(state, &alias));
+        update_host_skills(state, &alias, true, count);
+        format!("{} removed from {}.", request.skill_name, alias)
+    } else {
+        format!(
+            "{} could not be removed from {}: {}",
+            request.skill_name,
+            alias,
+            command_detail(&output)
+        )
+    };
+    let task = skill_task(
+        &task_id,
+        &host_id,
+        &host_name,
+        "Uninstall installed skill",
+        if ok {
+            TaskStatus::Success
+        } else {
+            TaskStatus::Failed
+        },
+        &summary,
+        logs,
+    );
+    record_task(state, task.clone());
+    Ok(RemoteSkillDeleteResult {
+        host_alias: alias,
+        ok,
+        skill_name: request.skill_name.clone(),
+        target_path: request.path.clone(),
+        backup_path: None,
+        message: summary,
+        task,
+    })
+}
+
 fn run_remote_skill_delete(
     state: &AppState,
     host_alias: String,
@@ -10650,7 +11376,7 @@ fn run_remote_skill_delete(
             TaskLogLevel::Error
         },
         if ok {
-            "Backed up and removed remote skill directory."
+            "Permanently removed remote skill directory."
         } else {
             "Failed to delete remote skill."
         },
@@ -10663,7 +11389,10 @@ fn run_remote_skill_delete(
         update_host_skills(state, &alias, true, count);
         match backup_path.as_deref() {
             Some(path) => format!("{skill_name} removed from {alias}; backup at {path}."),
-            None => format!("{skill_name} was not present on {alias}."),
+            None if output.stdout.contains("Skill was not present.") => {
+                format!("{skill_name} was not present on {alias}.")
+            }
+            None => format!("{skill_name} permanently removed from {alias}."),
         }
     } else {
         format!(
@@ -10818,7 +11547,6 @@ root={root_expr}
 skill_name={skill_name}
 timestamp={timestamp}
 target="$root/$skill_name"
-backup="$root/$skill_name.codexhub.deleted.$timestamp"
 if [ ! -e "$target" ]; then
   printf 'CODEXHUB_SKILL_TARGET=%s\n' "$target"
   printf 'CODEXHUB_SKILL_BACKUP=\n'
@@ -10829,12 +11557,9 @@ if [ ! -d "$target" ]; then
   printf 'Remote skill target exists but is not a directory: %s\n' "$target" >&2
   exit 2
 fi
-if [ -e "$backup" ]; then
-  backup="$backup.$$"
-fi
-mv "$target" "$backup"
+rm -rf "$target"
 printf 'CODEXHUB_SKILL_TARGET=%s\n' "$target"
-printf 'CODEXHUB_SKILL_BACKUP=%s\n' "$backup"
+printf 'CODEXHUB_SKILL_BACKUP=\n'
 count=0
 for dir in "$root"/*; do
   [ -d "$dir" ] || continue
@@ -10845,6 +11570,35 @@ printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
         root_expr = root_expr,
         skill_name = shell_single_quote(skill_name),
         timestamp = shell_single_quote(timestamp)
+    )
+}
+
+fn remote_installed_skill_delete_script(remote_path: &str) -> String {
+    format!(
+        r#"set -u
+target={remote_path}
+if [ ! -e "$target" ]; then
+  printf 'CODEXHUB_SKILL_TARGET=%s\n' "$target"
+  printf 'Skill was not present.\n'
+  exit 0
+fi
+if [ ! -d "$target" ]; then
+  printf 'Remote skill target exists but is not a directory: %s\n' "$target" >&2
+  exit 2
+fi
+rm -rf "$target"
+printf 'CODEXHUB_SKILL_TARGET=%s\n' "$target"
+count=0
+for root in "$HOME/.codex/skills" "$HOME/.codex/superpowers/skills"; do
+  [ -d "$root" ] || continue
+  for dir in "$root"/* "$root"/.[!.]* "$root"/..?*; do
+    [ -d "$dir" ] || continue
+    count=$((count + 1))
+  done
+done
+printf 'CODEXHUB_SKILL_COUNT=%s\n' "$count"
+"#,
+        remote_path = shell_single_quote(remote_path)
     )
 }
 

@@ -404,8 +404,10 @@ for (const asyncCommand of [
   "async fn refresh_latest_codex_version",
   "async fn detect_installed_skills",
   "async fn download_github_skill",
+  "async fn download_installed_skill",
   "async fn get_skill_targets",
   "async fn install_skill_targets",
+  "async fn uninstall_installed_skill",
   "async fn uninstall_skill_targets",
   "async fn delete_library_skill"
 ]) {
@@ -434,8 +436,13 @@ for (const token of [
   "write_skill_archive",
   "remote_skill_count_script",
   "remote_skill_list_script",
+  "extract_skill_description",
+  "scan_find_fallback",
+  "CODEXHUB_REMOTE_SKILL\\t%s\\t%s\\t%s\\t%s\\t%s",
   "remote_skill_install_script",
   "remote_skill_delete_script",
+  "remote_installed_skill_archive_script",
+  "remote_installed_skill_delete_script",
   "validate_remote_skill_dir_name",
   "$HOME/.codex/superpowers/skills",
   '"$root"/.[!.]*',
@@ -447,6 +454,9 @@ for (const token of [
   "tar is required on the remote host"
 ]) {
   if (!rustLib.includes(token)) fail(`missing Window 6 Skills backend token: ${token}`);
+}
+for (const token of ["Latest scan returned no skills; kept previous cached", "previous_inventory", "previous.skills"]) {
+  if (!rustLib.includes(token)) fail(`missing installed skill inventory empty-scan guard: ${token}`);
 }
 if (rustLib.includes('find "$HOME/.codex/skills" -mindepth 1 -maxdepth 1')) {
   fail("remote skill probes must not count only first-level ~/.codex/skills directories");
@@ -763,8 +773,10 @@ for (const token of [
   "api.getSkillInventoryStatus",
   "api.detectInstalledSkills",
   "api.downloadGithubSkill",
+  "api.downloadInstalledSkill",
   "api.getSkillTargets",
   "api.installSkillTargets",
+  "api.uninstallInstalledSkill",
   "api.uninstallSkillTargets",
   "api.deleteLibrarySkill",
   "className=\"skillsStack\"",
@@ -779,6 +791,15 @@ for (const token of [
   "installedSkillTagStyle",
   "installedSkillsTable",
   "installedSkillTag",
+  "InstalledSkillPreviewModal",
+  "InstalledSkillOperationModal",
+  "SkillInstalledConfirmModal",
+  "downloadInstalledSkill",
+  "uninstallInstalledSkill",
+  "downloadInstalledStarted",
+  "uninstallInstalledStarted",
+  "operationWaiting",
+  "description: skill.description?.trim() ?? \"\"",
   "SkillFirstScanModal",
   "SkillDownloadModal",
   "SkillPreviewModal",
@@ -1151,7 +1172,7 @@ if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay 
 if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
 if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");
 if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
-for (const token of ["TaskLogModal", "taskLogModal", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\"}"]) {
+for (const token of ["TaskLogModal", "taskLogDetailModal", "taskLogFlowRow", "taskLogMetaGrid", "taskLogStreamGrid", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\" || log.level === \"error\"}"]) {
   if (!app.includes(token)) fail(`missing task-history log modal token: ${token}`);
 }
 for (const token of ["logPanel", "publicKeyBox", "commandGrid", "commands.map((command)"]) {
@@ -1221,15 +1242,21 @@ for (const token of [
   "detect_installed_skills",
   "downloadGithubSkill",
   "download_github_skill",
+  "downloadInstalledSkill",
+  "download_installed_skill",
   "getSkillTargets",
   "get_skill_targets",
   "installSkillTargets",
   "install_skill_targets",
+  "uninstallInstalledSkill",
+  "uninstall_installed_skill",
   "uninstallSkillTargets",
   "uninstall_skill_targets",
   "deleteLibrarySkill",
   "delete_library_skill",
   "mockDetectInstalledSkills",
+  "mockDownloadInstalledSkill",
+  "mockUninstallInstalledSkill",
   "mockUpdateLibrarySkillAbout",
   "mockSkillTargetOperation",
   "mockDeleteLibrarySkill",
@@ -1284,6 +1311,8 @@ for (const token of [
   "SkillTarget",
   "SkillTargetsResult",
   "SkillTargetOperationResult",
+  "InstalledSkillRequest",
+  "InstalledSkillDownloadResult",
   "RemoteSkillListResult",
   "localSkills",
   "sourceType",

@@ -33,7 +33,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 - 管理本地 OpenSSH key 状态和 CodexHub 托管的 SSH alias。
 - 用一次性密码初始化新 Linux 主机，再切换到 key 登录。
 - 在修改前探测远端 Codex、config、shell、PATH 和 skill 状态。
-- 预览并应用 Codex profile 和 skills，保留备份与脱敏日志。
+- 预览并应用 Codex profile 和 skills，通过显式确认与脱敏日志追踪结果。
 - 验证 SSH alias 后，引导用户去 Codex App `Settings > Codex > Connections` 添加连接。
 
 ## 🖼️ 截图
@@ -46,7 +46,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 | ![CodexHub Hosts 页面，展示 SSH 主机管理](../../figs/Host-zh.png) |
 | **API 与 Profiles**<br>管理本地 API config 名称和 profile 模板，再预览或应用远端配置变更。 |
 | ![CodexHub API 与 profile 配置页面](../../figs/API-zh.png) |
-| **Skills**<br>导入本地或 GitHub skill 包，检查安装目标 inventory，并通过任务日志追踪安装或移除结果。 |
+| **Skills**<br>导入本地或 GitHub skill 包，检查安装目标 inventory，预览已安装 skill 标签，并通过任务日志追踪下载或移除结果。 |
 | ![CodexHub Skills 页面，展示本地技能库和安装目标](../../figs/Skills-zh.png) |
 | **Settings**<br>检查本地 SSH 就绪状态、管理应用更新检查，并查看平台相关运行偏好。 |
 | ![CodexHub Settings 页面，展示本地 SSH 和更新控制](../../figs/Settings-zh.png) |
@@ -147,4 +147,4 @@ macOS 桌面应用需要：
 - 可以导入包含 `SKILL.md` 的本地目录，也可以导入 GitHub 仓库/子目录 URL。
 - CodexHub 会在 app config 目录保存一份托管本地副本。
 - 目标检测使用缓存 inventory；给新主机安装前请先运行检测。
-- 卸载会把本地和远端 skill 目录移动到备份，而不是硬删除。
+- 已安装 skill 标签可打开预览。下载会把该已安装目录导入本地技能库；卸载需要二次确认，并会永久删除当前目标上的该 skill 目录。

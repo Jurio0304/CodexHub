@@ -250,6 +250,7 @@ export type RemoteSkill = {
   path: string;
   hasSkillMd: boolean;
   status: string;
+  description?: string;
 };
 
 export type RemoteSkillListResult = {
@@ -301,6 +302,22 @@ export type SkillTargetOperationResult = {
   skills: SkillPack[];
   tasks: TaskRun[];
   results: SkillTargetOperationItem[];
+  message: string;
+};
+
+export type InstalledSkillRequest = {
+  targetType: "local" | "host" | string;
+  hostAlias?: string | null;
+  skillName: string;
+  path: string;
+};
+
+export type InstalledSkillDownloadResult = {
+  imported: SkillPack[];
+  skipped: string[];
+  skills: SkillPack[];
+  status: SkillInventoryStatus;
+  tasks: TaskRun[];
   message: string;
 };
 

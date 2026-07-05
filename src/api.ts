@@ -9,6 +9,8 @@ import type {
   Host,
   HostDraft,
   HostPatch,
+  InstalledSkillDownloadResult,
+  InstalledSkillRequest,
   LatestCodexVersion,
   LocalCodexStatus,
   CcSwitchDetection,
@@ -909,7 +911,8 @@ function mockDetectInstalledSkills(includeHosts: boolean): SkillDetectionResult 
         name: skill.id,
         path: localSkillPath(skill.id),
         hasSkillMd: true,
-        status: "valid"
+        status: "valid",
+        description: skill.description || skill.about || ""
       }))
   };
   return {
@@ -999,7 +1002,8 @@ function mockSkillTargetOperation(skillId: string, targets: SkillTargetRequest[]
               name: skill.id,
               path: localSkillPath(skill.id),
               hasSkillMd: true,
-              status: "valid"
+              status: "valid",
+              description: skill.description || skill.about || ""
             }
           ].sort((left, right) => left.name.localeCompare(right.name))
         : mockSkillInventoryStatus.localSkills.filter((item) => item.name !== skill.id)
@@ -1025,7 +1029,8 @@ function mockSkillTargetOperation(skillId: string, targets: SkillTargetRequest[]
           name: skill.id,
           path: `~/.codex/skills/${skill.id}`,
           hasSkillMd: true,
-          status: "valid"
+          status: "valid",
+          description: skill.description || skill.about || ""
         });
         base.skills.sort((left, right) => left.name.localeCompare(right.name));
       }
@@ -1054,6 +1059,90 @@ function mockDeleteLibrarySkill(skillId: string): SkillTargetOperationResult {
     tasks: [],
     results: [],
     message: `Mock removed ${skill?.name ?? skillId} from the local skill library.`
+  };
+}
+
+function mockDownloadInstalledSkill(request: InstalledSkillRequest): InstalledSkillDownloadResult {
+  const id = slugifyProfileName(request.skillName);
+  const skill: SkillPack = {
+    id,
+    name: request.skillName,
+    version: "mock",
+    description: `Mock imported from ${request.path}.`,
+    about: `Mock imported from ${request.path}.`,
+    sourceType: request.targetType === "host" ? "host" : "local",
+    source: request.path,
+    originalPath: request.path,
+    managedPath: `%APPDATA%\\CodexHub\\skills\\${id}`,
+    hasSkillMd: true,
+    skillCount: 1,
+    enabled: true,
+    addedAt: todayStamp(),
+    updatedAt: nowStamp(),
+    applications: []
+  };
+  mockSkillPacks = [...mockSkillPacks.filter((item) => item.id !== skill.id), skill];
+  return {
+    imported: [skill],
+    skipped: [],
+    skills: clone(mockSkillPacks),
+    status: clone(mockSkillInventoryStatus),
+    tasks: [],
+    message: `Mock downloaded ${request.skillName} to the local skill library.`
+  };
+}
+
+function mockUninstallInstalledSkill(request: InstalledSkillRequest): SkillTargetOperationResult {
+  const id = slugifyProfileName(request.skillName);
+  const label = request.targetType === "local" ? "local" : request.hostAlias ?? "unknown";
+  mockSkillPacks = mockSkillPacks.map((skill) => ({
+    ...skill,
+    applications: skill.applications.filter(
+      (application) =>
+        !(
+          (skill.id === id || skill.name.toLowerCase() === request.skillName.toLowerCase()) &&
+          application.targetType === request.targetType &&
+          (application.hostAlias ?? null) === (request.hostAlias ?? null)
+        )
+    )
+  }));
+  if (request.targetType === "local") {
+    mockSkillInventoryStatus = {
+      ...mockSkillInventoryStatus,
+      localSkills: mockSkillInventoryStatus.localSkills.filter(
+        (skill) => !(skill.name.toLowerCase() === request.skillName.toLowerCase() && skill.path === request.path)
+      )
+    };
+  } else if (request.hostAlias) {
+    mockSkillInventoryStatus = {
+      ...mockSkillInventoryStatus,
+      hostInventories: mockSkillInventoryStatus.hostInventories.map((inventory) =>
+        inventory.hostAlias === request.hostAlias
+          ? {
+              ...inventory,
+              skills: inventory.skills.filter(
+                (skill) => !(skill.name.toLowerCase() === request.skillName.toLowerCase() && skill.path === request.path)
+              )
+            }
+          : inventory
+      )
+    };
+  }
+  return {
+    ok: true,
+    skills: clone(mockSkillPacks),
+    tasks: [],
+    results: [
+      {
+        targetType: request.targetType,
+        label,
+        hostAlias: request.hostAlias ?? null,
+        ok: true,
+        message: `Mock uninstalled ${request.skillName} from ${label}.`,
+        task: null
+      }
+    ],
+    message: "uninstall-success"
   };
 }
 
@@ -1447,6 +1536,18 @@ export const api = {
       }
     }
     return mockDeleteLibrarySkill(skillId);
+  },
+  downloadInstalledSkill: async (request: InstalledSkillRequest, timeoutMs = 120000) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<InstalledSkillDownloadResult>("download_installed_skill", { request, timeoutMs });
+    }
+    return mockDownloadInstalledSkill(request);
+  },
+  uninstallInstalledSkill: async (request: InstalledSkillRequest, timeoutMs = 120000) => {
+    if (hasTauriRuntime()) {
+      return requiredInvoke<SkillTargetOperationResult>("uninstall_installed_skill", { request, timeoutMs });
+    }
+    return mockUninstallInstalledSkill(request);
   },
   updateLibrarySkillAbout: async (skillId: string, about: string) => {
     if (hasTauriRuntime()) {

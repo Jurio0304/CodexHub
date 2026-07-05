@@ -8,6 +8,8 @@ import type {
   Health,
   Host,
   HostStatus,
+  InstalledSkillDownloadResult,
+  InstalledSkillRequest,
   LatestCodexVersion,
   Profile,
   ProfileApiKeyResult,
@@ -20,6 +22,7 @@ import type {
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
+  RemoteSkill,
   SkillDetectionResult,
   SkillInventoryStatus,
   SkillImportResult,
@@ -442,6 +445,21 @@ const uiCopy = {
       deleteBody: "Remove this skill from the library. You can uninstall it from all known targets first, or only remove the library entry.",
       uninstallAndDelete: "Uninstall and delete",
       directDelete: "Delete only",
+      downloadInstalledTitle: "Download installed skill",
+      downloadInstalledBody: (name: string) => `Download ${name} into the local skill library.`,
+      downloadInstalledAction: "Download to library",
+      downloadInstalledStarted: (name: string) => `Downloading ${name} into the local skill library.`,
+      downloadUnavailableLocalExists: "Already in local library",
+      uninstallInstalledTitle: "Uninstall installed skill",
+      uninstallInstalledBody: (name: string, target: string) =>
+        `Uninstall ${name} from ${target}. This permanently deletes the skill directory and cannot be undone.`,
+      uninstallInstalledAction: "Uninstall from this target",
+      uninstallInstalledStarted: (name: string, target: string) => `Uninstalling ${name} from ${target}.`,
+      installedPreviewTarget: "Target",
+      installedPreviewStatus: "Status",
+      installedPreviewLocalLibrary: "Local library",
+      installedPreviewNotDownloaded: "Not downloaded",
+      operationWaiting: "Running skill operation scripts...",
       operationDone: "Operation finished.",
       target: "Target",
       path: "Path",
@@ -944,6 +962,21 @@ const uiCopy = {
       deleteBody: "从技能库删除该 skill。可以先从所有已知目标卸载，也可以只删除库记录。",
       uninstallAndDelete: "卸载并删除",
       directDelete: "直接删除",
+      downloadInstalledTitle: "下载已安装技能",
+      downloadInstalledBody: (name: string) => `将 ${name} 下载到本地技能库。`,
+      downloadInstalledAction: "下载到技能库",
+      downloadInstalledStarted: (name: string) => `正在将 ${name} 下载到本地技能库。`,
+      downloadUnavailableLocalExists: "本地技能库已存在",
+      uninstallInstalledTitle: "卸载已安装技能",
+      uninstallInstalledBody: (name: string, target: string) =>
+        `将从 ${target} 卸载 ${name}。该操作会直接删除技能目录，无法恢复。`,
+      uninstallInstalledAction: "从当前目标卸载",
+      uninstallInstalledStarted: (name: string, target: string) => `正在从 ${target} 卸载 ${name}。`,
+      installedPreviewTarget: "目标",
+      installedPreviewStatus: "状态",
+      installedPreviewLocalLibrary: "本地技能库",
+      installedPreviewNotDownloaded: "未下载",
+      operationWaiting: "正在执行技能操作脚本...",
       operationDone: "操作完成。",
       target: "目标",
       path: "路径",
@@ -2037,6 +2070,32 @@ function App() {
     });
   };
 
+  const applyInstalledSkillDownloadResult = async (result: InstalledSkillDownloadResult) => {
+    setSkillPacks(result.skills);
+    setSkillInventoryStatus(result.status);
+    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+    const nextHosts = await api.listHosts();
+    setHosts(nextHosts);
+    setNotice(result.message || copy.skills.downloaded);
+    return result;
+  };
+
+  const handleDownloadInstalledSkill = async (request: InstalledSkillRequest) => {
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.downloadInstalledSkill(request);
+      return applyInstalledSkillDownloadResult(result);
+    });
+  };
+
+  const handleUninstallInstalledSkill = async (request: InstalledSkillRequest) => {
+    const section = activeSection;
+    return runSectionOperation(section, async () => {
+      const result = await api.uninstallInstalledSkill(request);
+      return applySkillOperationResult(result);
+    });
+  };
+
   const handleUpdateLibrarySkillAbout = async (skillId: string, about: string) => {
     const nextSkills = await api.updateLibrarySkillAbout(skillId, about);
     setSkillPacks(nextSkills);
@@ -2324,13 +2383,16 @@ function App() {
             skillPacks={skillPacks}
             onDeleteLibrarySkill={handleDeleteLibrarySkill}
             onDetectInstalledSkills={handleDetectInstalledSkills}
+            onDownloadInstalledSkill={handleDownloadInstalledSkill}
             onDownloadGithubSkill={handleDownloadGithubSkill}
             onGetSkillTargets={handleGetSkillTargets}
             onImportSkillDirectory={handleImportSkillDirectory}
             onInstallSkillTargets={handleInstallSkillTargets}
             onRefreshSkillLibrary={handleRefreshSkillLibrary}
+            onUninstallInstalledSkill={handleUninstallInstalledSkill}
             onUninstallSkillTargets={handleUninstallSkillTargets}
             onUpdateLibrarySkillAbout={handleUpdateLibrarySkillAbout}
+            onViewTasks={() => setActiveSection("tasks")}
           />
         );
       case "tasks":
@@ -4616,13 +4678,16 @@ function SkillsView({
   skillPacks,
   onDeleteLibrarySkill,
   onDetectInstalledSkills,
+  onDownloadInstalledSkill,
   onDownloadGithubSkill,
   onGetSkillTargets,
   onImportSkillDirectory,
   onInstallSkillTargets,
   onRefreshSkillLibrary,
+  onUninstallInstalledSkill,
   onUninstallSkillTargets,
-  onUpdateLibrarySkillAbout
+  onUpdateLibrarySkillAbout,
+  onViewTasks
 }: {
   copy: UICopy;
   hosts: Host[];
@@ -4630,13 +4695,16 @@ function SkillsView({
   skillPacks: SkillPack[];
   onDeleteLibrarySkill: (skillId: string, uninstallFirst: boolean) => Promise<SkillTargetOperationResult>;
   onDetectInstalledSkills: (includeHosts: boolean) => Promise<SkillDetectionResult>;
+  onDownloadInstalledSkill: (request: InstalledSkillRequest) => Promise<InstalledSkillDownloadResult>;
   onDownloadGithubSkill: (repoUrl: string) => Promise<SkillImportResult>;
   onGetSkillTargets: (skillId: string) => Promise<SkillTargetsResult>;
   onImportSkillDirectory: () => Promise<SkillImportResult | null>;
   onInstallSkillTargets: (skillId: string, targets: SkillTargetRequest[]) => Promise<SkillTargetOperationResult>;
   onRefreshSkillLibrary: () => Promise<unknown>;
+  onUninstallInstalledSkill: (request: InstalledSkillRequest) => Promise<SkillTargetOperationResult>;
   onUninstallSkillTargets: (skillId: string, targets: SkillTargetRequest[]) => Promise<SkillTargetOperationResult>;
   onUpdateLibrarySkillAbout: (skillId: string, about: string) => Promise<SkillPack | null>;
+  onViewTasks: () => void;
 }) {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [firstScanOpen, setFirstScanOpen] = useState(false);
@@ -4646,6 +4714,10 @@ function SkillsView({
   const [targetResult, setTargetResult] = useState<SkillTargetsResult | null>(null);
   const [selectedTargetKeys, setSelectedTargetKeys] = useState<string[]>([]);
   const [deleteSkill, setDeleteSkill] = useState<SkillPack | null>(null);
+  const [previewInstalledSkill, setPreviewInstalledSkill] = useState<InstalledSkillPreview | null>(null);
+  const [downloadInstalledSkill, setDownloadInstalledSkill] = useState<InstalledSkillPreview | null>(null);
+  const [uninstallInstalledSkill, setUninstallInstalledSkill] = useState<InstalledSkillPreview | null>(null);
+  const [installedSkillOperation, setInstalledSkillOperation] = useState<InstalledSkillOperationModalState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const installedSkillRows = useMemo(
@@ -4653,9 +4725,113 @@ function SkillsView({
     [copy, hosts, inventoryStatus]
   );
   const installedSkillNames = useMemo(
-    () => Array.from(new Set(installedSkillRows.flatMap((row) => row.skills))).sort((left, right) => left.localeCompare(right)),
+    () => Array.from(new Set(installedSkillRows.flatMap((row) => row.skills.map((skill) => skill.skillName)))).sort((left, right) => left.localeCompare(right)),
     [installedSkillRows]
   );
+
+  const openInstalledPreview = (row: InstalledSkillLibraryRow, skill: InstalledSkillTagInfo) => {
+    setPreviewInstalledSkill({
+      ...skill,
+      targetLabel: row.alias,
+      source: row.source,
+      sourceTone: row.sourceTone,
+      hostIp: row.hostIp,
+      localSkill: findLocalSkillForInstalled(skillPacks, skill.skillName)
+    });
+  };
+
+  const beginInstalledSkillOperation = (skill: InstalledSkillPreview, action: "download" | "uninstall") => {
+    const id = `installed-skill-${action}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setInstalledSkillOperation({
+      id,
+      action,
+      skillName: skill.skillName,
+      targetLabel: skill.targetLabel,
+      path: skill.path,
+      status: "running",
+      tasks: [],
+      message: action === "download"
+        ? copy.skills.downloadInstalledStarted(skill.skillName)
+        : copy.skills.uninstallInstalledStarted(skill.skillName, skill.targetLabel)
+    });
+    return id;
+  };
+
+  const submitInstalledDownload = async () => {
+    const skill = downloadInstalledSkill;
+    if (!skill) return;
+    setDownloadInstalledSkill(null);
+    setPreviewInstalledSkill(null);
+    const operationId = beginInstalledSkillOperation(skill, "download");
+    try {
+      const result = await runBusy(`download-installed-${skill.targetType}-${skill.skillName}`, () =>
+        onDownloadInstalledSkill(installedSkillRequest(skill))
+      );
+      setInstalledSkillOperation((current) =>
+        current?.id === operationId
+          ? {
+              ...current,
+              status: "success",
+              tasks: result.tasks,
+              message: result.message || copy.skills.downloaded
+            }
+          : current
+      );
+      setMessage(result.message || copy.skills.downloaded);
+    } catch (error) {
+      const detail = formatError(error);
+      setInstalledSkillOperation((current) =>
+        current?.id === operationId
+          ? {
+              ...current,
+              status: "failed",
+              error: detail
+            }
+          : current
+      );
+    }
+  };
+
+  const submitInstalledUninstall = async () => {
+    const skill = uninstallInstalledSkill;
+    if (!skill) return;
+    setUninstallInstalledSkill(null);
+    setPreviewInstalledSkill(null);
+    const operationId = beginInstalledSkillOperation(skill, "uninstall");
+    try {
+      const result = await runBusy(`uninstall-installed-${skill.targetType}-${skill.skillName}`, () =>
+        onUninstallInstalledSkill(installedSkillRequest(skill))
+      );
+      const message =
+        result.message === "uninstall-success"
+          ? copy.skills.uninstallSuccess
+          : result.message === "uninstall-partial-failure"
+            ? copy.skills.uninstallPartialFailure
+            : result.message;
+      setInstalledSkillOperation((current) =>
+        current?.id === operationId
+          ? {
+              ...current,
+              status: result.ok ? "success" : "failed",
+              tasks: result.tasks,
+              message
+            }
+          : current
+      );
+      setMessage(message);
+    } catch (error) {
+      const detail = formatError(error);
+      setInstalledSkillOperation((current) =>
+        current?.id === operationId
+          ? {
+              ...current,
+              status: "failed",
+              error: detail
+            }
+          : current
+      );
+    }
+  };
 
   const runBusy = async <T,>(key: string, action: () => Promise<T>) => {
     setBusy(key);
@@ -4873,10 +5049,17 @@ function SkillsView({
                   <td>
                     <div className="installedSkillTags">
                       {row.skills.length > 0 ? (
-                        row.skills.map((skillName) => (
-                          <span className="installedSkillTag" key={skillName} style={installedSkillTagStyle(skillName, installedSkillNames)}>
-                            {skillName}
-                          </span>
+                        row.skills.map((skill) => (
+                          <button
+                            className="installedSkillTag"
+                            key={skill.key}
+                            style={installedSkillTagStyle(skill.skillName, installedSkillNames)}
+                            title={skill.path}
+                            type="button"
+                            onClick={() => openInstalledPreview(row, skill)}
+                          >
+                            {skill.skillName}
+                          </button>
                         ))
                       ) : row.unknownSkillCount ? (
                         <Badge tone="blue">{`${copy.hosts.skillsCount}: ${row.unknownSkillCount}`}</Badge>
@@ -4919,6 +5102,61 @@ function SkillsView({
           }}
         />
       ) : null}
+      {previewInstalledSkill ? (
+        <InstalledSkillPreviewModal
+          busy={Boolean(busy)}
+          copy={copy}
+          skill={previewInstalledSkill}
+          onClose={() => setPreviewInstalledSkill(null)}
+          onDownload={() => setDownloadInstalledSkill(previewInstalledSkill)}
+          onSaveAbout={async (about) => {
+            if (!previewInstalledSkill.localSkill) return;
+            const updated = await onUpdateLibrarySkillAbout(previewInstalledSkill.localSkill.id, about);
+            if (updated) {
+              setPreviewInstalledSkill((current) =>
+                current && current.skillName === previewInstalledSkill.skillName
+                  ? { ...current, localSkill: updated }
+                  : current
+              );
+            }
+          }}
+          onUninstall={() => setUninstallInstalledSkill(previewInstalledSkill)}
+        />
+      ) : null}
+      {downloadInstalledSkill ? (
+        <SkillInstalledConfirmModal
+          busy={Boolean(busy)}
+          confirmLabel={copy.skills.downloadInstalledAction}
+          copy={copy}
+          title={copy.skills.downloadInstalledTitle}
+          body={copy.skills.downloadInstalledBody(downloadInstalledSkill.skillName)}
+          onClose={() => setDownloadInstalledSkill(null)}
+          onConfirm={() => void submitInstalledDownload().catch(() => undefined)}
+        />
+      ) : null}
+      {uninstallInstalledSkill ? (
+        <SkillInstalledConfirmModal
+          busy={Boolean(busy)}
+          confirmLabel={copy.skills.uninstallInstalledAction}
+          copy={copy}
+          danger
+          title={copy.skills.uninstallInstalledTitle}
+          body={copy.skills.uninstallInstalledBody(uninstallInstalledSkill.skillName, uninstallInstalledSkill.targetLabel)}
+          onClose={() => setUninstallInstalledSkill(null)}
+          onConfirm={() => void submitInstalledUninstall().catch(() => undefined)}
+        />
+      ) : null}
+      {installedSkillOperation ? (
+        <InstalledSkillOperationModal
+          copy={copy}
+          operation={installedSkillOperation}
+          onClose={() => setInstalledSkillOperation(null)}
+          onViewTasks={() => {
+            setInstalledSkillOperation(null);
+            onViewTasks();
+          }}
+        />
+      ) : null}
       {targetMode && targetSkill ? (
         <SkillTargetsModal
           busy={Boolean(busy)}
@@ -4957,19 +5195,81 @@ type InstalledSkillLibraryRow = {
   source: string;
   sourceTone: BadgeTone;
   hostIp: string;
-  skills: string[];
+  skills: InstalledSkillTagInfo[];
   unknownSkillCount?: number;
 };
 
-function installedSkillNames(skills: SkillInventoryStatus["localSkills"]) {
-  return Array.from(
-    new Set(
-      skills
-        .filter((skill) => skill.hasSkillMd !== false)
-        .map((skill) => skill.name.trim())
-        .filter(Boolean)
-    )
-  ).sort((left, right) => left.localeCompare(right));
+type InstalledSkillTagInfo = {
+  key: string;
+  targetType: "local" | "host";
+  hostAlias: string | null;
+  skillName: string;
+  path: string;
+  hasSkillMd: boolean;
+  status: string;
+  description: string;
+};
+
+type InstalledSkillPreview = InstalledSkillTagInfo & {
+  targetLabel: string;
+  source: string;
+  sourceTone: BadgeTone;
+  hostIp: string;
+  localSkill: SkillPack | null;
+};
+
+type InstalledSkillOperationModalState = {
+  id: string;
+  action: "download" | "uninstall";
+  skillName: string;
+  targetLabel: string;
+  path: string;
+  status: CodexOperationModalStatus;
+  tasks: TaskRun[];
+  message?: string;
+  error?: string;
+};
+
+function installedSkillTags(skills: RemoteSkill[], targetType: "local" | "host", hostAlias: string | null): InstalledSkillTagInfo[] {
+  return skills
+    .filter((skill) => skill.hasSkillMd !== false && skill.name.trim())
+    .map((skill) => ({
+      key: `${targetType}:${hostAlias ?? "local"}:${skill.path}:${skill.name}`,
+      targetType,
+      hostAlias,
+      skillName: skill.name.trim(),
+      path: skill.path,
+      hasSkillMd: skill.hasSkillMd,
+      status: skill.status,
+      description: skill.description?.trim() ?? ""
+    }))
+    .sort((left, right) => left.skillName.localeCompare(right.skillName));
+}
+
+function normalizedSkillLookupName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function findLocalSkillForInstalled(skillPacks: SkillPack[], skillName: string) {
+  const normalized = normalizedSkillLookupName(skillName);
+  const lower = skillName.toLowerCase();
+  return (
+    skillPacks.find((skill) => skill.id.toLowerCase() === normalized || skill.name.toLowerCase() === lower) ??
+    null
+  );
+}
+
+function installedSkillRequest(skill: InstalledSkillTagInfo): InstalledSkillRequest {
+  return {
+    targetType: skill.targetType,
+    hostAlias: skill.hostAlias,
+    skillName: skill.skillName,
+    path: skill.path
+  };
 }
 
 function buildInstalledSkillRows(copy: UICopy, hosts: Host[], status: SkillInventoryStatus): InstalledSkillLibraryRow[] {
@@ -4981,7 +5281,7 @@ function buildInstalledSkillRows(copy: UICopy, hosts: Host[], status: SkillInven
       source: copy.skills.localMachine,
       sourceTone: "green",
       hostIp: "127.0.0.1",
-      skills: installedSkillNames(status.localSkills)
+      skills: installedSkillTags(status.localSkills, "local", null)
     },
     ...hosts.map((host) => {
       const inventory = hostInventoryByAlias.get(host.hostAlias.toLowerCase());
@@ -4991,7 +5291,7 @@ function buildInstalledSkillRows(copy: UICopy, hosts: Host[], status: SkillInven
         source: hostSourceLabel(copy, host),
         sourceTone: host.source === "managed" ? "blue" as const : "gray" as const,
         hostIp: host.address || "-",
-        skills: inventory?.ok ? installedSkillNames(inventory.skills) : [],
+        skills: inventory?.ok ? installedSkillTags(inventory.skills, "host", host.hostAlias) : [],
         unknownSkillCount: !inventory?.ok && typeof host.skillsCount === "number" && host.skillsCount > 0
           ? host.skillsCount
           : undefined
@@ -5233,6 +5533,248 @@ function SkillPreviewModal({
               {copy.skills.edit}
             </button>
           )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function InstalledSkillPreviewModal({
+  busy,
+  copy,
+  skill,
+  onClose,
+  onDownload,
+  onSaveAbout,
+  onUninstall
+}: {
+  busy: boolean;
+  copy: UICopy;
+  skill: InstalledSkillPreview;
+  onClose: () => void;
+  onDownload: () => void;
+  onSaveAbout: (about: string) => Promise<void>;
+  onUninstall: () => void;
+}) {
+  const localSkill = skill.localSkill;
+  const about = localSkill
+    ? localSkill.description?.trim() || localSkill.about?.trim() || copy.skills.aboutFallback
+    : skill.description?.trim() || copy.skills.aboutFallback;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(about);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDraft(about);
+    setEditing(false);
+    setError(null);
+  }, [about, skill.skillName, localSkill?.id]);
+
+  const handleSave = async () => {
+    if (!localSkill) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onSaveAbout(draft);
+      setEditing(false);
+    } catch (saveError) {
+      setError(formatError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal skillPreviewModal" role="dialog" aria-modal="true" aria-labelledby="installed-skill-preview-title">
+        <button className="modalCloseButton" disabled={busy || saving} type="button" onClick={onClose} aria-label={copy.setupGuide.close}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="installed-skill-preview-title">🧩 {skill.skillName}</h2>
+          </div>
+        </div>
+        <div className="taskLogModalMeta skillPreviewMeta installedSkillPreviewMeta">
+          <div>
+            <span>{copy.skills.installedPreviewTarget}</span>
+            <strong>{skill.targetLabel}</strong>
+          </div>
+          <div>
+            <span>{copy.skills.installedPreviewLocalLibrary}</span>
+            <strong>{localSkill ? localSkill.name : copy.skills.installedPreviewNotDownloaded}</strong>
+          </div>
+          <div>
+            <span>{copy.skills.path}</span>
+            <strong>{skill.path || "-"}</strong>
+          </div>
+        </div>
+        <section className="skillPreviewDetails">
+          <span>{copy.skills.details}</span>
+          {editing ? (
+            <textarea
+              autoFocus
+              disabled={saving}
+              onChange={(event) => setDraft(event.target.value)}
+              value={draft}
+            />
+          ) : (
+            <p>{about}</p>
+          )}
+        </section>
+        {error ? <p className="skillMessage">{error}</p> : null}
+        <div className="modalActions skillPreviewActions">
+          {editing ? (
+            <>
+              <button className="secondaryButton" disabled={saving} type="button" onClick={() => {
+                setDraft(about);
+                setEditing(false);
+                setError(null);
+              }}>
+                {copy.hosts.cancel}
+              </button>
+              <button className="primaryButton" disabled={saving} type="button" onClick={() => void handleSave()}>
+                {copy.skills.save}
+              </button>
+            </>
+          ) : (
+            <>
+              {localSkill ? (
+                <button className="secondaryButton" disabled={busy} type="button" onClick={() => setEditing(true)}>
+                  {copy.skills.edit}
+                </button>
+              ) : null}
+              <button className="primaryButton" disabled={busy || Boolean(localSkill)} type="button" onClick={onDownload}>
+                {localSkill ? copy.skills.downloadUnavailableLocalExists : copy.skills.download}
+              </button>
+              <button className="primaryButton dangerButton" disabled={busy} type="button" onClick={onUninstall}>
+                {copy.skills.uninstall}
+              </button>
+            </>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SkillInstalledConfirmModal({
+  body,
+  busy,
+  confirmLabel,
+  copy,
+  danger = false,
+  title,
+  onClose,
+  onConfirm
+}: {
+  body: string;
+  busy: boolean;
+  confirmLabel: string;
+  copy: UICopy;
+  danger?: boolean;
+  title: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="installed-skill-confirm-title">
+        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
+          x
+        </button>
+        <div className="taskLogModalHeader">
+          <div>
+            <h2 id="installed-skill-confirm-title">{title}</h2>
+            <p>{body}</p>
+          </div>
+        </div>
+        <div className="modalActions">
+          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+            {copy.hosts.cancel}
+          </button>
+          <button className={danger ? "primaryButton dangerButton" : "primaryButton"} disabled={busy} type="button" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function InstalledSkillOperationModal({
+  copy,
+  operation,
+  onClose,
+  onViewTasks
+}: {
+  copy: UICopy;
+  operation: InstalledSkillOperationModalState;
+  onClose: () => void;
+  onViewTasks: () => void;
+}) {
+  const logRowsRef = useRef<HTMLDivElement | null>(null);
+  const statusTone = operation.status === "success" ? "green" : operation.status === "failed" ? "red" : "blue";
+  const title = operation.action === "download" ? copy.skills.downloadInstalledTitle : copy.skills.uninstallInstalledTitle;
+  const taskLogs = operation.tasks.flatMap((task) =>
+    task.logs.map((log) => ({
+      level: log.level,
+      message: log.message || task.summary
+    }))
+  );
+  const fallbackLogs = [
+    {
+      level: operation.status === "failed" ? "error" as const : "info" as const,
+      message: operation.error ?? operation.message ?? copy.skills.operationWaiting
+    }
+  ];
+  const rows = taskLogs.length > 0 ? taskLogs : fallbackLogs;
+
+  useEffect(() => {
+    if (logRowsRef.current) {
+      logRowsRef.current.scrollTop = logRowsRef.current.scrollHeight;
+    }
+  }, [rows.length, operation.status]);
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <section className="codexOperationModal skillOperationModal" role="dialog" aria-modal="true" aria-labelledby="installed-skill-operation-title">
+        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}>
+          x
+        </button>
+        <div className="codexOperationHeader">
+          <h2 id="installed-skill-operation-title">{`🧩 ${title}`}</h2>
+          <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
+        </div>
+        <div className="codexOperationSummary">
+          <span>{copy.codexOperation.summary}</span>
+          <strong>{operation.message ?? operation.error ?? copy.skills.operationWaiting}</strong>
+          <small>{`${operation.skillName} · ${operation.targetLabel}`}</small>
+        </div>
+        <div className="codexOperationLog">
+          <div className="codexOperationLogTitle">
+            <span>{copy.codexOperation.latestLog}</span>
+            {operation.status === "running" ? <i aria-hidden="true" /> : null}
+          </div>
+          <div className="codexOperationLogRows" ref={logRowsRef}>
+            {rows.map((log, index) => (
+              <div className="codexOperationLogRow" data-level={log.level} key={`${log.message}-${index}`}>
+                <strong>{copy.status.log[log.level]}</strong>
+                <span>{log.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="modalActions codexOperationActions">
+          {operation.tasks.length > 0 ? (
+            <button className="secondaryButton" type="button" onClick={onViewTasks}>
+              {copy.codexOperation.viewTasks}
+            </button>
+          ) : null}
+          <button className="primaryButton" type="button" onClick={onClose}>
+            {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
+          </button>
         </div>
       </section>
     </div>
@@ -5504,67 +6046,77 @@ function TaskLogModal({
   onClose: () => void;
   footer?: ReactNode;
 }) {
+  const statusTone = task.status === "success" ? "green" : task.status === "failed" ? "red" : task.status === "running" ? "yellow" : "gray";
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal" role="dialog" aria-modal="true" aria-labelledby="task-log-modal-title">
+      <section className="codexOperationModal taskLogDetailModal" role="dialog" aria-modal="true" aria-labelledby="task-log-modal-title">
         <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.codexOperation.close}>
           ×
         </button>
-        <div className="taskLogModalHeader">
+        <div className="codexOperationHeader">
           <div>
             <h2 id="task-log-modal-title">📋 {localizeTaskAction(task.action, copy)}</h2>
-            <p>{task.summary}</p>
           </div>
-          <TaskStatusBadge copy={copy} status={task.status} />
+          <Badge tone={statusTone}>{copy.status.task[task.status]}</Badge>
         </div>
-        <div className="taskLogModalMeta">
-          <div>
-            <span>{copy.tasks.host}</span>
-            <strong>{task.hostName}</strong>
-          </div>
-          <div>
-            <span>{copy.tasks.started}</span>
-            <strong>{formatTaskTimestamp(task, copy, now)}</strong>
-          </div>
+        <div className="codexOperationSummary taskLogSummary">
+          <span>{copy.codexOperation.summary}</span>
+          <strong>{task.summary}</strong>
+          <small>{`${copy.tasks.host}: ${task.hostName} | ${copy.tasks.started}: ${formatTaskTimestamp(task, copy, now)}`}</small>
         </div>
-        <div className="logList taskLogModalList">
-          {task.logs.length > 0 ? task.logs.map((log) => (
-            <details className="logLine" data-level={log.level} key={log.id} open={task.status === "failed"}>
-              <summary>
-                <span>{log.timestamp}</span>
-                <strong>{copy.status.log[log.level]}</strong>
-                <p>{log.message}</p>
-              </summary>
-              <div className="logMetaGrid">
-                <div>
-                  <span>{copy.tasks.command}</span>
-                  <code>{log.command ?? "-"}</code>
+        <div className="codexOperationLog">
+          <div className="codexOperationLogTitle">
+            <span>{copy.codexOperation.latestLog}</span>
+            {task.status === "running" ? <i aria-hidden="true" /> : null}
+          </div>
+          <div className="codexOperationLogRows taskLogFlowRows">
+            {task.logs.length > 0 ? task.logs.map((log) => (
+              <details className="taskLogFlowRow" data-level={log.level} key={log.id} open={task.status === "failed" || log.level === "error"}>
+                <summary className="codexOperationLogRow" data-level={log.level}>
+                  <strong>{copy.status.log[log.level]}</strong>
+                  <span>
+                    <em>{log.timestamp}</em>
+                    {log.message}
+                  </span>
+                </summary>
+                <div className="taskLogFlowDetails">
+                  <div className="taskLogMetaGrid">
+                    <div>
+                      <span>{copy.tasks.command}</span>
+                      <code>{log.command ?? "-"}</code>
+                    </div>
+                    <div>
+                      <span>{copy.tasks.exitCode}</span>
+                      <code>{log.exitCode ?? "-"}</code>
+                    </div>
+                    <div>
+                      <span>{copy.tasks.duration}</span>
+                      <code>{typeof log.durationMs === "number" ? `${log.durationMs} ms` : "-"}</code>
+                    </div>
+                    <div>
+                      <span>{copy.tasks.timedOut}</span>
+                      <code>{log.timedOut ? copy.hosts.yes : copy.hosts.no}</code>
+                    </div>
+                  </div>
+                  <div className="taskLogStreamGrid">
+                    <div>
+                      <span>{copy.tasks.stdout}</span>
+                      <pre>{log.stdout || copy.tasks.noOutput}</pre>
+                    </div>
+                    <div>
+                      <span>{copy.tasks.stderr}</span>
+                      <pre>{log.stderr || copy.tasks.noOutput}</pre>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span>{copy.tasks.exitCode}</span>
-                  <code>{log.exitCode ?? "-"}</code>
-                </div>
-                <div>
-                  <span>{copy.tasks.duration}</span>
-                  <code>{typeof log.durationMs === "number" ? `${log.durationMs} ms` : "-"}</code>
-                </div>
-                <div>
-                  <span>{copy.tasks.timedOut}</span>
-                  <code>{log.timedOut ? copy.hosts.yes : copy.hosts.no}</code>
-                </div>
+              </details>
+            )) : (
+              <div className="codexOperationLogRow" data-level="info">
+                <strong>{copy.status.log.info}</strong>
+                <span>{copy.tasks.noLogs}</span>
               </div>
-              <div className="streamGrid">
-                <div>
-                  <span>{copy.tasks.stdout}</span>
-                  <pre>{log.stdout || copy.tasks.noOutput}</pre>
-                </div>
-                <div>
-                  <span>{copy.tasks.stderr}</span>
-                  <pre>{log.stderr || copy.tasks.noOutput}</pre>
-                </div>
-              </div>
-            </details>
-          )) : <p className="mutedText">{copy.tasks.noLogs}</p>}
+            )}
+          </div>
         </div>
         {footer}
       </section>
@@ -6156,7 +6708,7 @@ function dashboardHostSkillCount(
   host: Host,
   inventory: SkillInventoryStatus["hostInventories"][number] | undefined
 ): number | null {
-  if (inventory?.ok) return installedSkillNames(inventory.skills).length;
+  if (inventory?.ok) return installedSkillTags(inventory.skills, "host", inventory.hostAlias).length;
   return typeof host.skillsCount === "number" ? host.skillsCount : null;
 }
 

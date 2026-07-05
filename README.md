@@ -35,7 +35,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * Manage local OpenSSH key state and CodexHub-owned SSH aliases.
 * Bootstrap new Linux hosts with a one-time password, then switch to key login.
 * Probe remote Codex, config, shell, PATH, and skill state before changing anything.
-* Preview and apply Codex profiles and skills with backups and redacted logs.
+* Preview and apply Codex profiles and skills with explicit confirmations and redacted logs.
 * Hand the verified SSH alias back to Codex App through `Settings > Codex > Connections`.
 
 ## 🖼️ Screenshots
@@ -48,7 +48,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 | ![CodexHub Hosts page showing SSH host management](figs/Host-en.png) |
 | **API & Profiles**<br>Keep local API configuration names and profile templates organized before previewing or applying remote config changes. |
 | ![CodexHub API and profile configuration page](figs/API-en.png) |
-| **Skills**<br>Import local or GitHub skill packs, check target inventories, and install or remove skills with task-log evidence. |
+| **Skills**<br>Import local or GitHub skill packs, check target inventories, preview installed skill tags, and download or remove skills with task-log evidence. |
 | ![CodexHub Skills page showing local libraries and install targets](figs/Skills-en.png) |
 | **Settings**<br>Check local SSH readiness, manage app update checks, and review platform-specific runtime preferences. |
 | ![CodexHub Settings page showing local SSH and update controls](figs/Settings-en.png) |
@@ -79,7 +79,7 @@ CodexHub is designed to be conservative by default:
 * It writes only marked blocks between `# >>> CodexHub managed host: <alias>` and `# <<< CodexHub managed host: <alias>`.
 * It does not write Codex App private files, databases, sockets, caches, or undocumented state.
 * Remote Codex config uses `env_key` / `apiKeyEnvVar`. When you explicitly apply a profile with a stored key, CodexHub writes that key only to the selected host's `~/.codex-hub/env` file with restrictive permissions; remote config, metadata, and task logs stay key-free.
-* Mutating remote operations use previews, backups, explicit apply actions, and task-log evidence.
+* Mutating remote operations use previews or explicit confirmations, scoped writes/deletes, and task-log evidence; config writes create backups when content changes.
 
 More detail: [Security policy](SECURITY.md) and [known limitations](docs/known-limitations.md).
 
@@ -152,7 +152,7 @@ For everyday use, download the latest stable build from this repository's Releas
 * Import a local folder with `SKILL.md`, or import a GitHub repository/subdirectory URL.
 * CodexHub stores a managed local copy in the app config directory.
 * Target checks use cached inventory, so run detection before installing to a new host.
-* Uninstall moves local and remote skill directories to backups instead of hard-deleting them.
+* Installed skill tags can be previewed. Download imports that installed directory into the local skill library; uninstall requires confirmation and permanently removes only the current target's skill directory.
 
 ## ⚠️ Known Limitations
 
