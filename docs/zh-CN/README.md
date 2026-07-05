@@ -17,7 +17,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.7-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.2.8-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -98,8 +98,8 @@ macOS 桌面应用需要：
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- Windows：下载并运行 `CodexHub_0.2.7_x64-setup.exe`。
-- macOS Apple Silicon：下载 `CodexHub_0.2.7_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。当前 macOS 构建为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- Windows：下载并运行 `CodexHub_0.2.8_x64-setup.exe`。
+- macOS Apple Silicon：下载 `CodexHub_0.2.8_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。当前 macOS 构建为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
