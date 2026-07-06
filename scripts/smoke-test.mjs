@@ -264,8 +264,9 @@ const requiredText = [
   [limitations, "CodexHub writes the value only to the selected host's `~/.codex-hub/env`"],
   [limitations, "CodexHub must not write Codex App private state"],
   [security, "CodexHub-managed remote `~/.codex-hub/env`"],
-  [limitations, "Menu bar/status item restore"],
-  [macosSupport, "Requires real macOS test"],
+  [macosSupport, "Menu bar/status item restore behavior"],
+  [macosSupport, "Real Mac Validation Status"],
+  [macosSupport, "has completed real-device validation"],
   [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
   [macosSupport, "~/.ssh/config"]
 ];

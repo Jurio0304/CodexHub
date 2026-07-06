@@ -4,16 +4,13 @@ Date: 2026-07-01
 
 ## macOS
 
-macOS release-build support is merged, but the current public artifact is unsigned/ad-hoc unless Apple Developer ID signing and notarization are configured. Real Mac validation remains required before treating macOS behavior as fully verified. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
+macOS release-build support is merged, and the v0.3.1 public artifact has completed real Mac validation for the current release. The artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
 
-The following items require real macOS test:
+The following macOS limitations remain:
 
-- Launching the `.app` and `.dmg`.
 - Gatekeeper behavior for unsigned/ad-hoc release artifacts.
-- Menu bar/status item restore, close-to-hidden behavior, and `Cmd+Q` true-quit behavior.
-- `~/.ssh/config` writes and backups on a real Mac account.
-- Local Codex CLI detection through Homebrew, `/usr/local/bin`, `~/.local/bin`, and `which codex`.
-- Codex App Settings / Connections / SSH handoff.
+- Developer ID signing and notarization are not configured.
+- Future changes to lifecycle, packaging, SSH path handling, or Codex App handoff must re-run the real Mac checklist in `docs/macos-support.md`.
 
 ## Codex App Integration
 

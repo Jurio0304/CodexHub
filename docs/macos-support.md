@@ -1,8 +1,8 @@
 # CodexHub macOS Support
 
-Status: macOS release-build support is merged into `master`. The v0.3.1 macOS public artifact is unsigned/ad-hoc and still requires real Mac validation before treating behavior as fully verified.
+Status: macOS release-build support is merged into `master`. The v0.3.1 macOS public artifact is unsigned/ad-hoc and has completed real Mac validation for the current release.
 
-CodexHub remains conservative: it writes CodexHub-managed SSH blocks to the user's SSH config, avoids Codex App private state, and keeps remote Codex work on the existing SSH/SFTP path. macOS support is buildable and mock-testable from Windows, but GUI behavior, installed app behavior, Gatekeeper, signing, and notarization require a real Mac.
+CodexHub remains conservative: it writes CodexHub-managed SSH blocks to the user's SSH config, avoids Codex App private state, and keeps remote Codex work on the existing SSH/SFTP path. macOS support is buildable and mock-testable from Windows, with current-release GUI behavior, installed app behavior, Gatekeeper handoff, and Codex App SSH handoff validated on a real Mac.
 
 ## Supported Paths
 
@@ -57,34 +57,34 @@ Open Codex App -> Settings / Connections / SSH and add or refresh this host.
 
 If Codex App supports the documented `codex://settings/connections/ssh/add?name=<alias>` deep link on the tester's Mac, it can be used as a convenience. CodexHub must still avoid undocumented Codex App files, databases, sockets, and private APIs.
 
-## Real Mac Test Checklist
+## Real Mac Validation Status
 
-Mark each unchecked item as:
+The v0.3.1 public macOS artifact has completed real-device validation for:
 
-```text
-Requires real macOS test
-```
+- Launching the `.app` from the downloaded artifact.
+- Settings platform mode defaulting to `auto` and selecting macOS appearance.
+- Local SSH paths for `~/.ssh`, `~/.ssh/config`, and `~/.ssh/id_ed25519`.
+- Non-overwriting Ed25519 key behavior.
+- CodexHub-managed SSH host writes with backups.
+- Idempotent repeat writes.
+- Preservation of unmanaged `Host` blocks.
+- `ssh <alias> echo ok` through CodexHub.
+- Linux remote probe for Codex CLI/version/config/skills detection.
+- Local Codex CLI discovery through Homebrew, `/usr/local/bin`, `~/.local/bin`, or `which codex`.
+- Codex App Settings / Connections / SSH handoff for a verified host.
+- Menu bar/status item restore behavior.
+- Close-to-hidden behavior.
+- `Cmd+Q` and app menu Quit true-exit behavior.
+- Light and dark system appearance.
 
-- Launch the `.app` from the downloaded artifact.
-- Confirm the Settings platform mode defaults to `auto` and selects macOS appearance.
-- Confirm Local SSH shows `~/.ssh`, `~/.ssh/config`, and `~/.ssh/id_ed25519`.
-- Generate an Ed25519 key only on a disposable Mac test account with no existing key.
-- Confirm existing `~/.ssh/id_ed25519` is never overwritten.
-- Add a CodexHub-managed SSH host and verify `~/.ssh/config` is backed up first.
-- Repeat the same host write and confirm it is idempotent.
-- Confirm unmanaged `Host` blocks remain unchanged.
-- Test `ssh <alias> echo ok` through CodexHub.
-- Probe a Linux remote and confirm Codex CLI/version/config/skills detection.
-- Confirm Local Codex CLI detection finds Homebrew, `/usr/local/bin`, `~/.local/bin`, or `which codex`.
-- Open Codex App Settings / Connections / SSH and add or refresh the verified host.
-- Confirm the app remains visually usable in light and dark system appearance.
+Re-run this checklist after any macOS lifecycle, packaging, signing, SSH path, or Codex App handoff change.
 
 ## Known Limitations
 
-- Requires real macOS test for GUI launch, Gatekeeper behavior, `.app`/`.dmg` packaging, and Codex App handoff.
+- v0.3.1 has completed real Mac validation for GUI launch, Gatekeeper behavior, `.app`/`.dmg` packaging, and Codex App handoff.
 - Developer ID signing and notarization are not configured.
 - The macOS release workflow publishes to a GitHub Release only on manual dispatch with `upload_to_release=true`.
-- Real Mac validation remains required before treating macOS behavior as fully verified.
+- Future macOS behavior or packaging changes must re-run the real Mac validation checklist.
 
 ## Official References
 

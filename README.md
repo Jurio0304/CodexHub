@@ -40,18 +40,13 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 
 ## 🖼️ Screenshots
 
-| Screenshot |
-| --- |
-| **Dashboard**<br>Review every managed host at a glance, including SSH reachability, remote Codex status, profile alignment, skill inventory, and recent task results. |
-| ![CodexHub Dashboard showing managed hosts and status checks](figs/Dashboard-en.png) |
-| **Hosts**<br>Add or inspect SSH hosts with guided key setup, one-time password bootstrap, connection tests, and remote Codex probes. |
-| ![CodexHub Hosts page showing SSH host management](figs/Host-en.png) |
-| **API & Profiles**<br>Keep local API configuration names and profile templates organized before previewing or applying remote config changes. |
-| ![CodexHub API and profile configuration page](figs/API-en.png) |
-| **Skills**<br>Import local or GitHub skill packs, check target inventories, preview installed skill tags, and download or remove skills with task-log evidence. |
-| ![CodexHub Skills page showing local libraries and install targets](figs/Skills-en.png) |
-| **Settings**<br>Check local SSH readiness, manage app update checks, and review platform-specific runtime preferences. |
-| ![CodexHub Settings page showing local SSH and update controls](figs/Settings-en.png) |
+| View | Windows | macOS |
+| --- | --- | --- |
+| **Dashboard**<br>Review every managed host at a glance, including SSH reachability, remote Codex status, profile alignment, skill inventory, and recent task results. | ![CodexHub Dashboard on Windows showing managed hosts and status checks](figs/Dashboard-en-win.png) | ![CodexHub Dashboard on macOS showing managed hosts and status checks](figs/Dashboard-en-mac.jpg) |
+| **Hosts**<br>Add or inspect SSH hosts with guided key setup, one-time password bootstrap, connection tests, and remote Codex probes. | ![CodexHub Hosts page on Windows showing SSH host management](figs/Host-en-win.png) | ![CodexHub Hosts page on macOS showing SSH host management](figs/Host-en-mac.jpg) |
+| **API & Profiles**<br>Keep local API configuration names and profile templates organized before previewing or applying remote config changes. | ![CodexHub API and profile configuration page on Windows](figs/API-en-win.png) | ![CodexHub API and profile configuration page on macOS](figs/API-en-mac.jpg) |
+| **Skills**<br>Import local or GitHub skill packs, check target inventories, preview installed skill tags, and download or remove skills with task-log evidence. | ![CodexHub Skills page on Windows showing local libraries and install targets](figs/Skills-en-win.png) | ![CodexHub Skills page on macOS showing local libraries and install targets](figs/Skills-en-mac.jpg) |
+| **Settings**<br>Check local SSH readiness, manage app update checks, and review platform-specific runtime preferences. | ![CodexHub Settings page on Windows showing local SSH and update controls](figs/Settings-en-win.png) | ![CodexHub Settings page on macOS showing local SSH and update controls](figs/Settings-en-mac.jpg) |
 
 ## ✨ Core Features
 
@@ -94,7 +89,7 @@ For the Windows desktop app:
 
 For the macOS desktop app:
 
-1. A real Mac for `.app` / `.dmg` runtime validation.
+1. An Apple Silicon Mac for the public `.dmg`; use a real Mac again when validating a new local `.app` / `.dmg` build.
 2. OpenSSH client tools and `ssh-keygen`.
 3. Codex CLI installed through official OpenAI/Codex guidance.
 4. SSH access to Linux remote hosts where Codex App will run.
@@ -104,7 +99,7 @@ For the macOS desktop app:
 For everyday use, download the latest stable build from this repository's Releases page.
 
 * Windows: download and run `CodexHub_0.3.1_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.3.1_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The macOS build is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* macOS Apple Silicon: download `CodexHub_0.3.1_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.3.1 macOS artifact has been validated on a real Mac, but it is still unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
@@ -156,7 +151,7 @@ For everyday use, download the latest stable build from this repository's Releas
 
 ## ⚠️ Known Limitations
 
-* macOS support requires real-device validation for GUI behavior, Gatekeeper, signing, and notarization.
+* The v0.3.1 macOS artifact has completed real-device validation, but Developer ID signing and notarization are not configured yet.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.

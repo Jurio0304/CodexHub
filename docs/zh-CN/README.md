@@ -38,18 +38,13 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 
 ## 🖼️ 截图
 
-| 截图 |
-| --- |
-| **Dashboard**<br>一屏查看所有托管主机的 SSH 连通性、远端 Codex 状态、profile 对齐情况、skill inventory 和近期任务结果。 |
-| ![CodexHub Dashboard 页面，展示托管主机和状态检查](../../figs/Dashboard-zh.png) |
-| **Hosts**<br>添加或检查 SSH 主机，完成 key 配置、一次性密码初始化、连接测试和远端 Codex 探测。 |
-| ![CodexHub Hosts 页面，展示 SSH 主机管理](../../figs/Host-zh.png) |
-| **API 与 Profiles**<br>管理本地 API config 名称和 profile 模板，再预览或应用远端配置变更。 |
-| ![CodexHub API 与 profile 配置页面](../../figs/API-zh.png) |
-| **Skills**<br>导入本地或 GitHub skill 包，检查安装目标 inventory，预览已安装 skill 标签，并通过任务日志追踪下载或移除结果。 |
-| ![CodexHub Skills 页面，展示本地技能库和安装目标](../../figs/Skills-zh.png) |
-| **Settings**<br>检查本地 SSH 就绪状态、管理应用更新检查，并查看平台相关运行偏好。 |
-| ![CodexHub Settings 页面，展示本地 SSH 和更新控制](../../figs/Settings-zh.png) |
+| 视图 | Windows | macOS |
+| --- | --- | --- |
+| **Dashboard**<br>一屏查看所有托管主机的 SSH 连通性、远端 Codex 状态、profile 对齐情况、skill inventory 和近期任务结果。 | ![CodexHub Dashboard Windows 页面，展示托管主机和状态检查](../../figs/Dashboard-zh-win.png) | ![CodexHub Dashboard macOS 页面，展示托管主机和状态检查](../../figs/Dashboard-zh-mac.jpg) |
+| **Hosts**<br>添加或检查 SSH 主机，完成 key 配置、一次性密码初始化、连接测试和远端 Codex 探测。 | ![CodexHub Hosts Windows 页面，展示 SSH 主机管理](../../figs/Host-zh-win.png) | ![CodexHub Hosts macOS 页面，展示 SSH 主机管理](../../figs/Host-zh-mac.jpg) |
+| **API 与 Profiles**<br>管理本地 API config 名称和 profile 模板，再预览或应用远端配置变更。 | ![CodexHub API 与 profile Windows 配置页面](../../figs/API-zh-win.png) | ![CodexHub API 与 profile macOS 配置页面](../../figs/API-zh-mac.jpg) |
+| **Skills**<br>导入本地或 GitHub skill 包，检查安装目标 inventory，预览已安装 skill 标签，并通过任务日志追踪下载或移除结果。 | ![CodexHub Skills Windows 页面，展示本地技能库和安装目标](../../figs/Skills-zh-win.png) | ![CodexHub Skills macOS 页面，展示本地技能库和安装目标](../../figs/Skills-zh-mac.jpg) |
+| **Settings**<br>检查本地 SSH 就绪状态、管理应用更新检查，并查看平台相关运行偏好。 | ![CodexHub Settings Windows 页面，展示本地 SSH 和更新控制](../../figs/Settings-zh-win.png) | ![CodexHub Settings macOS 页面，展示本地 SSH 和更新控制](../../figs/Settings-zh-mac.jpg) |
 
 ## ✨ 核心能力
 
@@ -89,7 +84,7 @@ Windows 桌面应用需要：
 
 macOS 桌面应用需要：
 
-1. 一台真实 Mac 用于 `.app` / `.dmg` 运行验证。
+1. Apple Silicon Mac；后续新的本地 `.app` / `.dmg` 构建请用真实 Mac 验证。
 2. OpenSSH client tools 和 `ssh-keygen`。
 3. 通过 OpenAI/Codex 官方指引安装 Codex CLI。
 4. 可通过 SSH 登录的 Linux 远端主机。
@@ -99,7 +94,7 @@ macOS 桌面应用需要：
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
 - Windows：下载并运行 `CodexHub_0.3.1_x64-setup.exe`。
-- macOS Apple Silicon：下载 `CodexHub_0.3.1_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。当前 macOS 构建为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- macOS Apple Silicon：下载 `CodexHub_0.3.1_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.3.1 macOS 资产已完成真实 Mac 验证，但仍为 unsigned/ad-hoc，首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 

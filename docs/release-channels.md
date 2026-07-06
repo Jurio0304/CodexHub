@@ -69,10 +69,10 @@ Do not create a GitHub Release from the `dev` channel. Do not create any GitHub 
 
 ## Stable Updater Boundary
 
-Only `stable` may use the Tauri updater. The current foundation wires the updater plugin, Settings status/check UI, a gated install action, update-check Task history, a Windows signed-updater release workflow, and an unsigned/ad-hoc Apple Silicon macOS updater release path. The stable Check button remains clickable so formal builds can report their updater state; without both `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`, the backend returns `pending-configuration`. Failed checks open a log dialog and remain reviewable from Tasks. Install stays disabled until a signed stable feed returns `available`.
+Only `stable` may use the Tauri updater. The current foundation wires the updater plugin, Settings status/check UI, a gated install action, update-check Task history, a Windows signed-updater release workflow, and a real-Mac-validated unsigned/ad-hoc Apple Silicon macOS updater release path. The stable Check button remains clickable so formal builds can report their updater state; without both `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`, the backend returns `pending-configuration`. Failed checks open a log dialog and remain reviewable from Tasks. Install stays disabled until a signed stable feed returns `available`.
 
 `dev` must not auto-update from any feed. Dev builds are local source runs, preview packages, or test artifacts only.
 
-`pnpm release:portable` remains available for manual/local packaging, but the v0.3.1 Windows public Release keeps only the signed updater-enabled setup installer. macOS uses an unsigned/ad-hoc Apple Silicon `.dmg` for user installation and `.app.tar.gz` for updater delivery. Portable builds do not participate in automatic update feeds unless a separate portable update story is designed and tested.
+`pnpm release:portable` remains available for manual/local packaging, but the v0.3.1 Windows public Release keeps only the signed updater-enabled setup installer. macOS uses a real-Mac-validated unsigned/ad-hoc Apple Silicon `.dmg` for user installation and `.app.tar.gz` for updater delivery. Portable builds do not participate in automatic update feeds unless a separate portable update story is designed and tested.
 
 See [stable updater details](stable-updater.md).

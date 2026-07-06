@@ -167,7 +167,7 @@ CodexHub creates a Tauri tray/status icon at startup using the app icon and disp
 
 The main window close button is controlled by persisted `settings.json` field `closeButtonBehavior` with values `ask`, `exit`, or `minimize-to-tray`. Legacy settings without the field default to `ask`. In `ask` mode, the Rust close handler prevents the native close and emits `close-button-behavior-requested`; the React modal lets the user choose Exit app or Minimize to tray, persists the choice through `choose_close_button_behavior`, and immediately performs the selected action. Explicit Quit entries, including tray Quit and the macOS app menu / `Cmd+Q`, remain true exit paths and are not governed by the close-button preference.
 
-macOS keeps the Dock icon in v1. Menu bar/status item behavior, close-to-hidden behavior, restore behavior, and `Cmd+Q` must be marked `Requires real macOS test` until verified on a real Mac.
+macOS keeps the Dock icon in v1. Menu bar/status item behavior, close-to-hidden behavior, restore behavior, and `Cmd+Q` have been real-Mac validated for v0.3.1. Re-run the macOS checklist after lifecycle, packaging, or menu-bar behavior changes.
 
 ## Stable Updater Foundation
 

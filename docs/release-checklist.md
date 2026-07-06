@@ -93,13 +93,13 @@ The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` 
 .github/workflows/build-macos-release.yml
 ```
 
-Before treating the macOS artifact as broadly publishable, verify:
+The v0.3.1 macOS artifact has completed real Mac validation. For each future macOS public artifact, verify:
 
 - `Build macOS Release` completes on `master`.
 - The uploaded CI artifact uses the current package version, for example `codexhub-macos-v<version>-unsigned-release`.
 - The artifact is clearly labeled unsigned until Developer ID signing and notarization are configured.
 - Documentation and GitHub Release notes explain the unsigned/ad-hoc status and manual trust steps when needed; the app UI does not display unsigned or notarization warnings.
-- The real Mac checklist in `docs/macos-support.md` is completed.
+- The real Mac checklist in `docs/macos-support.md` is completed again for the new artifact.
 - No Apple signing certificate, private key, notarization password, token, or profile is committed to git.
 
 ## Manual Acceptance Items
