@@ -3,49 +3,51 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI Variable", "Segoe UI", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace;
-  --bg: #f5f5f7;
-  --bg-strong: #ebeef4;
-  --sidebar: rgba(241, 243, 247, 0.82);
-  --surface: rgba(255, 255, 255, 0.78);
+  --font-mono: "Consolas", "Cascadia Mono", "Cascadia Code", "Microsoft YaHei UI", monospace;
+  --bg: #f3f3f3;
+  --bg-strong: #fafafa;
+  --sidebar: #f7f7f7;
+  --surface: #ffffff;
   --surface-solid: #ffffff;
-  --surface-muted: rgba(246, 247, 250, 0.92);
+  --surface-muted: #f8f8f8;
   --text: #182033;
   --text-muted: #667085;
   --text-faint: #8a94a6;
-  --border: rgba(110, 119, 135, 0.2);
-  --border-strong: rgba(92, 102, 120, 0.3);
-  --shadow: 0 18px 50px rgba(31, 41, 55, 0.1);
-  --shadow-soft: 0 8px 24px rgba(31, 41, 55, 0.08);
-  --blue: #0a84ff;
+  --border: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --shadow: 0 8px 24px rgba(31, 41, 55, 0.08);
+  --shadow-soft: 0 2px 8px rgba(31, 41, 55, 0.06);
+  --blue: #0067c0;
   --green: #248a3d;
   --yellow: #a66200;
   --red: #d92d20;
   --gray: #687083;
   --app-content-max: 1220px;
   --content-max: var(--app-content-max);
-  --radius-lg: 24px;
-  --radius-md: 18px;
-  --radius-sm: 12px;
+  --titlebar-height: 32px;
+  --caption-button-width: 46px;
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
   color: var(--text);
   background: var(--bg);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #15161a;
-  --bg-strong: #0f1013;
-  --sidebar: rgba(31, 32, 37, 0.84);
-  --surface: rgba(39, 40, 46, 0.78);
-  --surface-solid: #27282e;
-  --surface-muted: rgba(49, 50, 57, 0.9);
+  --bg: #202020;
+  --bg-strong: #1b1b1b;
+  --sidebar: #272727;
+  --surface: #2b2b2b;
+  --surface-solid: #2f2f2f;
+  --surface-muted: #343434;
   --text: #f3f4f6;
   --text-muted: #b5bac6;
   --text-faint: #8c94a3;
-  --border: rgba(220, 224, 232, 0.13);
-  --border-strong: rgba(220, 224, 232, 0.22);
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.2);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.18);
   --blue: #64a9ff;
   --green: #6fca82;
   --yellow: #f6bd63;
@@ -55,34 +57,105 @@
 
 :root[data-platform="macos"] {
   --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
-  --font-mono: "SF Mono", "Menlo", "Monaco", "Cascadia Mono", "Consolas", monospace;
+  --font-mono: "Consolas", "SF Mono", "Menlo", "Monaco", "Cascadia Mono", monospace;
   --sidebar: rgba(246, 247, 250, 0.86);
   --surface: rgba(255, 255, 255, 0.82);
-  --radius-lg: 20px;
-  --radius-md: 16px;
+  --surface-muted: rgba(247, 248, 250, 0.76);
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
 }
 
 :root[data-platform="macos"][data-theme="dark"] {
   --sidebar: rgba(29, 30, 35, 0.86);
   --surface: rgba(42, 43, 49, 0.8);
+  --surface-muted: rgba(52, 53, 59, 0.72);
+}
+
+:root[data-platform="macos"] .sidebar {
+  background: var(--sidebar);
+  backdrop-filter: blur(26px) saturate(1.18);
+}
+
+:root[data-platform="macos"] .navItem {
+  border-radius: 8px;
+  padding-left: 10px;
+}
+
+:root[data-platform="macos"] .navItem::before {
+  display: none;
+}
+
+:root[data-platform="macos"] .navItem[data-active="true"] {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+:root[data-platform="macos"] .panel,
+:root[data-platform="macos"] .metricCard,
+:root[data-platform="macos"] .taskLogModal,
+:root[data-platform="macos"] .sshHostModal,
+:root[data-platform="macos"] .setupGuideModal,
+:root[data-platform="macos"] .codexOperationModal {
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root[data-platform="macos"] .badge,
+:root[data-platform="macos"] .installedSkillTag {
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+:root[data-platform="macos"] .modalBackdrop {
+  background: rgba(20, 20, 24, 0.24);
+  backdrop-filter: blur(24px) saturate(1.18);
+}
+
+:root[data-platform="macos"] .modalCloseButton {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+:root[data-platform="macos"] .modalTitleIcon {
+  color: inherit;
+}
+
+:root[data-platform="macos"] .primaryButton,
+:root[data-platform="macos"] .secondaryButton,
+:root[data-platform="macos"] .miniButton,
+:root[data-platform="macos"] .segmentedControl button {
+  border-radius: 10px;
+}
+
+:root[data-platform="macos"] .commandGroup {
+  gap: 2px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+:root[data-platform="macos"] .commandGroup .miniButton {
+  border-radius: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #15161a;
-    --bg-strong: #0f1013;
-    --sidebar: rgba(31, 32, 37, 0.84);
-    --surface: rgba(39, 40, 46, 0.78);
-    --surface-solid: #27282e;
-    --surface-muted: rgba(49, 50, 57, 0.9);
+    --bg: #202020;
+    --bg-strong: #1b1b1b;
+    --sidebar: #272727;
+    --surface: #2b2b2b;
+    --surface-solid: #2f2f2f;
+    --surface-muted: #343434;
     --text: #f3f4f6;
     --text-muted: #b5bac6;
     --text-faint: #8c94a3;
-    --border: rgba(220, 224, 232, 0.13);
-    --border-strong: rgba(220, 224, 232, 0.22);
-    --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-    --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.2);
+    --border: rgba(255, 255, 255, 0.12);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.18);
     --blue: #64a9ff;
     --green: #6fca82;
     --yellow: #f6bd63;
@@ -105,9 +178,7 @@ body,
 body {
   font-family: var(--font-ui);
   margin: 0;
-  background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--blue) 15%, transparent), transparent 30rem),
-    linear-gradient(135deg, var(--bg) 0%, var(--bg-strong) 100%);
+  background: var(--bg);
 }
 
 button,
@@ -142,6 +213,121 @@ dd {
   margin: 0;
 }
 
+.desktopFrame {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.desktopFrame[data-custom-titlebar="true"] {
+  display: grid;
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.appTitleBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: var(--titlebar-height);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg-strong);
+  user-select: none;
+}
+
+.titleDragRegion {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: var(--titlebar-height);
+}
+
+.appTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding-left: 12px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.titleBarIcon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+.captionControls {
+  display: flex;
+  height: var(--titlebar-height);
+  -webkit-app-region: no-drag;
+}
+
+.captionButton {
+  display: grid;
+  place-items: center;
+  width: var(--caption-button-width);
+  height: var(--titlebar-height);
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  color: var(--text);
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif;
+  font-size: 10px;
+  line-height: 1;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.captionGlyph::before {
+  display: block;
+  font-weight: 400;
+}
+
+.captionButton[data-action="minimize"] .captionGlyph::before {
+  content: "\E921";
+}
+
+.captionButton[data-action="maximize"] .captionGlyph::before {
+  content: "\E922";
+}
+
+.captionButton[data-action="close"] .captionGlyph::before {
+  content: "\E8BB";
+}
+
+.captionButton:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.captionButton:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+.closeCaptionButton:hover {
+  color: #ffffff;
+  background: #c42b1c;
+}
+
+.desktopFrame[data-custom-titlebar="true"] .appShell {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.desktopFrame[data-custom-titlebar="true"] .sidebar {
+  height: calc(100vh - var(--titlebar-height));
+}
+
+.desktopFrame[data-custom-titlebar="true"] .contentShell {
+  min-height: 0;
+  overflow: auto;
+}
+
 .appShell {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
@@ -153,12 +339,12 @@ dd {
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
   height: 100vh;
-  padding: 22px 14px;
+  padding: 18px 12px;
   border-right: 1px solid var(--border);
   background: var(--sidebar);
-  backdrop-filter: blur(24px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.08);
 }
 
 .brandBlock {
@@ -169,13 +355,13 @@ dd {
 }
 
 .appIcon {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: 8px;
   object-fit: cover;
   background: var(--surface-solid);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), var(--shadow-soft);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .brandName {
@@ -196,21 +382,33 @@ dd {
 }
 
 .navItem {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 12px;
   width: 100%;
   border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 12px 13px;
+  border-radius: 6px;
+  padding: 9px 10px 9px 13px;
   color: var(--text-muted);
   text-align: left;
   background: transparent;
 }
 
+.navItem::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--blue);
+  opacity: 0;
+}
+
 .navLabel {
   color: var(--text);
-  font-size: 0.98rem;
+  font-size: 0.94rem;
   font-weight: 650;
 }
 
@@ -220,8 +418,41 @@ dd {
   width: 24px;
   height: 24px;
   place-items: center;
-  font-size: 1.1rem;
   line-height: 1;
+}
+
+.emojiIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25em;
+  height: 1.25em;
+  text-align: center;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", system-ui, sans-serif;
+  font-size: 1.06rem;
+  line-height: 1;
+}
+
+:root[data-platform="macos"] .navIcon {
+  flex-basis: 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+:root[data-platform="macos"] .navIcon .emojiIcon {
+  font-size: 1.08rem;
+}
+
+.navGlyph {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .navCompletionDot {
@@ -246,7 +477,11 @@ dd {
 }
 
 .navItem[data-active="true"] {
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
+}
+
+.navItem[data-active="true"]::before {
+  opacity: 1;
 }
 
 .sidebarFooter {
@@ -256,7 +491,7 @@ dd {
   margin-top: auto;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 8px;
   background: var(--surface);
 }
 
@@ -270,14 +505,14 @@ dd {
   flex: 0 0 auto;
   margin-left: auto;
   border: 1px solid color-mix(in srgb, var(--blue) 70%, var(--border));
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 6px 10px;
   color: #ffffff;
   font-size: 0.78rem;
   font-weight: 760;
   line-height: 1;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 88%, #ffffff), var(--blue));
-  box-shadow: 0 7px 16px color-mix(in srgb, var(--blue) 18%, transparent);
+  background: var(--blue);
+  box-shadow: none;
 }
 
 .sidebarUpdateButton:disabled {
@@ -326,6 +561,104 @@ dd {
   letter-spacing: 0;
 }
 
+.titleWithIcon {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.titleIcon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  justify-content: center;
+  overflow: visible;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.titleIcon[data-level="1"] {
+  width: 1em;
+  height: 1em;
+  border-radius: 0;
+  font-size: 0.92em;
+}
+
+.titleIcon[data-level="2"] {
+  width: 1em;
+  height: 1em;
+  border-radius: 0;
+  font-size: 1em;
+}
+
+.titleIcon[data-level="3"] {
+  width: 1em;
+  height: 1em;
+  border-radius: 0;
+  font-size: 1em;
+}
+
+.titleIcon .navGlyph {
+  width: 1em;
+  height: 1em;
+  stroke-width: 1.8;
+}
+
+:root:not([data-platform="macos"]) .titleIcon[data-level="1"] {
+  font-size: 1.08em;
+}
+
+:root:not([data-platform="macos"]) .titleIcon[data-level="2"],
+:root:not([data-platform="macos"]) .titleIcon[data-level="3"] {
+  font-size: 1.1em;
+}
+
+:root:not([data-platform="macos"]) .titleIcon .navGlyph {
+  width: 1.04em;
+  height: 1.04em;
+  stroke-width: 1.9;
+}
+
+.titleIcon .emojiIcon {
+  width: 100%;
+  height: 100%;
+  font-size: 1em;
+}
+
+.titleText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:root[data-platform="macos"] .titleIcon {
+  color: inherit;
+}
+
+:root[data-platform="macos"] .titleWithIcon[data-level="1"] {
+  gap: 24px;
+}
+
+:root[data-platform="macos"] .navIcon .emojiIcon,
+:root[data-platform="macos"] .modalTitleIcon .emojiIcon,
+:root[data-platform="macos"] .emptyListIcon .emojiIcon,
+:root[data-platform="macos"] .matrixEmptyIcon .emojiIcon {
+  width: 100%;
+  height: 100%;
+  line-height: 1;
+  transform: none;
+}
+
+:root[data-platform="macos"] .titleIcon .emojiIcon {
+  width: 1em;
+  height: 1em;
+  font-size: 1em;
+  line-height: 1;
+  transform: none;
+}
+
 .topBar p,
 .panelHeader p,
 .skillCard p,
@@ -341,10 +674,31 @@ dd {
 
 .topActions,
 .calloutMeta,
-.tableActions {
+.tableActions,
+.commandBar,
+.commandGroup {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+}
+
+.commandBar {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  padding: 2px;
+}
+
+.commandGroup {
+  display: inline-flex;
+  flex-wrap: wrap;
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
 }
 
 .tableActions {
@@ -445,7 +799,7 @@ dd {
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(20px) saturate(1.12);
+  backdrop-filter: blur(14px) saturate(1.04);
 }
 
 .panel {
@@ -457,8 +811,8 @@ dd {
   display: grid;
   align-content: space-between;
   gap: 14px;
-  min-height: 112px;
-  padding: 18px;
+  min-height: 100px;
+  padding: 16px;
 }
 
 .metricPrimary,
@@ -504,7 +858,7 @@ dd {
   margin-top: 6px;
   color: var(--text);
   font-size: 1.18rem;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .panelHeader {
@@ -562,7 +916,7 @@ dd {
 .hostHeader h3 {
   color: var(--text);
   font-size: 1.02rem;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .hostHeader p {
@@ -615,12 +969,12 @@ dd {
   align-items: center;
   width: fit-content;
   border: 1px solid currentColor;
-  border-radius: 999px;
-  padding: 4px 9px;
-  font-size: 0.75rem;
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 0.73rem;
   font-weight: 750;
   line-height: 1;
-  text-transform: capitalize;
+  text-transform: none;
   background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
@@ -642,7 +996,7 @@ dd {
 .miniButton,
 .segmentedControl button {
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: 6px;
   color: var(--text);
   font-weight: 700;
   background: var(--surface-solid);
@@ -651,14 +1005,31 @@ dd {
 .primaryButton,
 .secondaryButton,
 .tertiaryButton {
-  padding: 9px 13px;
+  padding: 7px 11px;
+}
+
+.primaryButton,
+.secondaryButton,
+.tertiaryButton,
+.miniButton {
+  min-height: 32px;
+}
+
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.tertiaryButton:focus-visible,
+.miniButton:focus-visible,
+.segmentedControl button:focus-visible,
+.pillToggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 .primaryButton {
   border-color: color-mix(in srgb, var(--blue) 70%, var(--border));
   color: #ffffff;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 86%, #ffffff), var(--blue));
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--blue) 20%, transparent);
+  background: var(--blue);
+  box-shadow: none;
 }
 
 .secondaryButton:hover,
@@ -692,7 +1063,7 @@ dd {
   gap: 10px;
   padding: 40px 20px;
   border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   text-align: center;
   background: var(--surface-muted);
 }
@@ -726,12 +1097,11 @@ dd {
   height: 58px;
   place-items: center;
   border: 1px solid var(--border-strong);
-  border-radius: 16px;
+  border-radius: 8px;
   color: var(--text);
-  font-size: 1.85rem;
   line-height: 1;
   background: var(--surface-solid);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 
 .emptyListActions {
@@ -757,12 +1127,11 @@ dd {
   height: 70px;
   place-items: center;
   border: 1px solid var(--border-strong);
-  border-radius: 20px;
+  border-radius: 8px;
   color: var(--text);
-  font-size: 2.2rem;
   line-height: 1;
   background: var(--surface-solid);
-  box-shadow: var(--shadow-soft);
+  box-shadow: none;
 }
 
 .tableWrap {
@@ -770,7 +1139,7 @@ dd {
   min-width: 0;
   overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface-solid);
 }
 
@@ -782,7 +1151,7 @@ table {
 
 th,
 td {
-  padding: 13px 14px;
+  padding: 11px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   vertical-align: middle;
@@ -906,6 +1275,8 @@ tr:last-child td {
 .profileRowActions {
   display: flex;
   flex-wrap: wrap;
+  width: max-content;
+  max-width: 100%;
   gap: 6px;
   min-width: 0;
 }
@@ -963,15 +1334,15 @@ tr:last-child td {
 
 .profileApplyTable .tableActions,
 .profileApplyTable .sshHostsActionGroup {
-  width: 100%;
+  width: max-content;
   max-width: 100%;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .profileApplyTable .miniButton {
-  flex: 1 1 56px;
-  min-width: 0;
-  white-space: normal;
+  flex: 0 0 auto;
+  min-width: auto;
+  white-space: nowrap;
   text-align: center;
 }
 
@@ -1076,7 +1447,8 @@ tr:last-child td {
 }
 
 .skillRowActions {
-  width: 100%;
+  width: max-content;
+  max-width: 100%;
   min-width: 0;
   flex-wrap: nowrap;
 }
@@ -1268,8 +1640,8 @@ tr:last-child td {
 .primaryButton.dangerButton {
   border-color: color-mix(in srgb, var(--red) 72%, var(--border));
   color: #ffffff;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--red) 84%, #ffffff), var(--red));
-  box-shadow: 0 8px 18px color-mix(in srgb, var(--red) 18%, transparent);
+  background: var(--red);
+  box-shadow: none;
 }
 
 .skillMessage {
@@ -1325,8 +1697,8 @@ tr:last-child td {
   appearance: none;
   cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--skill-color) 70%, var(--border));
-  border-radius: 999px;
-  padding: 4px 8px;
+  border-radius: 4px;
+  padding: 3px 7px;
   color: color-mix(in srgb, var(--skill-color) 76%, var(--text));
   font: inherit;
   font-size: 0.74rem;
@@ -1512,17 +1884,74 @@ tr:last-child td {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding-right: 44px;
+  min-width: 0;
+  padding-right: 42px;
 }
 
-.taskLogModalHeader h2 {
+.modalHeader {
+  position: relative;
+}
+
+.modalTitleBlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.modalTitleBlock > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.modalTitleIcon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  justify-content: center;
+  width: 1.2em;
+  height: 1.2em;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.24rem;
+  line-height: 1.2;
+}
+
+.modalTitleIcon .navGlyph {
+  width: 1.08em;
+  height: 1.08em;
+  stroke-width: 1.9;
+}
+
+.modalTitleIcon .emojiIcon {
+  width: 1em;
+  height: 1em;
+  font-size: 1em;
+  line-height: 1;
+}
+
+.modalHeaderBadge {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.taskLogModalHeader h2,
+.modalHeader h2 {
   margin: 0;
   font-size: 1.24rem;
+  line-height: 1.2;
   letter-spacing: 0;
 }
 
-.taskLogModalHeader p {
-  margin-top: 6px;
+.taskLogModalHeader p,
+.modalHeader p {
   color: var(--text-muted);
   line-height: 1.45;
 }
@@ -1661,9 +2090,9 @@ tr:last-child td {
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   margin: 6px 0 14px;
-  padding: 4px;
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 7px;
   background: var(--surface-muted);
 }
 
@@ -1676,7 +2105,7 @@ tr:last-child td {
 }
 
 .dividedSettingsRows .segmentedControl {
-  height: 44px;
+  min-height: 38px;
 }
 
 .dividedSettingsRows .segmentedControl button {
@@ -1749,17 +2178,25 @@ tr:last-child td {
 
 .segmentedControl button {
   border-color: transparent;
-  padding: 9px 10px;
+  min-width: 0;
+  padding: 7px 10px;
   color: var(--text-muted);
   text-transform: capitalize;
   background: transparent;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+:root:not([data-platform="macos"]) .segmentedControl button:not([data-active="true"]):not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, var(--surface-muted));
 }
 
 .segmentedControl button[data-active="true"] {
   border-color: var(--border);
   color: var(--text);
   background: var(--surface-solid);
-  box-shadow: var(--shadow-soft);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .pillToggle {
@@ -1793,6 +2230,43 @@ tr:last-child td {
 
 .pillToggle[data-enabled="true"] .pillToggleThumb {
   transform: translateX(22px);
+}
+
+:root[data-platform="macos"] .dividedSettingsRows {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+
+:root[data-platform="macos"] .dividedSettingsRows .settingControlRow {
+  min-height: 58px;
+}
+
+:root[data-platform="macos"] .dividedSettingsRows .settingControlRow:first-child::before {
+  display: none;
+}
+
+:root[data-platform="macos"] .segmentedControl {
+  gap: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+
+:root[data-platform="macos"] .segmentedControl button {
+  border-radius: 999px;
+  font-weight: 650;
+}
+
+:root[data-platform="macos"] .segmentedControl button[data-active="true"] {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+}
+
+:root[data-platform="macos"] .pillToggle {
+  border-radius: 999px;
 }
 
 .commandGrid {
@@ -2062,26 +2536,24 @@ tr:last-child td {
   }
 
   .profileApplyTable .sshHostsActionGroup {
-    width: 100%;
+    width: max-content;
+    max-width: 100%;
   }
 
   .profileApplyTable .miniButton {
-    flex: 1 1 48px;
+    flex: 0 0 auto;
     padding: 3px 4px;
-    white-space: normal;
+    white-space: nowrap;
   }
 
   .profileForm,
-  .profilePreviewGrid,
   .profileCredentialRow,
   .profileApplyRow,
   .profileHostSelectRow,
   .hostCheckRow,
   .skillTargetRow,
   .skillDownloadForm .fieldGroup,
-  .taskLogModalMeta.skillPreviewMeta,
-  .profileTargetList div,
-  .profileStatusList div {
+  .taskLogModalMeta.skillPreviewMeta {
     grid-template-columns: 1fr;
   }
 
@@ -2561,9 +3033,7 @@ tr:last-child td {
 
 .profileApplyList,
 .profileHostList,
-.profileHostSelectList,
-.profileTargetList,
-.profileStatusList {
+.profileHostSelectList {
   display: grid;
   gap: 8px;
 }
@@ -2577,17 +3047,13 @@ tr:last-child td {
 }
 
 .profileSubhead span,
-.hostCheckRow small,
-.profileStatusList span,
-.profileTargetList span {
+.hostCheckRow small {
   color: var(--text-faint);
   font-size: 0.78rem;
 }
 
 .profileApplyRow,
-.hostCheckRow,
-.profileTargetList div,
-.profileStatusList div {
+.hostCheckRow {
   display: grid;
   align-items: center;
   gap: 8px;
@@ -2607,8 +3073,7 @@ tr:last-child td {
 
 .profileApplyHost,
 .profileAppliedName,
-.hostCheckRow span,
-.profileStatusList div {
+.hostCheckRow span {
   min-width: 0;
 }
 
@@ -2681,29 +3146,64 @@ tr:last-child td {
   gap: 8px;
 }
 
-.profilePreviewGrid {
+.profilePreviewSection {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 14px;
-}
-
-.profileTargetList div {
-  grid-template-columns: minmax(120px, 0.8fr) minmax(0, 1.2fr) auto;
-}
-
-.profileTargetList code {
+  gap: 8px;
   min-width: 0;
-  color: var(--text-muted);
+}
+
+.profileTargetBubble {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.profileTargetBubble .mutedText {
+  padding: 12px 14px;
+}
+
+.profileTargetFileHeader,
+.profileTargetFileRow {
+  display: grid;
+  grid-template-columns: minmax(128px, 0.8fr) minmax(0, 1.2fr);
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.profileTargetFileHeader {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 0.74rem;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.profileTargetFileRow {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.profileTargetFileHeader + .profileTargetFileRow {
+  border-top: 0;
+}
+
+.profileTargetFileRow strong,
+.profileTargetFileRow code {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.profileStatusList div {
-  grid-template-columns: auto minmax(100px, 0.7fr) minmax(0, 1fr);
+.profileTargetFileRow code {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 .configPreviewBox {
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .configPreviewBox pre {
@@ -2714,6 +3214,8 @@ tr:last-child td {
   border-radius: var(--radius-sm);
   padding: 12px;
   color: var(--text-muted);
+  font-family: var(--font-mono);
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--surface-muted);
@@ -2890,16 +3392,37 @@ button:disabled {
 
 .modalCloseButton {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 0;
+  right: 0;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(190, 18, 60, 0.3);
-  border-radius: 999px;
-  color: #b91c1c;
-  background: rgba(254, 226, 226, 0.82);
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.modalCloseButton:hover {
+  border-color: var(--border);
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+:root[data-platform="macos"] .modalCloseButton:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, var(--surface));
+}
+
+.modalCloseButton:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+:root[data-platform="macos"] .modalCloseButton:focus-visible {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, var(--surface));
 }
 
 .modalHero {

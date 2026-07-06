@@ -8718,6 +8718,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            setup_window_chrome(app.handle())?;
             setup_app_tray(app.handle())?;
             Ok(())
         })
@@ -8782,6 +8783,15 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running CodexHub");
+}
+
+fn setup_window_chrome(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(windows)]
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window.set_decorations(false)?;
+    }
+
+    Ok(())
 }
 
 fn setup_app_tray(app: &AppHandle) -> tauri::Result<()> {

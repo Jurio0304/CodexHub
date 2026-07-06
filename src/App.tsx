@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, MouseEventHandler, ReactNode } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadInitialAppData } from "./app/bootstrap";
 import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
@@ -45,13 +46,38 @@ import type {
   TaskRun,
   TaskStatus
 } from "./models";
-import { applyAppSettings, fontPresets, loadLocalSettings } from "./settings";
+import { getPlatform, isWindows } from "./platform";
+import type { RuntimePlatform } from "./platform";
+import { applyAppSettings, fontPresets, loadLocalSettings, resolvePlatformAppearance } from "./settings";
 import type { AppSettings, CloseButtonBehavior, FontPreset, NetworkProxyMode, PlatformAppearance, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
+type NavIconId = SectionId;
+type PlatformIconId =
+  | SectionId
+  | "close"
+  | "delete"
+  | "download"
+  | "install"
+  | "key"
+  | "language"
+  | "network"
+  | "preview"
+  | "scan"
+  | "terminal"
+  | "update"
+  | "warning";
+type TitleBarAction = "minimize" | "maximize" | "close";
 type Locale = "en" | "zh";
 type HostBusyAction = "test" | "bootstrap" | RemoteCodexAction;
 type BadgeTone = "green" | "yellow" | "red" | "blue" | "gray";
+type CommandBarAction = {
+  id: string;
+  label: string;
+  kind?: "primary" | "secondary" | "danger";
+  disabled?: boolean;
+  onClick: () => void;
+};
 type SetupGuideStep = "language" | "ssh";
 type SectionCompletionTone = "success" | "error";
 type SectionCompletionSignals = Partial<Record<SectionId, SectionCompletionTone>>;
@@ -94,46 +120,68 @@ const APP_UPDATE_DAILY_CHECK_HOUR = 4;
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
 const PREVIEW_SIDEBAR_UPDATE_BUTTON =
   viteEnv?.DEV === true && viteEnv?.VITE_CODEXHUB_PREVIEW_UPDATE_BUTTON === "1";
-const appLogoUrl = new URL("../figs/app-logo.png", import.meta.url).href;
+const appLogoUrl = new URL("../src-tauri/icons/128x128.png", import.meta.url).href;
+const PlatformAppearanceContext = createContext<RuntimePlatform>("windows");
+
+const platformEmojiIcons = {
+  dashboard: "🏠",
+  hosts: "🖥️",
+  profiles: "🧾",
+  skills: "🧩",
+  tasks: "✅",
+  settings: "⚙️",
+  close: "✕",
+  delete: "🗑️",
+  download: "⬇️",
+  install: "📥",
+  key: "🔑",
+  language: "🌐",
+  network: "🧭",
+  preview: "👁️",
+  scan: "🔎",
+  terminal: "⌘",
+  update: "🔄",
+  warning: "⚠️"
+} satisfies Record<PlatformIconId, string>;
 
 const uiCopy = {
   en: {
     navItems: [
-      { id: "dashboard", label: "Home", icon: "🏠" },
-      { id: "hosts", label: "Hosts", icon: "🖥️" },
-      { id: "profiles", label: "Profiles", icon: "🧾" },
-      { id: "skills", label: "Skills", icon: "🧩" },
-      { id: "tasks", label: "Tasks", icon: "✅" },
-      { id: "settings", label: "Settings", icon: "⚙️" }
-    ] satisfies Array<{ id: SectionId; label: string; icon: string }>,
+      { id: "dashboard", label: "Home" },
+      { id: "hosts", label: "Hosts" },
+      { id: "profiles", label: "Profiles" },
+      { id: "skills", label: "Skills" },
+      { id: "tasks", label: "Tasks" },
+      { id: "settings", label: "Settings" }
+    ] satisfies Array<{ id: SectionId; label: string }>,
     sections: {
       dashboard: {
-        title: "🏠 Home",
+        title: "Home",
         eyebrow: "Home",
         body: "Mock SSH inventory, profile status, and recent operations for the first CodexHub desktop shell."
       },
       hosts: {
-        title: "🖥️ Hosts",
+        title: "Hosts",
         eyebrow: "Server inventory",
         body: "Add CodexHub-managed SSH config blocks without disturbing user-owned SSH settings."
       },
       profiles: {
-        title: "🧾 Profiles",
+        title: "Profiles",
         eyebrow: "Codex configuration",
         body: "Draft managed profile presets for remote ~/.codex/config.toml files."
       },
       skills: {
-        title: "🧩 Skills",
+        title: "Skills",
         eyebrow: "Skill packs",
         body: "Review skill bundles that will sync to remote ~/.codex/skills/ directories."
       },
       tasks: {
-        title: "✅ Tasks",
+        title: "Tasks",
         eyebrow: "Task runs",
         body: "Track mock backend commands, generated logs, and pending host operations."
       },
       settings: {
-        title: "⚙️ Settings",
+        title: "Settings",
         eyebrow: "Preferences",
         body: "Adjust the shell theme, inspect local SSH key status, and copy public keys."
       }
@@ -149,6 +197,11 @@ const uiCopy = {
       loading: "loading",
       ready: "ready",
       unassigned: "Unassigned"
+    },
+    windowControls: {
+      close: "Close window",
+      maximize: "Maximize window",
+      minimize: "Minimize window"
     },
     notices: {
       default: "Local SSH key and config management is ready in the desktop backend.",
@@ -171,7 +224,7 @@ const uiCopy = {
       noSkillPacks: "No skill packs"
     },
     setupGuide: {
-      title: "🧭 Setup Guide",
+      title: "Setup Guide",
       languageTitle: "Choose Language",
       languageBody: "Step 1: Please choose your preferred language.",
       languageEnglish: "English",
@@ -257,7 +310,7 @@ const uiCopy = {
         "This will permanently delete the remote Codex installation, ~/.codex, CodexHub-managed env/API key files, and related Codex config/cache directories. No backup will be created.",
       confirmUninstallCodex: "Uninstall",
       details: "Host details",
-      detailsTitle: (alias: string) => `🖥️ Host · ${alias}`,
+      detailsTitle: (alias: string) => `Host · ${alias}`,
       detailsBody: "Connection status and remote Codex readiness from the latest test.",
       sshStatus: "SSH status",
       arch: "Arch",
@@ -346,7 +399,9 @@ const uiCopy = {
       source: "Source",
       selectedHosts: "Selected hosts",
       targetFiles: "Target files",
-      renderedToml: "Rendered TOML",
+      targetHost: "Host",
+      targetPath: "Path",
+      renderedToml: "Config TOML",
       perHostStatus: "Per-host status",
       previewApply: "Preview",
       applySelected: "Apply selected",
@@ -520,7 +575,7 @@ const uiCopy = {
       }
     },
     settings: {
-      appearance: "🎨 Appearance",
+      appearance: "Appearance",
       theme: "Theme",
       platformAppearance: "Platform",
       font: "Font",
@@ -531,12 +586,12 @@ const uiCopy = {
       remoteWrapper: "Remote wrapper",
       sshConfig: "SSH config",
       desktopBackendRequired: "desktop backend required",
-      localSsh: "🔑 Local keys",
+      localSsh: "Local keys",
       sshKeyStatus: "SSH key status",
       sshKeyBody: "Private key files are checked by existence only. CodexHub never reads or displays private key content.",
-      appUpdates: "🧭 Version info",
+      appUpdates: "Version info",
       dailyUpdateCheck: "Daily check: 04:00",
-      closeButton: "⚙️ Other",
+      closeButton: "Other",
       closeButtonBehavior: "Program close button behavior",
       networkProxy: "Network proxy",
       networkProxyOptions: {
@@ -556,7 +611,7 @@ const uiCopy = {
       updatedAt: "Updated at",
       notChecked: "Not checked",
       checkFailed: "Check failed",
-      updateCheckFailureHint: "You can review this run later from the ✅ Tasks details page.",
+      updateCheckFailureHint: "You can review this run later from the Tasks details page.",
       pendingConfiguration: "Pending setup",
       checkStableUpdate: "Check",
       updateChecking: "Checking...",
@@ -628,41 +683,41 @@ const uiCopy = {
   },
   zh: {
     navItems: [
-      { id: "dashboard", label: "主页", icon: "🏠" },
-      { id: "hosts", label: "主机", icon: "🖥️" },
-      { id: "profiles", label: "配置", icon: "🧾" },
-      { id: "skills", label: "技能", icon: "🧩" },
-      { id: "tasks", label: "任务", icon: "✅" },
-      { id: "settings", label: "设置", icon: "⚙️" }
-    ] satisfies Array<{ id: SectionId; label: string; icon: string }>,
+      { id: "dashboard", label: "主页" },
+      { id: "hosts", label: "主机" },
+      { id: "profiles", label: "配置" },
+      { id: "skills", label: "技能" },
+      { id: "tasks", label: "任务" },
+      { id: "settings", label: "设置" }
+    ] satisfies Array<{ id: SectionId; label: string }>,
     sections: {
       dashboard: {
-        title: "🏠 主页",
+        title: "主页",
         eyebrow: "主页",
         body: "用于 CodexHub 桌面壳的 SSH 清单、配置状态和最近操作。"
       },
       hosts: {
-        title: "🖥️ 主机",
+        title: "主机",
         eyebrow: "服务器清单",
         body: "添加 CodexHub 管理的 SSH config 块，不影响用户已有 SSH 设置。"
       },
       profiles: {
-        title: "🧾 配置",
+        title: "配置",
         eyebrow: "Codex 配置",
         body: "为远端 ~/.codex/config.toml 草拟受管理的配置预设。"
       },
       skills: {
-        title: "🧩 技能",
+        title: "技能",
         eyebrow: "技能包",
         body: "查看未来会同步到远程 ~/.codex/skills/ 目录的技能包。"
       },
       tasks: {
-        title: "✅ 任务",
+        title: "任务",
         eyebrow: "任务运行",
         body: "跟踪后端命令、生成日志和待处理主机操作。"
       },
       settings: {
-        title: "⚙️ 设置",
+        title: "设置",
         eyebrow: "偏好设置",
         body: "调整界面主题，查看本地 SSH 密钥状态，并复制公钥。"
       }
@@ -678,6 +733,11 @@ const uiCopy = {
       loading: "加载中",
       ready: "就绪",
       unassigned: "未分配"
+    },
+    windowControls: {
+      close: "关闭窗口",
+      maximize: "最大化窗口",
+      minimize: "最小化窗口"
     },
     notices: {
       default: "本地 SSH 密钥和配置管理已在桌面后端就绪。",
@@ -700,7 +760,7 @@ const uiCopy = {
       noSkillPacks: "无技能包"
     },
     setupGuide: {
-      title: "🧭 配置向导",
+      title: "配置向导",
       languageTitle: "选择语言",
       languageBody: "第1步：请选择偏好语言",
       languageEnglish: "英文",
@@ -786,7 +846,7 @@ const uiCopy = {
         "这会永久删除远端 Codex 安装、~/.codex、CodexHub 管理的 env/API key 文件，以及相关 Codex 配置/缓存目录。不会创建备份。",
       confirmUninstallCodex: "卸载",
       details: "主机详情",
-      detailsTitle: (alias: string) => `🖥️ 主机 · ${alias}`,
+      detailsTitle: (alias: string) => `主机 · ${alias}`,
       detailsBody: "展示最近一次测试得到的连接状态与远端 Codex 就绪度。",
       sshStatus: "SSH 状态",
       arch: "架构",
@@ -875,7 +935,9 @@ const uiCopy = {
       source: "来源",
       selectedHosts: "已选主机",
       targetFiles: "目标文件",
-      renderedToml: "渲染 TOML",
+      targetHost: "主机",
+      targetPath: "路径",
+      renderedToml: "配置 TOML",
       perHostStatus: "单主机状态",
       previewApply: "预览",
       applySelected: "应用所选",
@@ -1049,7 +1111,7 @@ const uiCopy = {
       }
     },
     settings: {
-      appearance: "🎨 外观",
+      appearance: "外观",
       theme: "主题",
       platformAppearance: "平台",
       font: "字体",
@@ -1060,12 +1122,12 @@ const uiCopy = {
       remoteWrapper: "远程包装器",
       sshConfig: "SSH 配置",
       desktopBackendRequired: "需要桌面后端",
-      localSsh: "🔑 本地密钥",
+      localSsh: "本地密钥",
       sshKeyStatus: "SSH 密钥状态",
       sshKeyBody: "仅检查私钥文件是否存在。CodexHub 从不读取或显示私钥内容。",
-      appUpdates: "🧭 版本信息",
+      appUpdates: "版本信息",
       dailyUpdateCheck: "每日 04:00 自动检查",
-      closeButton: "⚙️ 其他",
+      closeButton: "其他",
       closeButtonBehavior: "程序关闭按钮行为",
       networkProxy: "网络代理",
       networkProxyOptions: {
@@ -1085,7 +1147,7 @@ const uiCopy = {
       updatedAt: "更新时间",
       notChecked: "未检查",
       checkFailed: "检查失败",
-      updateCheckFailureHint: "你可以稍后在“✅ 任务”详情页回看本次运行的日志。",
+      updateCheckFailureHint: "你可以稍后在“任务”详情页回看本次运行的日志。",
       pendingConfiguration: "待配置",
       checkStableUpdate: "检查",
       updateChecking: "检查中...",
@@ -1184,6 +1246,395 @@ function sectionOperationTone(result: unknown): SectionCompletionTone {
   return "success";
 }
 
+function CommandBar({
+  ariaLabel,
+  children,
+  className = ""
+}: {
+  ariaLabel?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`commandBar ${className}`.trim()} role="toolbar" aria-label={ariaLabel}>
+      {children}
+    </div>
+  );
+}
+
+function CommandGroup({
+  ariaLabel,
+  children,
+  className = "",
+  onClick
+}: {
+  ariaLabel?: string;
+  children: ReactNode;
+  className?: string;
+  onClick?: MouseEventHandler<HTMLDivElement>;
+}) {
+  return (
+    <div className={`commandGroup ${className}`.trim()} role={ariaLabel ? "toolbar" : "group"} aria-label={ariaLabel} onClick={onClick}>
+      {children}
+    </div>
+  );
+}
+
+function CommandBarActions({
+  actions,
+  ariaLabel,
+  className = ""
+}: {
+  actions: CommandBarAction[];
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <CommandBar ariaLabel={ariaLabel} className={className}>
+      {actions.map((action) => (
+        <button
+          className={action.kind === "primary" ? "primaryButton" : action.kind === "danger" ? "secondaryButton dangerButton" : "secondaryButton"}
+          disabled={action.disabled}
+          key={action.id}
+          type="button"
+          onClick={action.onClick}
+        >
+          {action.label}
+        </button>
+      ))}
+    </CommandBar>
+  );
+}
+
+function usePlatformAppearance() {
+  return useContext(PlatformAppearanceContext);
+}
+
+function AppTitleBar({
+  copy,
+  onCloseRequest
+}: {
+  copy: UICopy;
+  onCloseRequest: () => Promise<void> | void;
+}) {
+  const [title, setTitle] = useState("CodexHub");
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentWindow().title()
+      .then((windowTitle) => {
+        if (!cancelled && windowTitle.trim()) setTitle(windowTitle);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleDragMouseDown = (event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    if (event.detail === 2) {
+      event.preventDefault();
+      void runAction("maximize");
+      return;
+    }
+    void getCurrentWindow().startDragging().catch(() => undefined);
+  };
+
+  const runAction = async (action: TitleBarAction) => {
+    if (action === "close") {
+      await onCloseRequest();
+      return;
+    }
+
+    try {
+      const currentWindow = getCurrentWindow();
+      if (action === "minimize") await currentWindow.minimize();
+      if (action === "maximize") await currentWindow.toggleMaximize();
+    } catch {
+      // Web/mock previews do not expose desktop window controls.
+    }
+  };
+
+  return (
+    <header className="appTitleBar">
+      <div className="titleDragRegion" data-tauri-drag-region onMouseDown={handleDragMouseDown}>
+        <div className="appTitle" data-tauri-drag-region>
+        <img className="titleBarIcon" src={appLogoUrl} alt="" aria-hidden="true" />
+        <span data-tauri-drag-region>{title}</span>
+        </div>
+      </div>
+      <div className="captionControls" role="group" aria-label={title}>
+        <button className="captionButton" data-action="minimize" type="button" aria-label={copy.windowControls.minimize} onClick={() => void runAction("minimize")}>
+          <span className="captionGlyph" aria-hidden="true" />
+        </button>
+        <button className="captionButton" data-action="maximize" type="button" aria-label={copy.windowControls.maximize} onClick={() => void runAction("maximize")}>
+          <span className="captionGlyph" aria-hidden="true" />
+        </button>
+        <button className="captionButton closeCaptionButton" data-action="close" type="button" aria-label={copy.windowControls.close} onClick={() => void runAction("close")}>
+          <span className="captionGlyph" aria-hidden="true" />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function ModalFrame({
+  children,
+  className = "",
+  titleId
+}: {
+  children: ReactNode;
+  className?: string;
+  titleId: string;
+}) {
+  return (
+    <section className={`modalFrame ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      {children}
+    </section>
+  );
+}
+
+function ModalCloseButton({
+  ariaLabel,
+  disabled,
+  onClick
+}: {
+  ariaLabel: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button className="modalCloseButton" disabled={disabled} type="button" onClick={onClick} aria-label={ariaLabel}>
+      <span aria-hidden="true">×</span>
+    </button>
+  );
+}
+
+function ModalHeader({
+  badge,
+  children,
+  className = "",
+  description,
+  icon,
+  title,
+  titleId,
+  closeAriaLabel,
+  closeDisabled,
+  onClose
+}: {
+  badge?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  description?: ReactNode;
+  icon?: PlatformIconId;
+  title: ReactNode;
+  titleId: string;
+  closeAriaLabel?: string;
+  closeDisabled?: boolean;
+  onClose?: () => void;
+}) {
+  return (
+    <div className={`modalHeader ${className}`.trim()}>
+      <div className="modalTitleBlock">
+        {icon ? <span className="modalTitleIcon" aria-hidden="true"><PlatformIcon id={icon} /></span> : null}
+        <div>
+          <h2 id={titleId}>{title}</h2>
+          {description ? <p>{description}</p> : null}
+          {children}
+        </div>
+      </div>
+      {badge ? <div className="modalHeaderBadge">{badge}</div> : null}
+      {onClose ? <ModalCloseButton ariaLabel={closeAriaLabel ?? "Close"} disabled={closeDisabled} onClick={onClose} /> : null}
+    </div>
+  );
+}
+
+function ModalActions({
+  children,
+  className = "",
+  dataHasHosts
+}: {
+  children: ReactNode;
+  className?: string;
+  dataHasHosts?: boolean;
+}) {
+  return <div className={`modalActions ${className}`.trim()} data-has-hosts={dataHasHosts ?? undefined}>{children}</div>;
+}
+
+function PlatformIcon({ id }: { id: PlatformIconId }) {
+  const platform = usePlatformAppearance();
+  if (platform === "macos") {
+    return <span className="emojiIcon" aria-hidden="true">{platformEmojiIcons[id]}</span>;
+  }
+  return <WindowsIcon id={id} />;
+}
+
+function NavIcon({ id }: { id: NavIconId }) {
+  return <PlatformIcon id={id} />;
+}
+
+function TitleWithIcon({
+  children,
+  icon,
+  level
+}: {
+  children: ReactNode;
+  icon: PlatformIconId;
+  level: 1 | 2 | 3;
+}) {
+  const content = (
+    <>
+      <span className="titleIcon" data-level={level} aria-hidden="true">
+        <PlatformIcon id={icon} />
+      </span>
+      <span className="titleText">{children}</span>
+    </>
+  );
+
+  if (level === 1) return <h1 className="titleWithIcon" data-level={level}>{content}</h1>;
+  if (level === 2) return <h2 className="titleWithIcon" data-level={level}>{content}</h2>;
+  return <h3 className="titleWithIcon" data-level={level}>{content}</h3>;
+}
+
+function WindowsIcon({ id }: { id: PlatformIconId }) {
+  return (
+    <svg className="navGlyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {id === "dashboard" ? (
+        <>
+          <path d="M4 11.2 12 4l8 7.2" />
+          <path d="M6.5 10.5V20h11v-9.5" />
+          <path d="M10 20v-5h4v5" />
+        </>
+      ) : null}
+      {id === "hosts" ? (
+        <>
+          <rect x="4" y="5" width="16" height="11" rx="1.6" />
+          <path d="M9 20h6" />
+          <path d="M12 16v4" />
+        </>
+      ) : null}
+      {id === "profiles" ? (
+        <>
+          <path d="M7 4.5h7l3 3V20H7z" />
+          <path d="M14 4.5v3h3" />
+          <path d="M9.5 12h5" />
+          <path d="M9.5 15.5H14" />
+        </>
+      ) : null}
+      {id === "skills" ? (
+        <>
+          <path d="M8.2 4.5h7.6v5.1h3.7v6.2h-3.7v3.7H8.2v-3.7H4.5V9.6h3.7z" />
+          <path d="M10 9.6h4" />
+          <path d="M10 14.2h4" />
+        </>
+      ) : null}
+      {id === "tasks" ? (
+        <>
+          <rect x="5" y="4.5" width="14" height="15" rx="1.8" />
+          <path d="m8 9 1.4 1.4L12 7.8" />
+          <path d="M13.5 9.5H16" />
+          <path d="m8 14.3 1.4 1.4L12 13" />
+          <path d="M13.5 14.8H16" />
+        </>
+      ) : null}
+      {id === "settings" ? (
+        <>
+          <circle cx="12" cy="12" r="2.8" />
+          <path d="M12 4.5v2.2" />
+          <path d="M12 17.3v2.2" />
+          <path d="M4.5 12h2.2" />
+          <path d="M17.3 12h2.2" />
+          <path d="m6.7 6.7 1.6 1.6" />
+          <path d="m15.7 15.7 1.6 1.6" />
+          <path d="m17.3 6.7-1.6 1.6" />
+          <path d="m8.3 15.7-1.6 1.6" />
+        </>
+      ) : null}
+      {id === "download" || id === "install" ? (
+        <>
+          <path d="M12 4.5v10" />
+          <path d="m8.5 11 3.5 3.5 3.5-3.5" />
+          <path d="M5.5 18.5h13" />
+        </>
+      ) : null}
+      {id === "delete" ? (
+        <>
+          <path d="M5.5 7h13" />
+          <path d="M9 7V5h6v2" />
+          <path d="M7.5 9.5 8.4 20h7.2l.9-10.5" />
+          <path d="M10.5 11.5v5" />
+          <path d="M13.5 11.5v5" />
+        </>
+      ) : null}
+      {id === "preview" ? (
+        <>
+          <path d="M3.5 12c2.1-4 5-6 8.5-6s6.4 2 8.5 6c-2.1 4-5 6-8.5 6s-6.4-2-8.5-6Z" />
+          <circle cx="12" cy="12" r="2.6" />
+        </>
+      ) : null}
+      {id === "scan" ? (
+        <>
+          <circle cx="10.5" cy="10.5" r="5.5" />
+          <path d="m15 15 4.5 4.5" />
+          <path d="M10.5 7.5v3h3" />
+        </>
+      ) : null}
+      {id === "network" ? (
+        <>
+          <circle cx="12" cy="12" r="7" />
+          <path d="M5 12h14" />
+          <path d="M12 5c2 2.2 3 4.5 3 7s-1 4.8-3 7" />
+          <path d="M12 5c-2 2.2-3 4.5-3 7s1 4.8 3 7" />
+        </>
+      ) : null}
+      {id === "key" ? (
+        <>
+          <circle cx="8" cy="12" r="3.2" />
+          <path d="M11 12h8" />
+          <path d="M16 12v3" />
+          <path d="M19 12v2" />
+        </>
+      ) : null}
+      {id === "language" ? (
+        <>
+          <circle cx="12" cy="12" r="7.2" />
+          <path d="M4.8 12h14.4" />
+          <path d="M12 4.8c2 2.1 3 4.5 3 7.2s-1 5.1-3 7.2" />
+          <path d="M12 4.8c-2 2.1-3 4.5-3 7.2s1 5.1 3 7.2" />
+        </>
+      ) : null}
+      {id === "terminal" ? (
+        <>
+          <path d="m5 8 4 4-4 4" />
+          <path d="M11.5 16h7" />
+        </>
+      ) : null}
+      {id === "update" ? (
+        <>
+          <path d="M18.5 9A6.8 6.8 0 0 0 6.2 7.2L4.5 9" />
+          <path d="M4.5 5.2V9h3.8" />
+          <path d="M5.5 15a6.8 6.8 0 0 0 12.3 1.8l1.7-1.8" />
+          <path d="M19.5 18.8V15h-3.8" />
+        </>
+      ) : null}
+      {id === "warning" ? (
+        <>
+          <path d="M12 4.5 20 19H4z" />
+          <path d="M12 9.5v4" />
+          <path d="M12 16.7h.1" />
+        </>
+      ) : null}
+      {id === "close" ? (
+        <>
+          <path d="M7 7 17 17" />
+          <path d="M17 7 7 17" />
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
 function App() {
   const [activeSection, setActiveSection] = useState<SectionId>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(() => loadLocalSettings());
@@ -1227,6 +1678,9 @@ function App() {
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
+  const runtimePlatform = useMemo(() => getPlatform(), []);
+  const effectivePlatform = resolvePlatformAppearance(settings.platformAppearance);
+  const usesCustomTitleBar = isWindows(runtimePlatform);
   const appUpdateBusy = appUpdateChecking || appUpdateInstalling;
   const previewSidebarStableUpdateButton = PREVIEW_SIDEBAR_UPDATE_BUTTON && appUpdateStatus.channel === "dev";
   const showSidebarStableUpdateButton =
@@ -2283,6 +2737,24 @@ function App() {
     }
   };
 
+  const handleTitleBarCloseRequest = useCallback(async () => {
+    if (settings.closeButtonBehavior === "ask") {
+      setCloseButtonPromptOpen(true);
+      return;
+    }
+
+    try {
+      const currentWindow = getCurrentWindow();
+      if (settings.closeButtonBehavior === "minimize-to-tray") {
+        await currentWindow.hide();
+        return;
+      }
+      await currentWindow.close();
+    } catch {
+      // Browser previews cannot control a desktop window.
+    }
+  }, [settings.closeButtonBehavior]);
+
   const handleDismissSetupGuide = () => {
     setSetupGuideOpen(false);
     persistSettings({ ...settings, setupGuideDismissed: true });
@@ -2455,9 +2927,25 @@ function App() {
         return null;
     }
   };
+  const pageActions: CommandBarAction[] = [
+    ...(activeSection === "hosts"
+      ? [{ id: "add-host", label: copy.common.addServer, kind: "primary" as const, onClick: handleAddHost }]
+      : []),
+    ...(activeSection === "profiles"
+      ? [{
+          id: "new-api-config",
+          label: copy.profiles.newApiConfig,
+          kind: "primary" as const,
+          onClick: () => setNewProfileRequest((current) => current + 1)
+        }]
+      : [])
+  ];
 
   return (
-    <div className="appShell">
+    <PlatformAppearanceContext.Provider value={effectivePlatform}>
+      <div className="desktopFrame" data-os={runtimePlatform} data-custom-titlebar={usesCustomTitleBar}>
+        {usesCustomTitleBar ? <AppTitleBar copy={copy} onCloseRequest={handleTitleBarCloseRequest} /> : null}
+        <div className="appShell">
       <aside className="sidebar" aria-label={copy.common.primaryNavigation}>
         <div className="brandBlock">
           <img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />
@@ -2480,7 +2968,7 @@ function App() {
                 }}
                 type="button"
               >
-                <span className="navIcon" aria-hidden="true">{item.icon}</span>
+                <span className="navIcon" aria-hidden="true"><NavIcon id={item.id} /></span>
                 <span className="navLabel">{item.label}</span>
                 {completionTone ? <span className="navCompletionDot" data-tone={completionTone} aria-hidden="true" /> : null}
               </button>
@@ -2516,16 +3004,9 @@ function App() {
       >
         <header className="topBar">
           <div>
-            <h1>{selectedCopy.title}</h1>
+            <TitleWithIcon icon={activeSection} level={1}>{selectedCopy.title}</TitleWithIcon>
           </div>
-          <div className="topActions">
-            {activeSection === "hosts" ? (
-              <button className="primaryButton" type="button" onClick={handleAddHost}>{copy.common.addServer}</button>
-            ) : null}
-            {activeSection === "profiles" ? (
-              <button className="primaryButton" type="button" onClick={() => setNewProfileRequest((current) => current + 1)}>{copy.profiles.newApiConfig}</button>
-            ) : null}
-          </div>
+          {pageActions.length > 0 ? <CommandBarActions ariaLabel={selectedCopy.title} className="topActions" actions={pageActions} /> : null}
         </header>
 
         {renderContent()}
@@ -2562,7 +3043,7 @@ function App() {
           footer={(
             <>
               <p className="mutedText taskLogModalHint">{copy.settings.updateCheckFailureHint}</p>
-              <div className="modalActions">
+              <ModalActions>
                 <button
                   className="secondaryButton"
                   type="button"
@@ -2576,7 +3057,7 @@ function App() {
                 <button className="primaryButton" type="button" onClick={() => setAppUpdateFailureTask(null)}>
                   {copy.codexOperation.close}
                 </button>
-              </div>
+              </ModalActions>
             </>
           )}
         />
@@ -2614,7 +3095,9 @@ function App() {
           onChoose={handleChooseCloseButtonBehavior}
         />
       ) : null}
-    </div>
+        </div>
+      </div>
+    </PlatformAppearanceContext.Provider>
   );
 }
 
@@ -2631,11 +3114,16 @@ function CloseButtonBehaviorPromptModal({
 }) {
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="setupGuideModal" role="dialog" aria-modal="true" aria-labelledby="close-button-prompt-title">
-        <div className="setupGuideHero">
-          <h2 id="close-button-prompt-title">{copy.closeButtonPrompt.title}</h2>
-          <p>{copy.closeButtonPrompt.body}</p>
-        </div>
+      <ModalFrame className="setupGuideModal" titleId="close-button-prompt-title">
+        <ModalHeader
+          titleId="close-button-prompt-title"
+          title={copy.closeButtonPrompt.title}
+          description={copy.closeButtonPrompt.body}
+          icon="warning"
+          closeAriaLabel={copy.closeButtonPrompt.cancel}
+          closeDisabled={busy}
+          onClose={onCancel}
+        />
 
         <div className="setupGuideLanguage">
           <button className="setupGuideLanguageOption" disabled={busy} type="button" onClick={() => void onChoose("exit")}>
@@ -2648,12 +3136,12 @@ function CloseButtonBehaviorPromptModal({
           </button>
         </div>
 
-        <div className="modalActions setupGuideActions" data-has-hosts="true">
+        <ModalActions className="setupGuideActions" dataHasHosts>
           <button className="secondaryButton" disabled={busy} type="button" onClick={onCancel}>
             {copy.closeButtonPrompt.cancel}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -2695,13 +3183,16 @@ function SetupGuideModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="setupGuideModal" role="dialog" aria-modal="true" aria-labelledby="setup-guide-title">
+      <ModalFrame className="setupGuideModal" titleId="setup-guide-title">
         {step === "language" ? (
           <>
-            <div className="setupGuideHero">
-              <h2 id="setup-guide-title">{languageCopy.setupGuide.title}</h2>
-              <p>{languageCopy.setupGuide.languageBody}</p>
-            </div>
+            <ModalHeader
+              className="setupGuideHero"
+              titleId="setup-guide-title"
+              title={languageCopy.setupGuide.title}
+              description={languageCopy.setupGuide.languageBody}
+              icon="language"
+            />
 
             <div className="setupGuideLanguage" role="radiogroup" aria-label={languageCopy.setupGuide.languageTitle}>
               <button
@@ -2728,19 +3219,23 @@ function SetupGuideModal({
               </button>
             </div>
 
-            <div className="modalActions setupGuideActions" data-has-hosts="true">
+            <ModalActions className="setupGuideActions" dataHasHosts>
               <button className="primaryButton" disabled={busy} type="button" onClick={() => void onLanguageNext(languageDraft)}>
                 {languageCopy.setupGuide.next}
               </button>
-            </div>
+            </ModalActions>
           </>
         ) : (
           <>
-            <div className="setupGuideHero">
-              <h2 id="setup-guide-title">{copy.setupGuide.title}</h2>
-              <p>{detectionPending ? copy.setupGuide.detecting : hasLocalHosts ? copy.setupGuide.bodyWithHosts(sshConfigHosts.length) : copy.setupGuide.bodyEmpty}</p>
+            <ModalHeader
+              className="setupGuideHero"
+              titleId="setup-guide-title"
+              title={copy.setupGuide.title}
+              description={detectionPending ? copy.setupGuide.detecting : hasLocalHosts ? copy.setupGuide.bodyWithHosts(sshConfigHosts.length) : copy.setupGuide.bodyEmpty}
+              icon="hosts"
+            >
               <code>{copy.setupGuide.detectedPath(configPath)}</code>
-            </div>
+            </ModalHeader>
 
             {hasLocalHosts ? (
               <div className="setupGuideHostList" role="table" aria-label={copy.hosts.detectedSshHosts}>
@@ -2766,7 +3261,7 @@ function SetupGuideModal({
               <EmptyListState copy={copy} message={copy.emptyLists.hosts} variant="hosts" />
             )}
 
-            <div className="modalActions setupGuideActions" data-has-hosts={hasLocalHosts}>
+            <ModalActions className="setupGuideActions" dataHasHosts={hasLocalHosts}>
               {hasLocalHosts ? (
                 <button className="secondaryButton" disabled={busy} type="button" onClick={onSkip}>
                   {copy.setupGuide.skip}
@@ -2781,10 +3276,10 @@ function SetupGuideModal({
                   {copy.setupGuide.close}
                 </button>
               )}
-            </div>
+            </ModalActions>
           </>
         )}
-      </section>
+      </ModalFrame>
     </div>
   );
 }
@@ -2800,17 +3295,18 @@ function EmptyListState({
   message: string;
   variant: "hosts" | "profiles" | "skills" | "tasks";
 }) {
-  const icon = {
-    hosts: "🖥️",
-    profiles: "🧾",
-    skills: "🧩",
-    tasks: "✅"
-  }[variant];
+  const iconIdByVariant = {
+    hosts: "hosts",
+    profiles: "profiles",
+    skills: "skills",
+    tasks: "tasks"
+  } satisfies Record<typeof variant, NavIconId>;
+  const iconId = iconIdByVariant[variant];
 
   return (
     <div className="emptyState emptyListState" data-variant={variant}>
       <div className="emptyListIcon" aria-hidden="true">
-        {icon}
+        <NavIcon id={iconId} />
       </div>
       <p>{message || copy.emptyLists.hosts}</p>
       {action ? <div className="emptyListActions">{action}</div> : null}
@@ -2831,22 +3327,23 @@ function CodexUninstallConfirmModal({
 }) {
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal simpleDeleteModal" role="dialog" aria-modal="true" aria-labelledby="codex-uninstall-confirm-title">
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="codex-uninstall-confirm-title">{copy.hosts.uninstallCodexConfirmTitle(target.hostAlias)}</h2>
-            <p>{copy.hosts.uninstallCodexConfirmBody}</p>
-          </div>
-        </div>
-        <div className="modalActions">
+      <ModalFrame className="taskLogModal simpleDeleteModal" titleId="codex-uninstall-confirm-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="codex-uninstall-confirm-title"
+          title={copy.hosts.uninstallCodexConfirmTitle(target.hostAlias)}
+          description={copy.hosts.uninstallCodexConfirmBody}
+          icon="delete"
+        />
+        <ModalActions>
           <button className="secondaryButton" type="button" onClick={onCancel}>
             {copy.hosts.cancel}
           </button>
           <button className="primaryButton dangerButton" type="button" onClick={onConfirm}>
             {copy.hosts.confirmUninstallCodex}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -2886,16 +3383,16 @@ function CodexOperationModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="codexOperationModal" role="dialog" aria-modal="true" aria-labelledby="codex-operation-modal-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}>
-          ×
-        </button>
-        <div className="codexOperationHeader">
-          <div>
-            <h2 id="codex-operation-modal-title">🛠️ {actionLabel}</h2>
-          </div>
-          <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
-        </div>
+      <ModalFrame className="codexOperationModal" titleId="codex-operation-modal-title">
+        <ModalHeader
+          className="codexOperationHeader"
+          titleId="codex-operation-modal-title"
+          title={actionLabel}
+          icon="terminal"
+          badge={<Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>}
+          closeAriaLabel={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
+          onClose={onClose}
+        />
 
         <div className="codexOperationSummary">
           <span>{copy.codexOperation.summary}</span>
@@ -2938,7 +3435,7 @@ function CodexOperationModal({
           </div>
         </div>
 
-        <div className="modalActions codexOperationActions">
+        <ModalActions className="codexOperationActions">
           {operation.task ? (
             <button className="secondaryButton" type="button" onClick={onViewTasks}>
               {copy.codexOperation.viewTasks}
@@ -2947,8 +3444,8 @@ function CodexOperationModal({
           <button className="primaryButton" type="button" onClick={onClose}>
             {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -3064,15 +3561,17 @@ function ServerMatrix({
   return (
     <section className="panel spanWide">
       <div className="panelHeader matrixHeader">
-        <h2>{copy.dashboard.serverMatrix}</h2>
-        <button className="primaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
-          {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
-        </button>
+        <TitleWithIcon icon="hosts" level={2}>{copy.dashboard.serverMatrix}</TitleWithIcon>
+        <CommandBar ariaLabel={copy.dashboard.serverMatrix} className="topActions">
+          <button className="primaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
+            {testingAll ? copy.hosts.testingAll : copy.hosts.refreshDetected}
+          </button>
+        </CommandBar>
       </div>
 
       {hosts.length === 0 ? (
         <div className="emptyState matrixEmptyState">
-          <div className="matrixEmptyIcon" aria-hidden="true">🖥️</div>
+          <div className="matrixEmptyIcon" aria-hidden="true"><NavIcon id="hosts" /></div>
           <h3>{copy.dashboard.noHosts}</h3>
           <p>{copy.dashboard.noHostsBody}</p>
           <button className="primaryButton" type="button" onClick={onAddServer}>{copy.common.addServer}</button>
@@ -3090,7 +3589,7 @@ function ServerMatrix({
             <article className="hostCard" key={host.id}>
               <div className="hostHeader">
                 <div>
-                  <h3>{host.name}</h3>
+                  <TitleWithIcon icon="hosts" level={3}>{host.name}</TitleWithIcon>
                   <p>{formatEndpoint(host)}</p>
                 </div>
                 <StatusBadge copy={copy} status={host.status} />
@@ -3256,9 +3755,9 @@ function HostsView({
       <section className="panel spanWide">
         <div className="panelHeader">
           <div>
-            <h2>{copy.hosts.detectedSshHosts}</h2>
+            <TitleWithIcon icon="hosts" level={2}>{copy.hosts.detectedSshHosts}</TitleWithIcon>
           </div>
-          <div className="topActions">
+          <CommandBar ariaLabel={copy.hosts.detectedSshHosts} className="topActions">
             <button className="secondaryButton" disabled={detectHostsBusy || anyHostBusy} type="button" onClick={() => void handleDetectLocalHosts().catch(() => undefined)}>
               {detectHostsBusy ? copy.setupGuide.detecting : copy.hosts.detect}
             </button>
@@ -3268,7 +3767,7 @@ function HostsView({
             <button className="primaryButton" disabled={outdatedCodexAliases.length === 0 || anyHostBusy} type="button" onClick={() => void onUpdateOutdatedCodexHosts(outdatedCodexAliases)}>
               {updatingOutdated ? copy.hosts.updatingOutdatedCodex : copy.hosts.updateOutdatedCodex}
             </button>
-          </div>
+          </CommandBar>
         </div>
 
         {sshConfigHosts.length === 0 ? (
@@ -3315,16 +3814,16 @@ function HostsView({
                       <td className="sshHostsVersionCol"><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
                       <td className="sshHostsLatestVersionCol"><Badge tone={latestStatus.tone} title={latestStatus.title}>{latestStatus.label}</Badge></td>
                       <td className="sshHostsActionsCol">
-                        <div className="tableActions sshHostsActionGroup">
+                        <CommandGroup className="tableActions sshHostsActionGroup">
                           <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(sshHost.alias); }}>
                             {busy === "test" ? copy.hosts.testing : copy.hosts.test}
                           </button>
                           <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); handleEdit(sshHost); }}>{copy.hosts.edit}</button>
                           <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); setDeleteHostAlias(sshHost.alias); }}>{copy.hosts.delete}</button>
-                        </div>
+                        </CommandGroup>
                       </td>
                       <td className="sshHostsCodexCol">
-                        <div className="tableActions sshHostsActionGroup">
+                        <CommandGroup className="tableActions sshHostsActionGroup">
                           <button className="miniButton" disabled={installDisabled} type="button" onClick={(event) => { event.stopPropagation(); onManageCodex(sshHost.alias, "install"); }}>
                             {remoteCodexButtonLabel(copy, busy, "install")}
                           </button>
@@ -3334,7 +3833,7 @@ function HostsView({
                           <button className="miniButton danger" disabled={uninstallDisabled} type="button" onClick={(event) => { event.stopPropagation(); onManageCodex(sshHost.alias, "uninstall"); }}>
                             {remoteCodexButtonLabel(copy, busy, "uninstall")}
                           </button>
-                        </div>
+                        </CommandGroup>
                       </td>
                     </tr>
                   );
@@ -3462,11 +3961,15 @@ function SshHostModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <div className="sshHostModal" role="dialog" aria-modal="true" aria-labelledby="ssh-host-modal-title">
-        <button className="modalCloseButton" type="button" onClick={closeModal} aria-label="Close">×</button>
-        <div className="modalHero">
-          <h2 id="ssh-host-modal-title">🖥️ {editing ? copy.hosts.edit : copy.hosts.addCodexHubHost}</h2>
-        </div>
+      <ModalFrame className="sshHostModal" titleId="ssh-host-modal-title">
+        <ModalHeader
+          className="modalHero"
+          titleId="ssh-host-modal-title"
+          title={editing ? copy.hosts.edit : copy.hosts.addCodexHubHost}
+          icon="hosts"
+          closeAriaLabel={copy.setupGuide.close}
+          onClose={closeModal}
+        />
 
         <form className="modalForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
@@ -3519,13 +4022,13 @@ function SshHostModal({
             ) : null}
           </div>
 
-          <div className="modalActions">
+          <ModalActions>
             <button className="primaryButton" disabled={!canConnect} type="submit">{connecting ? "连接中..." : "连接"}</button>
-          </div>
+          </ModalActions>
         </form>
 
         {showProgress ? <BootstrapProgressLog steps={steps} /> : null}
-      </div>
+      </ModalFrame>
     </div>
   );
 }
@@ -3629,7 +4132,7 @@ function HostDetailsPanel({
     <section className="panel spanWide">
       <div className="panelHeader">
         <div>
-          <h2>{copy.hosts.detailsTitle(host?.hostAlias ?? copy.hosts.unknown)}</h2>
+          <TitleWithIcon icon="hosts" level={2}>{copy.hosts.detailsTitle(host?.hostAlias ?? copy.hosts.unknown)}</TitleWithIcon>
         </div>
         <div className="calloutMeta largeStatus">
           {host ? <StatusBadge copy={copy} status={host.status} /> : <Badge tone="gray">{copy.hosts.unknown}</Badge>}
@@ -3953,9 +4456,9 @@ function ProfilesView({
       <section className="panel spanWide">
         <div className="panelHeader">
           <div>
-            <h2>{copy.profiles.library}</h2>
+            <TitleWithIcon icon="profiles" level={2}>{copy.profiles.library}</TitleWithIcon>
           </div>
-          <div className="topActions profileLibraryActions">
+          <CommandBar ariaLabel={copy.profiles.library} className="topActions profileLibraryActions">
             <button className="secondaryButton" type="button" onClick={() => importInputRef.current?.click()}>{copy.profiles.import}</button>
             <button
               className={`${canImportCcSwitchDetection ? "primaryButton" : "secondaryButton"} ccSwitchActionButton`}
@@ -3972,7 +4475,7 @@ function ProfilesView({
               accept="application/json,.json"
               onChange={(event) => void handleImportFile(event.currentTarget.files?.[0])}
             />
-          </div>
+          </CommandBar>
         </div>
 
         {ccSwitchStatus ? (
@@ -4015,14 +4518,14 @@ function ProfilesView({
                     <td><ProfileStorageBadge copy={copy} profile={profile} /></td>
                     <td>{appliedHostCountByProfileId.get(profile.id) ?? 0}</td>
                     <td>
-                      <div className="profileRowActions" onClick={(event) => event.stopPropagation()}>
+                      <CommandGroup className="profileRowActions" onClick={(event) => event.stopPropagation()}>
                         <button className="miniButton" type="button" onClick={() => {
                           setEditingProfileId(profile.id);
                           setProfileEditorOpen(true);
                         }}>{copy.profiles.edit}</button>
                         <button className="miniButton" disabled={busy === "duplicate"} type="button" onClick={() => void handleDuplicate(profile)}>{copy.profiles.duplicate}</button>
                         <button className="miniButton danger" disabled={busy === "delete"} type="button" onClick={() => setDeleteProfileId(profile.id)}>{copy.profiles.delete}</button>
-                      </div>
+                      </CommandGroup>
                     </td>
                     <td>
                       <button
@@ -4049,7 +4552,7 @@ function ProfilesView({
       <section className="panel spanWide profileApplyPanel">
         <div className="panelHeader compact">
           <div>
-            <h2>{copy.profiles.applyConfig}</h2>
+            <TitleWithIcon icon="profiles" level={2}>{copy.profiles.applyConfig}</TitleWithIcon>
           </div>
         </div>
 
@@ -4084,14 +4587,14 @@ function ProfilesView({
                       <td className="sshHostsVersionCol"><Badge tone={codexStatus.tone}>{codexStatus.label}</Badge></td>
                       <td className="profileApplyConfigCol"><HostApiConfigBadge copy={copy} host={host} profileById={profileById} /></td>
                       <td className="sshHostsActionsCol">
-                        <div className="tableActions sshHostsActionGroup">
+                        <CommandGroup className="tableActions sshHostsActionGroup">
                           <button className="miniButton" disabled={!selectedProfile || busy === "preview"} type="button" onClick={(event) => { event.stopPropagation(); void handlePreview([host.id]); }}>
                             {copy.profiles.previewApply}
                           </button>
                           <button className="miniButton" disabled={!selectedProfile || alreadyApplied || profileApplyRunningHostIdSet.has(host.id)} type="button" onClick={(event) => { event.stopPropagation(); void handleApply([host.id]); }}>
                             {copy.profiles.applyOne}
                           </button>
-                        </div>
+                        </CommandGroup>
                       </td>
                     </tr>
                   );
@@ -4211,11 +4714,15 @@ function ProfileHostSelectModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <div className="sshHostModal profileHostSelectModal ProfileHostSelectModal" role="dialog" aria-modal="true" aria-labelledby="profile-host-select-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">&times;</button>
-        <div className="modalHero">
-          <h2 id="profile-host-select-title">🖥️ {copy.profiles.selectHosts}</h2>
-        </div>
+      <ModalFrame className="sshHostModal profileHostSelectModal ProfileHostSelectModal" titleId="profile-host-select-title">
+        <ModalHeader
+          className="modalHero"
+          titleId="profile-host-select-title"
+          title={copy.profiles.selectHosts}
+          icon="profiles"
+          closeAriaLabel={copy.setupGuide.close}
+          onClose={onClose}
+        />
 
         <div className="profileHostSelectList">
           {hosts.map((host) => {
@@ -4238,7 +4745,7 @@ function ProfileHostSelectModal({
 
         {message ? <p className="profileHostSelectMessage" role="status">{message}</p> : null}
 
-        <div className="modalActions profileHostSelectActions">
+        <ModalActions className="profileHostSelectActions">
           <button className="secondaryButton" disabled={eligibleHosts.length === 0} type="button" onClick={() => {
             setSelectedHostIds(eligibleHostIds);
             setMessage(null);
@@ -4248,8 +4755,8 @@ function ProfileHostSelectModal({
           <button className="primaryButton" disabled={selectedEligibleHostIds.length === 0} type="button" onClick={handleApply}>
             {copy.profiles.applySelected}
           </button>
-        </div>
-      </div>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -4275,16 +4782,16 @@ function ProfileApplyOperationModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="codexOperationModal profileApplyOperationModal ProfileApplyOperationModal" role="dialog" aria-modal="true" aria-labelledby="profile-apply-operation-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}>
-          &times;
-        </button>
-        <div className="codexOperationHeader">
-          <div>
-            <h2 id="profile-apply-operation-title">{copy.profiles.applyOperationTitle}</h2>
-          </div>
-          <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
-        </div>
+      <ModalFrame className="codexOperationModal profileApplyOperationModal ProfileApplyOperationModal" titleId="profile-apply-operation-title">
+        <ModalHeader
+          className="codexOperationHeader"
+          titleId="profile-apply-operation-title"
+          title={copy.profiles.applyOperationTitle}
+          icon="profiles"
+          badge={<Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>}
+          closeAriaLabel={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
+          onClose={onClose}
+        />
 
         <div className="codexOperationSummary">
           <span>{copy.codexOperation.summary}</span>
@@ -4312,12 +4819,12 @@ function ProfileApplyOperationModal({
           </div>
         </div>
 
-        <div className="modalActions codexOperationActions">
+        <ModalActions className="codexOperationActions">
           <button className="secondaryButton" type="button" onClick={onClose}>
             {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -4429,11 +4936,15 @@ function ProfileEditModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <div className="sshHostModal profileEditModal ProfileEditModal" role="dialog" aria-modal="true" aria-labelledby="profile-edit-modal-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">×</button>
-        <div className="modalHero">
-          <h2 id="profile-edit-modal-title">🧾 {profile ? copy.profiles.editor : copy.profiles.newProfile}</h2>
-        </div>
+      <ModalFrame className="sshHostModal profileEditModal ProfileEditModal" titleId="profile-edit-modal-title">
+        <ModalHeader
+          className="modalHero"
+          titleId="profile-edit-modal-title"
+          title={profile ? copy.profiles.editor : copy.profiles.newProfile}
+          icon="profiles"
+          closeAriaLabel={copy.setupGuide.close}
+          onClose={onClose}
+        />
 
         <form className="modalForm profileModalForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
@@ -4541,13 +5052,13 @@ function ProfileEditModal({
             </div>
           </details>
 
-          <div className="modalActions">
+          <ModalActions>
             <button className="primaryButton" disabled={!draft.name.trim() || busy === "save" || busy === "create"} type="submit">
               {busy === "save" || busy === "create" ? copy.profiles.saving : profile ? copy.profiles.save : copy.profiles.create}
             </button>
-          </div>
+          </ModalActions>
         </form>
-      </div>
+      </ModalFrame>
     </div>
   );
 }
@@ -4620,58 +5131,53 @@ function ProfileApplyPreviewModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <div className="sshHostModal profileApplyPreviewModal ProfileApplyPreviewModal" role="dialog" aria-modal="true" aria-labelledby="profile-apply-preview-modal-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label="Close">×</button>
-        <div className="modalHero">
-          <h2 id="profile-apply-preview-modal-title">👁️ {copy.profiles.preview}</h2>
-        </div>
+      <ModalFrame className="sshHostModal profileApplyPreviewModal ProfileApplyPreviewModal" titleId="profile-apply-preview-modal-title">
+        <ModalHeader
+          className="modalHero"
+          titleId="profile-apply-preview-modal-title"
+          title={copy.profiles.preview}
+          icon="preview"
+          closeAriaLabel={copy.setupGuide.close}
+          onClose={onClose}
+        />
 
-        <div className="profilePreviewGrid">
-          <div>
-            <div className="profileSubhead">
-              <strong>{copy.profiles.targetFiles}</strong>
-              <span>{preview?.targetFiles.length ?? 0}</span>
-            </div>
-            <div className="profileTargetList">
-              {preview?.targetFiles.map((target) => (
-                <div key={target.hostId}>
-                  <strong>{target.hostName}</strong>
-                  <code>{target.path}</code>
-                  <span>{target.noChangeExpected ? copy.profiles.noChangeExpected : target.backupExpected ? copy.profiles.backupExpected : "-"}</span>
-                </div>
-              )) ?? <p className="mutedText">{copy.profiles.noPreview}</p>}
-            </div>
+        <div className="profilePreviewSection">
+          <div className="profileSubhead">
+            <strong>{copy.profiles.targetFiles}</strong>
           </div>
-          <div>
-            <div className="profileSubhead">
-              <strong>{copy.profiles.perHostStatus}</strong>
-              <span>{preview?.hostResults.length ?? 0}</span>
-            </div>
-            <div className="profileStatusList">
-              {preview?.hostResults.map((row) => (
-                <div key={row.hostId}>
-                  <Badge tone={profileApplyTone(row.status)}>{row.status}</Badge>
-                  <strong>{row.hostName}</strong>
-                  <span>{row.message}</span>
+          <div className="profileTargetBubble">
+            {preview?.targetFiles.length ? (
+              <>
+                <div className="profileTargetFileHeader">
+                  <span>{copy.profiles.targetHost}</span>
+                  <span>{copy.profiles.targetPath}</span>
                 </div>
-              )) ?? null}
-            </div>
+                {preview.targetFiles.map((target) => (
+                  <div className="profileTargetFileRow" key={target.hostId}>
+                    <strong>{target.hostName}</strong>
+                    <code>{target.path}</code>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <p className="mutedText">{copy.profiles.noPreview}</p>
+            )}
           </div>
         </div>
 
-        <div className="configPreviewBox">
+        <div className="profilePreviewSection configPreviewBox">
           <div className="profileSubhead">
             <strong>{copy.profiles.renderedToml}</strong>
           </div>
           <pre>{preview?.renderedToml ?? copy.profiles.noPreview}</pre>
         </div>
 
-        <div className="modalActions">
+        <ModalActions>
           <button className="primaryButton" disabled={!preview || selectedCount === 0 || busy === "apply"} type="button" onClick={onApplySelected}>
             {copy.profiles.applySelected}
           </button>
-        </div>
-      </div>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -4703,13 +5209,6 @@ function profileDraftWithCreateDefaults(draft: ProfileDraft): ProfileDraft {
     baseUrl: draft.baseUrl.trim() || DEFAULT_PROFILE_BASE_URL,
     apiKeyEnvVar: draft.apiKeyEnvVar.trim() || DEFAULT_PROFILE_API_KEY_ENV_VAR
   };
-}
-
-function profileApplyTone(status: ProfileApplyBatchResult["results"][number]["status"]): "green" | "yellow" | "red" | "blue" | "gray" {
-  if (status === "success") return "green";
-  if (status === "failed") return "red";
-  if (status === "no-change") return "blue";
-  return "gray";
 }
 
 function SkillsView({
@@ -4982,8 +5481,8 @@ function SkillsView({
     <div className="skillsStack">
       <section className="panel spanWide">
         <div className="panelHeader compact">
-          <h2>{copy.skills.library}</h2>
-          <div className="skillLibraryActions">
+          <TitleWithIcon icon="skills" level={2}>{copy.skills.library}</TitleWithIcon>
+          <CommandBar ariaLabel={copy.skills.library} className="skillLibraryActions">
             <button className="secondaryButton" disabled={busy === "detect"} type="button" onClick={handleDetectClick}>
               {busy === "detect" ? copy.skills.detecting : copy.skills.detect}
             </button>
@@ -4996,7 +5495,7 @@ function SkillsView({
             <button className="primaryButton" disabled={busy === "download"} type="button" onClick={() => setDownloadOpen(true)}>
               {copy.skills.download}
             </button>
-          </div>
+          </CommandBar>
         </div>
 
         {skillPacks.length === 0 ? (
@@ -5043,7 +5542,7 @@ function SkillsView({
                       </div>
                     </td>
                     <td>
-                      <div className="skillRowActions">
+                      <CommandGroup className="skillRowActions">
                         <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={() => setPreviewSkill(skill)}>
                           {copy.skills.preview}
                         </button>
@@ -5056,7 +5555,7 @@ function SkillsView({
                         <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={() => setDeleteSkill(skill)}>
                           {copy.skills.delete}
                         </button>
-                      </div>
+                      </CommandGroup>
                     </td>
                   </tr>
                 ))}
@@ -5069,7 +5568,7 @@ function SkillsView({
 
       <section className="panel spanWide">
         <div className="panelHeader compact">
-          <h2>{copy.skills.installedLibrary}</h2>
+          <TitleWithIcon icon="install" level={2}>{copy.skills.installedLibrary}</TitleWithIcon>
         </div>
         <div className="tableWrap">
           <table className="installedSkillsTable">
@@ -5396,25 +5895,26 @@ function SkillFirstScanModal({
 }) {
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-first-scan-title">
-        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="skill-first-scan-title">🔎 {copy.skills.firstScanTitle}</h2>
-            <p>{copy.skills.firstScanBody}</p>
-          </div>
-        </div>
-        <div className="modalActions">
+      <ModalFrame className="taskLogModal skillModal" titleId="skill-first-scan-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="skill-first-scan-title"
+          title={copy.skills.firstScanTitle}
+          description={copy.skills.firstScanBody}
+          icon="scan"
+          closeAriaLabel={copy.hosts.cancel}
+          closeDisabled={busy}
+          onClose={onClose}
+        />
+        <ModalActions>
           <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
           <button className="primaryButton" disabled={busy} type="button" onClick={onConfirm}>
             {busy ? copy.skills.detecting : copy.skills.firstScanAction}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -5441,15 +5941,16 @@ function SkillDownloadModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-download-title">
-        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="skill-download-title">⬇️ {copy.skills.downloadTitle}</h2>
-          </div>
-        </div>
+      <ModalFrame className="taskLogModal skillModal" titleId="skill-download-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="skill-download-title"
+          title={copy.skills.downloadTitle}
+          icon="download"
+          closeAriaLabel={copy.hosts.cancel}
+          closeDisabled={busy}
+          onClose={onClose}
+        />
         <form className="skillDownloadForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
             <span>{copy.skills.githubUrl}</span>
@@ -5464,16 +5965,16 @@ function SkillDownloadModal({
               value={repoUrl}
             />
           </label>
-          <div className="modalActions">
+          <ModalActions>
             <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
               {copy.hosts.cancel}
             </button>
             <button className="primaryButton" disabled={!canSubmit} type="submit">
               {busy ? copy.common.loading : copy.skills.downloadAction}
             </button>
-          </div>
+          </ModalActions>
         </form>
-      </section>
+      </ModalFrame>
     </div>
   );
 }
@@ -5500,15 +6001,15 @@ function NetworkProxyManualModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="network-proxy-manual-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="network-proxy-manual-title">{copy.settings.networkProxyManualTitle}</h2>
-          </div>
-        </div>
+      <ModalFrame className="taskLogModal skillModal" titleId="network-proxy-manual-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="network-proxy-manual-title"
+          title={copy.settings.networkProxyManualTitle}
+          icon="network"
+          closeAriaLabel={copy.hosts.cancel}
+          onClose={onClose}
+        />
         <form className="skillDownloadForm networkProxyManualForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
             <span>{copy.settings.networkProxyPort}</span>
@@ -5521,16 +6022,16 @@ function NetworkProxyManualModal({
               value={proxyPort}
             />
           </label>
-          <div className="modalActions">
+          <ModalActions>
             <button className="secondaryButton" type="button" onClick={onClose}>
               {copy.hosts.cancel}
             </button>
             <button className="primaryButton" disabled={!canSubmit} type="submit">
               {copy.settings.networkProxySave}
             </button>
-          </div>
+          </ModalActions>
         </form>
-      </section>
+      </ModalFrame>
     </div>
   );
 }
@@ -5574,20 +6075,20 @@ function SkillPreviewModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal skillPreviewModal" role="dialog" aria-modal="true" aria-labelledby="skill-preview-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.setupGuide.close}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="skill-preview-title">🧩 {skill.name}</h2>
-          </div>
-          <div className="skillPreviewBadge">
+      <ModalFrame className="taskLogModal skillModal skillPreviewModal" titleId="skill-preview-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="skill-preview-title"
+          title={skill.name}
+          icon="skills"
+          closeAriaLabel={copy.setupGuide.close}
+          onClose={onClose}
+          badge={(
             <Badge tone={skill.sourceType === "github" ? "blue" : "gray"}>
               {skill.sourceType === "github" ? copy.skills.sourceGithub : copy.skills.sourceLocal}
             </Badge>
-          </div>
-        </div>
+          )}
+        />
         <div className="taskLogModalMeta skillPreviewMeta">
           <div>
             <span>{copy.skills.addedAt}</span>
@@ -5612,7 +6113,7 @@ function SkillPreviewModal({
           )}
         </section>
         {error ? <p className="skillMessage">{error}</p> : null}
-        <div className="modalActions">
+        <ModalActions>
           {editing ? (
             <>
               <button className="secondaryButton" disabled={saving} type="button" onClick={() => {
@@ -5631,8 +6132,8 @@ function SkillPreviewModal({
               {copy.skills.edit}
             </button>
           )}
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -5685,15 +6186,16 @@ function InstalledSkillPreviewModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal skillPreviewModal" role="dialog" aria-modal="true" aria-labelledby="installed-skill-preview-title">
-        <button className="modalCloseButton" disabled={busy || saving} type="button" onClick={onClose} aria-label={copy.setupGuide.close}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="installed-skill-preview-title">🧩 {skill.skillName}</h2>
-          </div>
-        </div>
+      <ModalFrame className="taskLogModal skillModal skillPreviewModal" titleId="installed-skill-preview-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="installed-skill-preview-title"
+          title={skill.skillName}
+          icon="skills"
+          closeAriaLabel={copy.setupGuide.close}
+          closeDisabled={busy || saving}
+          onClose={onClose}
+        />
         <div className="taskLogModalMeta skillPreviewMeta installedSkillPreviewMeta">
           <div>
             <span>{copy.skills.installedPreviewTarget}</span>
@@ -5722,7 +6224,7 @@ function InstalledSkillPreviewModal({
           )}
         </section>
         {error ? <p className="skillMessage">{error}</p> : null}
-        <div className="modalActions skillPreviewActions">
+        <ModalActions className="skillPreviewActions">
           {editing ? (
             <>
               <button className="secondaryButton" disabled={saving} type="button" onClick={() => {
@@ -5751,8 +6253,8 @@ function InstalledSkillPreviewModal({
               </button>
             </>
           )}
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -5778,25 +6280,26 @@ function SkillInstalledConfirmModal({
 }) {
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="installed-skill-confirm-title">
-        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="installed-skill-confirm-title">{title}</h2>
-            <p>{body}</p>
-          </div>
-        </div>
-        <div className="modalActions">
+      <ModalFrame className="taskLogModal skillModal" titleId="installed-skill-confirm-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="installed-skill-confirm-title"
+          title={title}
+          description={body}
+          icon={danger ? "delete" : "skills"}
+          closeAriaLabel={copy.hosts.cancel}
+          closeDisabled={busy}
+          onClose={onClose}
+        />
+        <ModalActions>
           <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
           <button className={danger ? "primaryButton dangerButton" : "primaryButton"} disabled={busy} type="button" onClick={onConfirm}>
             {confirmLabel}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -5837,14 +6340,16 @@ function InstalledSkillOperationModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="codexOperationModal skillOperationModal" role="dialog" aria-modal="true" aria-labelledby="installed-skill-operation-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}>
-          x
-        </button>
-        <div className="codexOperationHeader">
-          <h2 id="installed-skill-operation-title">{`🧩 ${title}`}</h2>
-          <Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>
-        </div>
+      <ModalFrame className="codexOperationModal skillOperationModal" titleId="installed-skill-operation-title">
+        <ModalHeader
+          className="codexOperationHeader"
+          titleId="installed-skill-operation-title"
+          title={title}
+          icon={operation.action === "download" ? "download" : "delete"}
+          badge={<Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>}
+          closeAriaLabel={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
+          onClose={onClose}
+        />
         <div className="codexOperationSummary">
           <span>{copy.codexOperation.summary}</span>
           <strong>{operation.message ?? operation.error ?? copy.skills.operationWaiting}</strong>
@@ -5864,7 +6369,7 @@ function InstalledSkillOperationModal({
             ))}
           </div>
         </div>
-        <div className="modalActions codexOperationActions">
+        <ModalActions className="codexOperationActions">
           {operation.tasks.length > 0 ? (
             <button className="secondaryButton" type="button" onClick={onViewTasks}>
               {copy.codexOperation.viewTasks}
@@ -5873,8 +6378,8 @@ function InstalledSkillOperationModal({
           <button className="primaryButton" type="button" onClick={onClose}>
             {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -5910,16 +6415,17 @@ function SkillTargetsModal({
 
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-targets-title">
-        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="skill-targets-title">{`🧩 ${actionLabel}: ${skill.name}`}</h2>
-            <p>{hint}</p>
-          </div>
-        </div>
+      <ModalFrame className="taskLogModal skillModal" titleId="skill-targets-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="skill-targets-title"
+          title={`${actionLabel}: ${skill.name}`}
+          description={hint}
+          icon={mode === "install" ? "install" : "delete"}
+          closeAriaLabel={copy.hosts.cancel}
+          closeDisabled={busy}
+          onClose={onClose}
+        />
         <div className="skillTargetList">
           {hasTargets ? (
             targets.map((target) => {
@@ -5948,15 +6454,15 @@ function SkillTargetsModal({
             <EmptyListState copy={copy} message={busy ? copy.common.loading : copy.skills.noTargets} variant="skills" />
           )}
         </div>
-        <div className="modalActions">
+        <ModalActions>
           <button className="secondaryButton" disabled={busy || selectableCount === 0} type="button" onClick={onSelectAll}>
             {copy.skills.selectAll}
           </button>
           <button className="primaryButton" disabled={busy || selectedCount === 0} type="button" onClick={onSubmit}>
             {actionLabel}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -5978,22 +6484,26 @@ function SimpleDeleteConfirmModal({
 }) {
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal simpleDeleteModal" role="dialog" aria-modal="true" aria-labelledby="simple-delete-title">
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="simple-delete-title">{`🗑️ ${title}`}</h2>
-            <p>{body}</p>
-          </div>
-        </div>
-        <div className="modalActions">
+      <ModalFrame className="taskLogModal simpleDeleteModal" titleId="simple-delete-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="simple-delete-title"
+          title={title}
+          description={body}
+          icon="delete"
+          closeAriaLabel={copy.hosts.cancel}
+          closeDisabled={busy}
+          onClose={onClose}
+        />
+        <ModalActions>
           <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
           <button className="primaryButton dangerButton" disabled={busy} type="button" onClick={onDelete}>
             {copy.hosts.delete}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -6045,17 +6555,18 @@ function SkillDeleteModal({
 }) {
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="taskLogModal skillModal" role="dialog" aria-modal="true" aria-labelledby="skill-delete-title">
-        <button className="modalCloseButton" disabled={busy} type="button" onClick={onClose} aria-label={copy.hosts.cancel}>
-          x
-        </button>
-        <div className="taskLogModalHeader">
-          <div>
-            <h2 id="skill-delete-title">{`🗑️ ${copy.skills.deleteTitle}: ${skill.name}`}</h2>
-            <p>{copy.skills.deleteBody}</p>
-          </div>
-        </div>
-        <div className="modalActions skillDeleteActions">
+      <ModalFrame className="taskLogModal skillModal" titleId="skill-delete-title">
+        <ModalHeader
+          className="taskLogModalHeader"
+          titleId="skill-delete-title"
+          title={`${copy.skills.deleteTitle}: ${skill.name}`}
+          description={copy.skills.deleteBody}
+          icon="delete"
+          closeAriaLabel={copy.hosts.cancel}
+          closeDisabled={busy}
+          onClose={onClose}
+        />
+        <ModalActions className="skillDeleteActions">
           <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
@@ -6065,8 +6576,8 @@ function SkillDeleteModal({
           <button className="primaryButton" disabled={busy} type="button" onClick={() => onDelete(true)}>
             {copy.skills.uninstallAndDelete}
           </button>
-        </div>
-      </section>
+        </ModalActions>
+      </ModalFrame>
     </div>
   );
 }
@@ -6090,7 +6601,7 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
       <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
-            <h2>{copy.tasks.taskHistory}</h2>
+            <TitleWithIcon icon="tasks" level={2}>{copy.tasks.taskHistory}</TitleWithIcon>
           </div>
         </div>
         {tasks.length === 0 ? (
@@ -6147,16 +6658,16 @@ function TaskLogModal({
   const statusTone = task.status === "success" ? "green" : task.status === "failed" ? "red" : task.status === "running" ? "yellow" : "gray";
   return (
     <div className="modalBackdrop" role="presentation">
-      <section className="codexOperationModal taskLogDetailModal" role="dialog" aria-modal="true" aria-labelledby="task-log-modal-title">
-        <button className="modalCloseButton" type="button" onClick={onClose} aria-label={copy.codexOperation.close}>
-          ×
-        </button>
-        <div className="codexOperationHeader">
-          <div>
-            <h2 id="task-log-modal-title">📋 {localizeTaskAction(task.action, copy)}</h2>
-          </div>
-          <Badge tone={statusTone}>{copy.status.task[task.status]}</Badge>
-        </div>
+      <ModalFrame className="codexOperationModal taskLogDetailModal" titleId="task-log-modal-title">
+        <ModalHeader
+          className="codexOperationHeader"
+          titleId="task-log-modal-title"
+          title={localizeTaskAction(task.action, copy)}
+          icon="tasks"
+          badge={<Badge tone={statusTone}>{copy.status.task[task.status]}</Badge>}
+          closeAriaLabel={copy.codexOperation.close}
+          onClose={onClose}
+        />
         <div className="codexOperationSummary taskLogSummary">
           <span>{copy.codexOperation.summary}</span>
           <strong>{task.summary}</strong>
@@ -6217,7 +6728,7 @@ function TaskLogModal({
           </div>
         </div>
         {footer}
-      </section>
+      </ModalFrame>
     </div>
   );
 }
@@ -6295,7 +6806,7 @@ function SettingsView({
       <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
-            <h2>{copy.settings.appearance}</h2>
+            <TitleWithIcon icon="settings" level={2}>{copy.settings.appearance}</TitleWithIcon>
           </div>
         </div>
         <div className="settingsRows dividedSettingsRows appearanceRows">
@@ -6352,9 +6863,9 @@ function SettingsView({
       <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
-            <h2>{copy.settings.localSsh}</h2>
+            <TitleWithIcon icon="key" level={2}>{copy.settings.localSsh}</TitleWithIcon>
           </div>
-          <div className="topActions">
+          <CommandBar ariaLabel={copy.settings.localSsh} className="topActions">
             <button className="secondaryButton" type="button" onClick={() => void onRefreshSsh()}>{copy.settings.refresh}</button>
             <button className="secondaryButton copyPublicKeyButton" data-success={publicKeyCopied} disabled={!publicKey} type="button" onClick={() => void handleCopyPublicKey()}>
               {publicKeyCopied ? copy.settings.copyPublicKeySuccess : copy.settings.copyPublicKey}
@@ -6362,7 +6873,7 @@ function SettingsView({
             <button className="primaryButton" disabled={!canGenerateEd25519 || sshBusy} type="button" onClick={() => void onGenerateEd25519Key()}>
               {sshBusy ? copy.settings.generating : copy.settings.generateEd25519}
             </button>
-          </div>
+          </CommandBar>
         </div>
 
         <div className="keyStatusGrid">
@@ -6374,17 +6885,17 @@ function SettingsView({
       <section className="panel spanWide appUpdatePanel">
         <div className="panelHeader compact">
           <div>
-            <h2>{copy.settings.appUpdates}</h2>
+            <TitleWithIcon icon="update" level={2}>{copy.settings.appUpdates}</TitleWithIcon>
             <p className="appUpdateSchedule">{copy.settings.dailyUpdateCheck}</p>
           </div>
-          <div className="topActions">
+          <CommandBar ariaLabel={copy.settings.appUpdates} className="topActions">
             <button className="secondaryButton" disabled={!canCheckStableUpdate} type="button" onClick={() => void onCheckStableUpdate()}>
               {appUpdateChecking ? copy.settings.updateChecking : copy.settings.checkStableUpdate}
             </button>
             <button className="primaryButton" disabled={!canInstallStableUpdate} type="button" onClick={() => void onInstallStableUpdate()}>
               {appUpdateInstalling ? copy.settings.updateInstalling : copy.settings.installStableUpdate}
             </button>
-          </div>
+          </CommandBar>
         </div>
 
         <div className="tableWrap versionInfoTableWrap">
@@ -6422,7 +6933,7 @@ function SettingsView({
       <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
-            <h2>{copy.settings.closeButton}</h2>
+            <TitleWithIcon icon="close" level={2}>{copy.settings.closeButton}</TitleWithIcon>
           </div>
         </div>
         <div className="settingsRows dividedSettingsRows">
@@ -6467,7 +6978,7 @@ function KeyStatusCard({ copy, keyInfo, title }: { copy: UICopy; keyInfo: SshKey
   return (
     <article className="keyStatusCard">
       <div className="hostHeader">
-        <h3>{title}</h3>
+        <TitleWithIcon icon="key" level={3}>{title}</TitleWithIcon>
         <Badge tone={keyInfo?.privateExists ? "green" : "gray"}>{keyInfo?.privateExists ? copy.settings.privateFound : copy.settings.missing}</Badge>
       </div>
       <div className="keyStatusBadges">

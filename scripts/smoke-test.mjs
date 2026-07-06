@@ -122,6 +122,16 @@ if (Array.isArray(tauriConfig.bundle?.targets) && tauriConfig.bundle.targets.inc
 }
 const defaultCapability = JSON.parse(read("src-tauri/capabilities/default.json"));
 if (!JSON.stringify(defaultCapability).includes("dialog:default")) fail("missing dialog capability permission");
+for (const permission of [
+  "core:window:allow-close",
+  "core:window:allow-hide",
+  "core:window:allow-minimize",
+  "core:window:allow-start-dragging",
+  "core:window:allow-title",
+  "core:window:allow-toggle-maximize"
+]) {
+  if (!defaultCapability.permissions?.includes(permission)) fail(`missing custom titlebar window permission: ${permission}`);
+}
 const requiredBundleIcons = [
   "icons/32x32.png",
   "icons/64x64.png",
@@ -687,7 +697,7 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
-for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "✅ Tasks", "✅ 任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Sidebar visual hints", "侧边栏视觉提示", "Host list", "主机列表", "Local config", "本地配置", "🎨 Appearance", "🎨 外观", "🔑 Local keys", "🔑 本地密钥", "🧭 Version info", "🧭 版本信息", "⚙️ Other", "⚙️ 其他", "Program close button behavior", "程序关闭按钮行为", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog", "Ask next time", "Exit app", "Minimize to tray", "关闭按钮", "下次询问", "退出程序", "最小化到托盘"]) {
+for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Sidebar visual hints", "侧边栏视觉提示", "Host list", "主机列表", "Local config", "本地配置", "Appearance", "外观", "Local keys", "本地密钥", "Version info", "版本信息", "Other", "其他", "Program close button behavior", "程序关闭按钮行为", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog", "Ask next time", "Exit app", "Minimize to tray", "关闭按钮", "下次询问", "退出程序", "最小化到托盘"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
 for (const token of [
@@ -728,7 +738,7 @@ if (!app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "sta
 if (app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "stable" && appUpdateStatus.configured')) {
   fail("Stable update Check button must not be disabled solely because updater feed/signing is pending");
 }
-for (const token of ['icon: "🏠"', 'icon: "🖥️"', 'icon: "🧾"', 'icon: "🧩"', 'icon: "✅"', 'icon: "⚙️"', 'className="navIcon"', "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
+for (const token of ["type NavIconId = SectionId", "type PlatformIconId", "type TitleBarAction", "function AppTitleBar(", "startDragging()", 'data-action="minimize"', 'data-action="maximize"', 'data-action="close"', "function PlatformIcon(", "function ModalFrame(", "function ModalHeader(", "function ModalActions(", "function NavIcon(", 'className="navIcon"', 'className="navGlyph"', "<NavIcon id={item.id}", "function CommandBar(", "function CommandGroup(", "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
   if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
 }
 for (const token of [
@@ -758,14 +768,14 @@ for (const token of [
   "handleSetupGuideLanguageNext",
   "handleImportLocalSshConfig",
   "setupGuideDismissed",
-  "🧭 Setup Guide",
-  "🧭 配置向导",
+  "Setup Guide",
+  "配置向导",
   "Choose Language",
   "Step 1: Please choose your preferred language.",
   "第1步：请选择偏好语言",
   "Next",
   "Nothing here yet...",
-  '<div className="matrixEmptyIcon" aria-hidden="true">🖥️</div>',
+  '<div className="matrixEmptyIcon" aria-hidden="true"><NavIcon id="hosts" /></div>',
   "Detecting local config...",
   "正在检测本地配置...",
   "Import local config",
@@ -774,10 +784,8 @@ for (const token of [
   "Detect local config",
   "检测本地配置",
   "EmptyListState",
-  'hosts: "🖥️"',
-  'profiles: "🧾"',
-  'skills: "🧩"',
-  'tasks: "✅"',
+  "const iconId =",
+  '<NavIcon id={iconId} />',
   "emptyLists",
   "emptyListState",
   "copy.emptyLists.hosts",
@@ -785,9 +793,10 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing setup guide or empty-state token: ${token}`);
 }
-for (const token of ['new URL("../figs/app-logo.png", import.meta.url).href', '<img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />']) {
+for (const token of ['new URL("../src-tauri/icons/128x128.png", import.meta.url).href', '<img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />']) {
   if (!app.includes(token)) fail(`missing app logo UI token: ${token}`);
 }
+if (app.includes('new URL("../figs/app-logo.png", import.meta.url).href')) fail("runtime sidebar logo should not bundle figs/app-logo.png");
 for (const token of ["copy.hosts.source", "copy.dashboard.system", "copy.hosts.codex", "copy.hosts.configExists", "copy.hosts.latency", "copy.hosts.skills"]) {
   if (!app.includes(token)) fail(`missing Host Matrix field token: ${token}`);
 }
@@ -986,7 +995,7 @@ for (const token of [
   "第三方导入",
   "Local storage",
   "本地存储",
-  "Rendered TOML",
+  "Config TOML",
   "backup"
 ]) {
   if (!app.includes(token)) fail(`missing compact Profiles UI label: ${token}`);
@@ -1450,19 +1459,19 @@ for (const token of [
   "min-height: 60px",
   "padding: 8px 0",
   ".dividedSettingsRows .segmentedControl",
-  "height: 44px",
+  "min-height: 38px",
   ".dividedSettingsRows .segmentedControl button"
 ]) {
   if (!styles.includes(token)) fail(`missing appearance row alignment style token: ${token}`);
 }
-for (const token of ["navIcon", "navLabel", "navCompletionDot", "navCompletionDot[data-tone=\"error\"]", "pillToggle", "pillToggleThumb", "translateX(22px)", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
+for (const token of ["titleDragRegion", "captionGlyph::before", "appTitleBar", "captionButton", "modalHeader", "modalTitleIcon", "emojiIcon", "navIcon", "navGlyph", "navLabel", "navCompletionDot", "navCompletionDot[data-tone=\"error\"]", "commandBar", "commandGroup", "pillToggle", "pillToggleThumb", "translateX(22px)", "metricPrimary", "metricSecondary", "matrixHeader", "matrixEmptyState", "matrixEmptyIcon", ".hostMeta .badge"]) {
   if (!styles.includes(token)) fail(`missing dashboard home polish style token: ${token}`);
 }
 for (const token of ["setupGuideModal", "setupGuideLanguage", "setupGuideLanguageOption", "setupGuideHostList", "setupGuideHostHeader", "setupGuideActions", "emptyListState", "emptyListIcon", "emptyListActions"]) {
   if (!styles.includes(token)) fail(`missing setup guide or empty-state style token: ${token}`);
 }
 for (const token of ["matrixEmptyIcon::before", "matrixEmptyIcon::after", "matrixEmptyIcon span"]) {
-  if (styles.includes(token)) fail(`matrix empty state should use emoji instead of CSS line icon: ${token}`);
+  if (styles.includes(token)) fail(`matrix empty state should use shared NavIcon instead of CSS line icon: ${token}`);
 }
 for (const token of ["calloutPanel", "hostCardActions", "tagRow", "skillLine", "taskList", "taskItem", "brandSubtle"]) {
   if (styles.includes(token)) fail(`dashboard home polish should remove old style token: ${token}`);
