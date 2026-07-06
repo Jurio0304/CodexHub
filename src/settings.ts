@@ -28,7 +28,7 @@ export const settingsStorageKey = "codexhub.settings.v1";
 
 export const defaultSettings: AppSettings = {
   theme: "system",
-  fontPreset: "english",
+  fontPreset: "zh-cn",
   platformAppearance: "auto",
   closeButtonBehavior: "ask",
   networkProxyMode: "auto",
@@ -61,7 +61,7 @@ const closeButtonBehaviorValues: CloseButtonBehavior[] = ["ask", "exit", "minimi
 const networkProxyModeValues: NetworkProxyMode[] = ["auto", "direct", "manual"];
 
 function normalizeFontPreset(value: unknown): FontPreset {
-  return value === "zh-cn" ? "zh-cn" : "english";
+  return value === "english" ? "english" : "zh-cn";
 }
 
 export function normalizeSettings(value: unknown): AppSettings {

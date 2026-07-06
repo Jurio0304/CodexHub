@@ -71,7 +71,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::System,
-            font_preset: FontPreset::English,
+            font_preset: FontPreset::ZhCn,
             platform_appearance: PlatformAppearance::Auto,
             close_button_behavior: CloseButtonBehavior::Ask,
             network_proxy_mode: NetworkProxyMode::Auto,

@@ -78,7 +78,7 @@ type CommandBarAction = {
   disabled?: boolean;
   onClick: () => void;
 };
-type SetupGuideStep = "language" | "ssh";
+type SetupGuideStep = "preferences" | "ssh";
 type SectionCompletionTone = "success" | "error";
 type SectionCompletionSignals = Partial<Record<SectionId, SectionCompletionTone>>;
 type SectionOperationOptions<T> = {
@@ -225,6 +225,8 @@ const uiCopy = {
     },
     setupGuide: {
       title: "Setup Guide",
+      preferencesTitle: "Preferences",
+      preferencesBody: "Choose the theme, platform style, and UI font before entering CodexHub.",
       languageTitle: "Choose Language",
       languageBody: "Step 1: Please choose your preferred language.",
       languageEnglish: "English",
@@ -761,6 +763,8 @@ const uiCopy = {
     },
     setupGuide: {
       title: "配置向导",
+      preferencesTitle: "偏好设置",
+      preferencesBody: "进入 CodexHub 前，先选择主题、平台风格和界面字体。",
       languageTitle: "选择语言",
       languageBody: "第1步：请选择偏好语言",
       languageEnglish: "英文",
@@ -1664,7 +1668,7 @@ function App() {
   const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
   const [codexUninstallConfirm, setCodexUninstallConfirm] = useState<CodexUninstallConfirmState | null>(null);
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
-  const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("language");
+  const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("preferences");
   const [setupGuideSshConfigHosts, setSetupGuideSshConfigHosts] = useState<SshConfigHost[]>([]);
   const [setupGuideBusy, setSetupGuideBusy] = useState(false);
   const [closeButtonPromptOpen, setCloseButtonPromptOpen] = useState(false);
@@ -1919,7 +1923,7 @@ function App() {
         setSkillPacks(nextSkillPacks);
         setSkillInventoryStatus(nextSkillInventoryStatus);
         setTasks(normalizeTaskRunsForUi(nextTasks));
-        setSetupGuideStep("language");
+        setSetupGuideStep("preferences");
         setSetupGuideOpen(!nextSettings.setupGuideDismissed);
         if (nextSettings.setupGuideDismissed || nextHosts.length > 0) {
           void refreshSshState();
@@ -2760,10 +2764,10 @@ function App() {
     persistSettings({ ...settings, setupGuideDismissed: true });
   };
 
-  const handleSetupGuideLanguageNext = async (fontPreset: FontPreset) => {
+  const handleSetupGuidePreferencesNext = async (preferences: Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">) => {
     const section = activeSection;
     return runSectionOperation(section, async () => {
-      persistSettings({ ...settings, fontPreset });
+      persistSettings({ ...settings, ...preferences });
       setSetupGuideStep("ssh");
       setSetupGuideBusy(true);
       try {
@@ -3077,13 +3081,13 @@ function App() {
         <SetupGuideModal
           busy={setupGuideBusy}
           copy={copy}
-          currentFontPreset={settings.fontPreset}
+          currentSettings={settings}
           step={setupGuideStep}
           sshConfigHosts={setupGuideSshConfigHosts}
           sshStatus={sshStatus}
           onClose={handleDismissSetupGuide}
           onImport={handleImportLocalSshConfig}
-          onLanguageNext={handleSetupGuideLanguageNext}
+          onPreferencesNext={handleSetupGuidePreferencesNext}
           onSkip={handleDismissSetupGuide}
         />
       ) : null}
@@ -3149,79 +3153,116 @@ function CloseButtonBehaviorPromptModal({
 function SetupGuideModal({
   busy,
   copy,
-  currentFontPreset,
+  currentSettings,
   step,
   sshConfigHosts,
   sshStatus,
   onClose,
   onImport,
-  onLanguageNext,
+  onPreferencesNext,
   onSkip
 }: {
   busy: boolean;
   copy: UICopy;
-  currentFontPreset: FontPreset;
+  currentSettings: AppSettings;
   step: SetupGuideStep;
   sshConfigHosts: SshConfigHost[];
   sshStatus: SshStatus | null;
   onClose: () => void;
   onImport: () => Promise<unknown>;
-  onLanguageNext: (fontPreset: FontPreset) => Promise<unknown>;
+  onPreferencesNext: (preferences: Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">) => Promise<unknown>;
   onSkip: () => void;
 }) {
-  const [languageDraft, setLanguageDraft] = useState<FontPreset>(currentFontPreset);
+  const [preferenceDraft, setPreferenceDraft] = useState<Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">>({
+    theme: currentSettings.theme,
+    platformAppearance: currentSettings.platformAppearance,
+    fontPreset: currentSettings.fontPreset
+  });
   const visibleHosts = sshConfigHosts.slice(0, 8);
   const hiddenHostCount = Math.max(0, sshConfigHosts.length - visibleHosts.length);
   const hasLocalHosts = sshConfigHosts.length > 0;
   const detectionPending = step === "ssh" && busy && !hasLocalHosts;
   const configPath = sshStatus?.configPath ?? "%USERPROFILE%\\.ssh\\config";
-  const languageCopy = uiCopy[languageDraft === "zh-cn" ? "zh" : "en"];
+  const preferencesCopy = uiCopy[preferenceDraft.fontPreset === "zh-cn" ? "zh" : "en"];
 
   useEffect(() => {
-    setLanguageDraft(currentFontPreset);
-  }, [currentFontPreset]);
+    setPreferenceDraft({
+      theme: currentSettings.theme,
+      platformAppearance: currentSettings.platformAppearance,
+      fontPreset: currentSettings.fontPreset
+    });
+  }, [currentSettings.fontPreset, currentSettings.platformAppearance, currentSettings.theme]);
+
+  useEffect(() => {
+    applyAppSettings({ ...currentSettings, ...preferenceDraft });
+  }, [currentSettings, preferenceDraft]);
 
   return (
     <div className="modalBackdrop" role="presentation">
       <ModalFrame className="setupGuideModal" titleId="setup-guide-title">
-        {step === "language" ? (
+        {step === "preferences" ? (
           <>
             <ModalHeader
               className="setupGuideHero"
               titleId="setup-guide-title"
-              title={languageCopy.setupGuide.title}
-              description={languageCopy.setupGuide.languageBody}
-              icon="language"
+              title={preferencesCopy.setupGuide.preferencesTitle}
+              description={preferencesCopy.setupGuide.preferencesBody}
+              icon="settings"
             />
 
-            <div className="setupGuideLanguage" role="radiogroup" aria-label={languageCopy.setupGuide.languageTitle}>
-              <button
-                className="setupGuideLanguageOption"
-                data-selected={languageDraft === "english"}
-                role="radio"
-                aria-checked={languageDraft === "english"}
-                type="button"
-                onClick={() => setLanguageDraft("english")}
-              >
-                <strong>{languageCopy.setupGuide.languageEnglish}</strong>
-                <span>English</span>
-              </button>
-              <button
-                className="setupGuideLanguageOption"
-                data-selected={languageDraft === "zh-cn"}
-                role="radio"
-                aria-checked={languageDraft === "zh-cn"}
-                type="button"
-                onClick={() => setLanguageDraft("zh-cn")}
-              >
-                <strong>{languageCopy.setupGuide.languageChinese}</strong>
-                <span>简体中文</span>
-              </button>
+            <div className="setupGuidePreferences">
+              <div className="setupGuidePreferenceRow">
+                <span>{preferencesCopy.settings.theme}</span>
+                <div className="segmentedControl" role="group" aria-label={preferencesCopy.settings.theme}>
+                  {(["system", "light", "dark"] as ThemeChoice[]).map((choice) => (
+                    <button
+                      data-active={preferenceDraft.theme === choice}
+                      key={choice}
+                      type="button"
+                      onClick={() => setPreferenceDraft((current) => ({ ...current, theme: choice }))}
+                    >
+                      {preferencesCopy.settings.themeOptions[choice]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="setupGuidePreferenceRow">
+                <span>{preferencesCopy.settings.platformAppearance}</span>
+                <div className="segmentedControl" role="group" aria-label={preferencesCopy.settings.platformAppearance}>
+                  {(["auto", "windows", "macos"] as PlatformAppearance[]).map((choice) => (
+                    <button
+                      data-active={preferenceDraft.platformAppearance === choice}
+                      key={choice}
+                      type="button"
+                      onClick={() => setPreferenceDraft((current) => ({ ...current, platformAppearance: choice }))}
+                    >
+                      {preferencesCopy.settings.platformOptions[choice]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="setupGuidePreferenceRow">
+                <span>{preferencesCopy.settings.font}</span>
+                <div className="segmentedControl" data-options="2" role="group" aria-label={preferencesCopy.settings.font}>
+                  {(["english", "zh-cn"] as FontPreset[]).map((preset) => (
+                    <button
+                      data-active={preferenceDraft.fontPreset === preset}
+                      key={preset}
+                      type="button"
+                      onClick={() => setPreferenceDraft((current) => ({ ...current, fontPreset: preset }))}
+                    >
+                      {preset === "english" ? preferencesCopy.setupGuide.languageEnglish : preferencesCopy.setupGuide.languageChinese}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <ModalActions className="setupGuideActions" dataHasHosts>
-              <button className="primaryButton" disabled={busy} type="button" onClick={() => void onLanguageNext(languageDraft)}>
-                {languageCopy.setupGuide.next}
+              <button className="primaryButton" disabled={busy} type="button" onClick={() => void onPreferencesNext(preferenceDraft)}>
+                {preferencesCopy.setupGuide.next}
               </button>
             </ModalActions>
           </>

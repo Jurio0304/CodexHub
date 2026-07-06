@@ -491,7 +491,7 @@ dd {
   margin-top: auto;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
@@ -505,10 +505,10 @@ dd {
   flex: 0 0 auto;
   margin-left: auto;
   border: 1px solid color-mix(in srgb, var(--blue) 70%, var(--border));
-  border-radius: 6px;
-  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
   color: #ffffff;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 760;
   line-height: 1;
   background: var(--blue);
@@ -1398,7 +1398,7 @@ tr:last-child td {
 
 .skillsTable th:nth-child(1),
 .skillsTable td:nth-child(1) {
-  width: 22%;
+  width: 16%;
 }
 
 .skillsTable th:nth-child(2),
@@ -1413,11 +1413,26 @@ tr:last-child td {
 
 .skillsTable th:nth-child(4),
 .skillsTable td:nth-child(4) {
-  width: 34%;
+  width: 30%;
 }
 
 .skillsTable th:nth-child(5),
 .skillsTable td:nth-child(5) {
+  width: 30%;
+}
+
+:root[lang="zh-CN"] .skillsTable th:nth-child(1),
+:root[lang="zh-CN"] .skillsTable td:nth-child(1) {
+  width: 22%;
+}
+
+:root[lang="zh-CN"] .skillsTable th:nth-child(4),
+:root[lang="zh-CN"] .skillsTable td:nth-child(4) {
+  width: 34%;
+}
+
+:root[lang="zh-CN"] .skillsTable th:nth-child(5),
+:root[lang="zh-CN"] .skillsTable td:nth-child(5) {
   width: 20%;
 }
 
@@ -1451,6 +1466,7 @@ tr:last-child td {
   max-width: 100%;
   min-width: 0;
   flex-wrap: nowrap;
+  gap: 5px;
 }
 
 .skillApplicationTags {
@@ -1458,18 +1474,18 @@ tr:last-child td {
 }
 
 .skillRowActions .miniButton {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
-  padding: 4px 7px;
-  font-size: 0.76rem;
+  padding: 4px 5px;
+  font-size: 0.72rem;
   text-align: center;
   white-space: nowrap;
 }
 
 .skillApplicationTags .badge {
   max-width: 100%;
-  white-space: nowrap;
-  overflow-wrap: normal;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .skillModal {
@@ -2321,7 +2337,7 @@ tr:last-child td {
 
   .skillsTable th:nth-child(1),
   .skillsTable td:nth-child(1) {
-    width: 20%;
+    width: 16%;
   }
 
   .skillsTable th:nth-child(2),
@@ -2336,23 +2352,36 @@ tr:last-child td {
 
   .skillsTable th:nth-child(4),
   .skillsTable td:nth-child(4) {
-    width: 28%;
+    width: 24%;
   }
 
   .skillsTable th:nth-child(5),
   .skillsTable td:nth-child(5) {
+    width: 36%;
+  }
+
+  :root[lang="zh-CN"] .skillsTable th:nth-child(1),
+  :root[lang="zh-CN"] .skillsTable td:nth-child(1) {
+    width: 20%;
+  }
+
+  :root[lang="zh-CN"] .skillsTable th:nth-child(4),
+  :root[lang="zh-CN"] .skillsTable td:nth-child(4) {
+    width: 28%;
+  }
+
+  :root[lang="zh-CN"] .skillsTable th:nth-child(5),
+  :root[lang="zh-CN"] .skillsTable td:nth-child(5) {
     width: 26%;
   }
 
   .skillsTable td:first-child strong,
-  .skillApplicationTags .badge,
-  .skillRowActions .miniButton {
+  .skillApplicationTags .badge {
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
   .skillRowActions {
-    flex-wrap: wrap;
     gap: 5px;
   }
 
@@ -2484,7 +2513,7 @@ tr:last-child td {
 
   .skillsTable th:nth-child(1),
   .skillsTable td:nth-child(1) {
-    width: 20%;
+    width: 16%;
   }
 
   .skillsTable th:nth-child(2),
@@ -2499,23 +2528,36 @@ tr:last-child td {
 
   .skillsTable th:nth-child(4),
   .skillsTable td:nth-child(4) {
-    width: 28%;
+    width: 24%;
   }
 
   .skillsTable th:nth-child(5),
   .skillsTable td:nth-child(5) {
+    width: 36%;
+  }
+
+  :root[lang="zh-CN"] .skillsTable th:nth-child(1),
+  :root[lang="zh-CN"] .skillsTable td:nth-child(1) {
+    width: 20%;
+  }
+
+  :root[lang="zh-CN"] .skillsTable th:nth-child(4),
+  :root[lang="zh-CN"] .skillsTable td:nth-child(4) {
+    width: 28%;
+  }
+
+  :root[lang="zh-CN"] .skillsTable th:nth-child(5),
+  :root[lang="zh-CN"] .skillsTable td:nth-child(5) {
     width: 26%;
   }
 
   .skillsTable td:first-child strong,
-  .skillApplicationTags .badge,
-  .skillRowActions .miniButton {
+  .skillApplicationTags .badge {
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
   .skillRowActions {
-    flex-wrap: wrap;
     gap: 5px;
   }
 
@@ -3323,6 +3365,33 @@ button:disabled {
 .setupGuideLanguageOption span {
   color: var(--text-faint);
   font-size: 0.82rem;
+}
+
+.setupGuidePreferences {
+  display: grid;
+  gap: 12px;
+}
+
+.setupGuidePreferenceRow {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.38fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.setupGuidePreferenceRow > span {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  font-weight: 760;
+}
+
+.setupGuidePreferenceRow .segmentedControl {
+  justify-self: stretch;
+}
+
+.setupGuidePreferenceRow .segmentedControl button {
+  text-transform: none;
 }
 
 .setupGuideHostList {
