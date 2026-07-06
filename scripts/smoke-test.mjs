@@ -22,6 +22,12 @@ const requiredFiles = [
   "src/main.tsx",
   "src/App.tsx",
   "src/api.ts",
+  "src/api/contracts.ts",
+  "src/api/desktop.ts",
+  "src/api/fallbacks.ts",
+  "src/api/index.ts",
+  "src/api/invoke.ts",
+  "src/api/mock.ts",
   "src/models.ts",
   "src/platform.ts",
   "src/settings.ts",
@@ -48,6 +54,12 @@ const requiredFiles = [
   "src-tauri/icons/icon.ico",
   "src-tauri/src/main.rs",
   "src-tauri/src/lib.rs",
+  "src-tauri/src/hosts.rs",
+  "src-tauri/src/profiles.rs",
+  "src-tauri/src/settings.rs",
+  "src-tauri/src/skills.rs",
+  "src-tauri/src/tasks.rs",
+  "src-tauri/src/updater.rs",
   "src-tauri/capabilities/default.json",
   ".github/workflows/build-macos-release.yml",
   ".github/workflows/build-windows-release.yml"
@@ -296,6 +308,15 @@ for (const token of ["tauri-plugin-updater", "url = \"2\"", "base64 = \"0.22\""]
 if (!cargoToml.includes("features = [\"tray-icon\"]")) fail("Tauri dependency should enable the tray-icon feature");
 
 const rustLib = read("src-tauri/src/lib.rs");
+const rustBackend = [
+  "src-tauri/src/lib.rs",
+  "src-tauri/src/hosts.rs",
+  "src-tauri/src/profiles.rs",
+  "src-tauri/src/settings.rs",
+  "src-tauri/src/skills.rs",
+  "src-tauri/src/tasks.rs",
+  "src-tauri/src/updater.rs"
+].map(read).join("\n");
 const sshRs = read("src-tauri/src/ssh.rs");
 const rustPlatform = read("src-tauri/src/platform.rs");
 const tsPlatform = read("src/platform.ts");
@@ -305,10 +326,10 @@ const updaterConfigScript = read("scripts/create-updater-tauri-config.mjs");
 const windowsUpdaterFeedScript = read("scripts/create-windows-updater-feed.mjs");
 const macosUpdaterFeedScript = read("scripts/create-macos-updater-feed.mjs");
 for (const token of ["sidebar_completion_indicators", "sidebar_completion_indicators: true", "#[serde(default = \"default_true\")]"]) {
-  if (!rustLib.includes(token)) fail(`missing sidebar completion settings Rust token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing sidebar completion settings Rust token: ${token}`);
 }
 for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
-  if (!rustLib.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
 }
 for (const command of [
   "app_health",
@@ -362,10 +383,10 @@ for (const command of [
   "delete_library_skill",
   "list_tasks"
 ]) {
-  if (!rustLib.includes(command)) fail(`missing ${command} Tauri command`);
+  if (!rustBackend.includes(command)) fail(`missing ${command} Tauri command`);
 }
 for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDATE_ENDPOINT", "CODEXHUB_STABLE_UPDATER_PUBKEY", "tauri_plugin_updater::Builder::new().build()", "UpdaterExt", "stable_updater_configured", "normalize_updater_pubkey", "extract_minisign_public_key"]) {
-  if (!rustLib.includes(token)) fail(`missing stable updater backend token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing stable updater backend token: ${token}`);
 }
 if (!cargoToml.includes('tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }')) {
   fail("stable updater must use native TLS so release checks can use the OS trust store");
@@ -374,15 +395,15 @@ if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false,
   fail("stable updater GitHub feed resolver must use reqwest with native TLS");
 }
 for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos", "stable_update_network_routes", "LOCAL_PROXY_PORTS", "NetworkProxyMode", "detect_network_proxy_status", "builder.proxy(proxy)"]) {
-  if (!rustLib.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
 }
 for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status, &attempts))", "Install app update", "Check app update"]) {
-  if (!rustLib.includes(token)) fail(`missing stable updater task token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing stable updater task token: ${token}`);
 }
 for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)", "updater_error_message"]) {
-  if (!rustLib.includes(token)) fail(`missing gated stable updater install token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing gated stable updater install token: ${token}`);
 }
-if (rustLib.includes("export_profiles")) fail("Profiles export command should be removed");
+if (rustBackend.includes("export_profiles")) fail("Profiles export command should be removed");
 for (const removedCommand of [
   removed("search", "_online", "_skills"),
   removed("clone", "_skill", "_repo"),
@@ -391,7 +412,7 @@ for (const removedCommand of [
   removed("install", "_remote", "_skill", "_batch"),
   removed("delete", "_remote", "_skill")
 ]) {
-  if (rustLib.includes(removedCommand)) fail(`removed public Skills command should not remain: ${removedCommand}`);
+  if (rustBackend.includes(removedCommand)) fail(`removed public Skills command should not remain: ${removedCommand}`);
 }
 const listHostsMatch = rustLib.match(/fn list_hosts[\s\S]*?\n}\r?\n\r?\n#\[tauri::command\]\r?\nfn refresh_discovered_hosts/);
 if (!listHostsMatch) fail("could not locate list_hosts function boundary");
@@ -412,9 +433,9 @@ for (const asyncCommand of [
   "async fn uninstall_skill_targets",
   "async fn delete_library_skill"
 ]) {
-  if (!rustLib.includes(asyncCommand)) fail(`long remote command must stay async: ${asyncCommand}`);
+  if (!rustBackend.includes(asyncCommand)) fail(`long remote command must stay async: ${asyncCommand}`);
 }
-if (!rustLib.includes("spawn_blocking(command)")) fail("long remote commands should run through the blocking worker pool");
+if (!rustBackend.includes("spawn_blocking(command)")) fail("long remote commands should run through the blocking worker pool");
 for (const token of [
   "tauri_plugin_dialog::init()",
   "SkillImportResult",
@@ -454,12 +475,12 @@ for (const token of [
   "CODEXHUB_SKILL_SKIPPED",
   "tar is required on the remote host"
 ]) {
-  if (!rustLib.includes(token)) fail(`missing Window 6 Skills backend token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing Window 6 Skills backend token: ${token}`);
 }
 for (const token of ["Latest scan returned no skills; kept previous cached", "previous_inventory", "previous.skills"]) {
-  if (!rustLib.includes(token)) fail(`missing installed skill inventory empty-scan guard: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing installed skill inventory empty-scan guard: ${token}`);
 }
-if (rustLib.includes('find "$HOME/.codex/skills" -mindepth 1 -maxdepth 1')) {
+if (rustBackend.includes('find "$HOME/.codex/skills" -mindepth 1 -maxdepth 1')) {
   fail("remote skill probes must not count only first-level ~/.codex/skills directories");
 }
 const getSkillTargetsMatch = rustLib.match(/fn run_get_skill_targets[\s\S]*?\n}\r?\n\r?\nfn run_install_skill_targets/);
@@ -470,16 +491,16 @@ for (const liveProbeToken of ["run_remote_skill_install_preview", "run_remote_sk
   }
 }
 for (const token of ["LatestCodexVersion", "parse_npm_latest_metadata", "latest_codex_cache_is_fresh", "CODEX_LATEST_REFRESH_HOUR", "https://registry.npmjs.org/@openai/codex", "codex-latest.json"]) {
-  if (!rustLib.includes(token)) fail(`missing latest Codex version backend token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing latest Codex version backend token: ${token}`);
 }
 for (const token of ["hosts.json", "load_hosts", "save_hosts", "save_current_hosts"]) {
-  if (!rustLib.includes(token)) fail(`missing host persistence token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing host persistence token: ${token}`);
 }
 for (const token of ["setup_guide_dismissed", "#[serde(default)]"]) {
-  if (!rustLib.includes(token)) fail(`missing setup guide settings backend token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing setup guide settings backend token: ${token}`);
 }
 for (const token of ["platform_appearance", "PlatformAppearance", "default_platform_appearance"]) {
-  if (!rustLib.includes(token)) fail(`missing platform appearance backend token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing platform appearance backend token: ${token}`);
 }
 for (const token of [
   "CloseButtonBehavior",
@@ -496,7 +517,7 @@ for (const token of [
   "show_main_window",
   "hide_main_window"
 ]) {
-  if (!rustLib.includes(token)) fail(`missing close-to-tray backend token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing close-to-tray backend token: ${token}`);
 }
 for (const token of [
   "RuntimePlatform",
@@ -616,10 +637,10 @@ for (const token of [
   "migrate_cc_switch_api_key_for_profile",
   "is_missing_credential_error"
 ]) {
-  if (!rustLib.includes(token)) fail(`missing cc-switch adapter token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing cc-switch adapter token: ${token}`);
 }
 for (const token of ["profiles: Vec<Profile>", "hosts: Vec<Host>", "sync_profile_host_links", "sync_profile_host_ids", "clear_profile_host_links", "reconcile_hosts_with_profile_links", "RemoteApiConfigMatch"]) {
-  if (!rustLib.includes(token)) fail(`missing profile apply refreshed-state token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing profile apply refreshed-state token: ${token}`);
 }
 const reconcileHostsMatch = rustLib.match(/fn reconcile_hosts_with_profile_links[\s\S]*?\n}\r?\n\r?\nfn record_task/);
 if (!reconcileHostsMatch) fail("missing reconcile_hosts_with_profile_links function body");
@@ -627,7 +648,7 @@ if (reconcileHostsMatch[0].includes("host.config_exists = Some(true)") || reconc
   fail("profile host-link reconcile must not promote local links into confirmed remote API config facts");
 }
 for (const token of ["api_config_name", "api_config_source", "classify_remote_api_config", "normalize_base_url_key", "read ~/.codex/config.toml base URL"]) {
-  if (!rustLib.includes(token)) fail(`missing remote API config probe token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing remote API config probe token: ${token}`);
 }
 for (const token of [
   "codex_command_available",
@@ -645,7 +666,7 @@ for (const token of [
   "CODEXHUB_CODEX_LAUNCHER_CHANGED",
   "shell_single_quote(&shell_single_quote(api_key))"
 ]) {
-  if (!rustLib.includes(token)) fail(`missing remote readiness probe token: ${token}`);
+  if (!rustBackend.includes(token)) fail(`missing remote readiness probe token: ${token}`);
 }
 const remoteReadinessApp = read("src/App.tsx");
 const remoteReadinessModels = read("src/models.ts");
@@ -662,7 +683,7 @@ for (const token of [
   'name: "Diagnostics"',
   'name: "Diagnostics".into()'
 ]) {
-  if (rustLib.includes(token)) fail(`default mock data should not include ${token}`);
+  if (rustBackend.includes(token)) fail(`default mock data should not include ${token}`);
 }
 
 const app = read("src/App.tsx");
@@ -862,7 +883,7 @@ for (const removedInstallToken of [
   "Uninstalled skill from {} of {} selected target(s).",
   "Uninstalled skill from "
 ]) {
-  if (rustLib.includes(removedInstallToken)) fail(`old skill operation success message should not remain: ${removedInstallToken}`);
+  if (rustBackend.includes(removedInstallToken)) fail(`old skill operation success message should not remain: ${removedInstallToken}`);
 }
 for (const token of [
   'label: "Dashboard"',
@@ -1154,7 +1175,7 @@ for (const token of [
   if (app.includes(token)) fail(`Profiles UI should stay minimal and not render: ${token}`);
 }
 if (!app.includes('onManageCodex(sshHost.alias, "install")') || !app.includes('onManageCodex(sshHost.alias, "update")') || !app.includes('onManageCodex(sshHost.alias, "uninstall")')) fail("SSH Hosts table should expose remote Codex install/update/uninstall actions");
-if (!rustLib.includes('remove_path "$CODEX_HOME"') || !rustLib.includes('remove_path "$hub_dir"') || rustLib.includes("codexhub.uninstall.bak")) fail("Remote Codex uninstall should directly delete Codex config/env paths without backups");
+if (!rustBackend.includes('remove_path "$CODEX_HOME"') || !rustBackend.includes('remove_path "$hub_dir"') || rustBackend.includes("codexhub.uninstall.bak")) fail("Remote Codex uninstall should directly delete Codex config/env paths without backups");
 if (!app.includes('installCodex: "安装"') || !app.includes('updateCodex: "更新"') || !app.includes('uninstallCodex: "卸载"')) fail("SSH Hosts Codex buttons should use short install/update/uninstall labels");
 for (const token of ["onUpdateOutdatedCodexHosts", "handleUpdateOutdatedCodexHosts", "Promise.allSettled", "outdatedCodexAliases", "copy.hosts.updateOutdatedCodex"]) {
   if (!app.includes(token)) fail(`missing one-click outdated Codex update token: ${token}`);
@@ -1187,7 +1208,15 @@ for (const token of ["copyPublicKeyButton", "data-success={publicKeyCopied}", "c
   if (!app.includes(token)) fail(`missing simplified SSH settings copy token: ${token}`);
 }
 
-const api = read("src/api.ts");
+const api = [
+  "src/api.ts",
+  "src/api/contracts.ts",
+  "src/api/desktop.ts",
+  "src/api/fallbacks.ts",
+  "src/api/index.ts",
+  "src/api/invoke.ts",
+  "src/api/mock.ts"
+].map(read).join("\n");
 for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "detectNetworkProxy", "get_app_update_status", "check_stable_update", "install_stable_update", "detect_network_proxy"]) {
   if (!api.includes(token)) fail(`missing stable updater API token: ${token}`);
 }
@@ -1350,7 +1379,7 @@ const forbiddenApiKeyTokens = [
   "localStorage.setItem(\"apiKey",
   "localStorage.setItem('apiKey"
 ];
-for (const [name, content] of [["src/App.tsx", app], ["src/api.ts", api], ["src/models.ts", models]]) {
+for (const [name, content] of [["src/App.tsx", app], ["src/api modules", api], ["src/models.ts", models]]) {
   for (const token of forbiddenApiKeyTokens) {
     if (content.includes(token)) fail(`${name} must not render or store direct API key token: ${token}`);
   }

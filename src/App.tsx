@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { loadInitialAppData } from "./app/bootstrap";
 import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
 import type {
   AppUpdateStatus,
@@ -1453,17 +1454,8 @@ function App() {
   useEffect(() => {
     let mounted = true;
 
-    Promise.all([
-      api.getSettings(),
-      api.getHealth(),
-      api.getAppUpdateStatus(),
-      api.listHosts(),
-      api.listProfiles(),
-      api.listSkillPacks(),
-      api.getSkillInventoryStatus(),
-      api.listTasks()
-    ])
-      .then(([nextSettings, nextHealth, nextAppUpdateStatus, nextHosts, nextProfiles, nextSkillPacks, nextSkillInventoryStatus, nextTasks]) => {
+    loadInitialAppData()
+      .then(({ settings: nextSettings, health: nextHealth, appUpdateStatus: nextAppUpdateStatus, hosts: nextHosts, profiles: nextProfiles, skillPacks: nextSkillPacks, skillInventoryStatus: nextSkillInventoryStatus, tasks: nextTasks }) => {
         if (!mounted) return;
         setSettings(nextSettings);
         setHealth(nextHealth);

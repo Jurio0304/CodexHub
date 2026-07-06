@@ -1,9 +1,17 @@
+mod hosts;
 mod platform;
+mod profiles;
+mod settings;
+mod skills;
 mod ssh;
+mod tasks;
+mod updater;
 
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use hosts::{load_hosts, save_current_hosts, save_hosts};
+use profiles::{load_profiles, save_profiles};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
@@ -22,8 +30,14 @@ use tauri::{
     AppHandle, Emitter, Manager, State, Window, WindowEvent,
 };
 use tauri_plugin_updater::UpdaterExt;
+use settings::{
+    read_settings, write_settings, AppSettings, CloseButtonBehavior, NetworkProxyMode,
+};
+use skills::{load_skills, managed_skills_dir, save_skills, skill_clone_cache_dir};
+use tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus};
 use toml::map::Map as TomlMap;
 use toml::Value as TomlValue;
+use updater::{AppUpdateState, AppUpdateStatus, GitHubReleaseResponse, StableUpdaterConfig};
 use url::Url;
 
 const CODEX_NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/@openai/codex";
@@ -48,51 +62,6 @@ struct Health {
     app: &'static str,
     mode: &'static str,
     remote_wrapper_required: bool,
-}
-
-#[derive(Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-enum AppUpdateState {
-    Disabled,
-    PendingConfiguration,
-    Ready,
-    UpToDate,
-    Available,
-    Installing,
-    Error,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AppUpdateStatus {
-    software_name: String,
-    channel: String,
-    current_version: String,
-    installed_at: Option<String>,
-    state: AppUpdateState,
-    configured: bool,
-    feed_configured: bool,
-    signing_configured: bool,
-    latest_version: Option<String>,
-    checked_at: Option<String>,
-    message: String,
-}
-
-#[derive(Clone)]
-struct StableUpdaterConfig {
-    endpoint: Option<String>,
-    pubkey: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct GitHubReleaseAsset {
-    name: String,
-    url: String,
-}
-
-#[derive(Deserialize)]
-struct GitHubReleaseResponse {
-    assets: Vec<GitHubReleaseAsset>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -571,60 +540,6 @@ struct InstalledSkillDownloadResult {
     message: String,
 }
 
-#[derive(Clone, Serialize)]
-#[allow(dead_code)]
-#[serde(rename_all = "lowercase")]
-enum TaskStatus {
-    Queued,
-    Running,
-    Success,
-    Failed,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum TaskLogLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TaskLog {
-    id: String,
-    task_run_id: String,
-    level: TaskLogLevel,
-    timestamp: String,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    command: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stdout: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stderr: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    exit_code: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    duration_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    timed_out: Option<bool>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TaskRun {
-    id: String,
-    host_id: String,
-    host_name: String,
-    action: String,
-    status: TaskStatus,
-    started_at: String,
-    ended_at: Option<String>,
-    summary: String,
-    logs: Vec<TaskLog>,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectionTest {
@@ -786,51 +701,6 @@ struct CodexProgressContext<'a> {
     action: &'a RemoteCodexAction,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum ThemeChoice {
-    System,
-    Light,
-    Dark,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-enum FontPreset {
-    #[serde(
-        rename = "english",
-        alias = "system",
-        alias = "chinese",
-        alias = "cross-platform"
-    )]
-    English,
-    #[serde(rename = "zh-cn")]
-    ZhCn,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum PlatformAppearance {
-    Auto,
-    Windows,
-    Macos,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-enum CloseButtonBehavior {
-    Ask,
-    Exit,
-    MinimizeToTray,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-enum NetworkProxyMode {
-    Auto,
-    Direct,
-    Manual,
-}
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NetworkProxyCandidate {
@@ -848,40 +718,6 @@ struct NetworkProxyStatus {
     source: Option<String>,
     message: String,
     candidates: Vec<NetworkProxyCandidate>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AppSettings {
-    theme: ThemeChoice,
-    font_preset: FontPreset,
-    #[serde(default = "default_platform_appearance")]
-    platform_appearance: PlatformAppearance,
-    #[serde(default = "default_close_button_behavior")]
-    close_button_behavior: CloseButtonBehavior,
-    #[serde(default = "default_network_proxy_mode")]
-    network_proxy_mode: NetworkProxyMode,
-    #[serde(default)]
-    network_proxy_url: String,
-    #[serde(default = "default_true")]
-    sidebar_completion_indicators: bool,
-    #[serde(default)]
-    setup_guide_dismissed: bool,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            theme: ThemeChoice::System,
-            font_preset: FontPreset::English,
-            platform_appearance: PlatformAppearance::Auto,
-            close_button_behavior: CloseButtonBehavior::Ask,
-            network_proxy_mode: NetworkProxyMode::Auto,
-            network_proxy_url: String::new(),
-            sidebar_completion_indicators: true,
-            setup_guide_dismissed: false,
-        }
-    }
 }
 
 struct AppState {
@@ -9032,133 +8868,6 @@ fn timestamp_millis() -> u128 {
         .as_millis()
 }
 
-fn settings_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
-        .join("settings.json")
-}
-
-fn read_settings(app: &AppHandle) -> AppSettings {
-    let path = settings_path(app);
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<AppSettings>(&content).ok())
-        .unwrap_or_default()
-}
-
-fn write_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
-    let path = settings_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
-}
-
-fn hosts_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
-        .join("hosts.json")
-}
-
-fn load_hosts(app: &AppHandle, state: &AppState) -> Result<Vec<Host>, String> {
-    let path = hosts_path(app);
-    let hosts = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-        serde_json::from_str::<Vec<Host>>(&content)
-            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
-    } else {
-        state.hosts.lock().expect("hosts mutex poisoned").clone()
-    };
-    *state.hosts.lock().expect("hosts mutex poisoned") = hosts.clone();
-    Ok(hosts)
-}
-
-fn save_hosts(app: &AppHandle, state: &AppState, hosts: &[Host]) -> Result<(), String> {
-    let path = hosts_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(hosts).map_err(|error| error.to_string())?;
-    fs::write(&path, content)
-        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
-    *state.hosts.lock().expect("hosts mutex poisoned") = hosts.to_vec();
-    Ok(())
-}
-
-fn save_current_hosts(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
-    save_hosts(app, state, &hosts)
-}
-
-fn profiles_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
-        .join("profiles.json")
-}
-
-fn load_profiles(app: &AppHandle, state: &AppState) -> Result<Vec<Profile>, String> {
-    let path = profiles_path(app);
-    let mut profiles = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-        serde_json::from_str::<Vec<Profile>>(&content)
-            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
-    } else {
-        state
-            .profiles
-            .lock()
-            .expect("profiles mutex poisoned")
-            .clone()
-    };
-    refresh_credential_flags(&mut profiles);
-    *state.profiles.lock().expect("profiles mutex poisoned") = profiles.clone();
-    Ok(profiles)
-}
-
-fn save_profiles(app: &AppHandle, state: &AppState, profiles: &[Profile]) -> Result<(), String> {
-    for profile in profiles {
-        validate_profile(profile)?;
-    }
-    let path = profiles_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(profiles).map_err(|error| error.to_string())?;
-    if contains_key_material(&content) {
-        return Err("Refusing to persist profile data that looks like API key material.".into());
-    }
-    fs::write(&path, content)
-        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
-    *state.profiles.lock().expect("profiles mutex poisoned") = profiles.to_vec();
-    Ok(())
-}
-
-fn skills_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
-        .join("skills.json")
-}
-
-fn managed_skills_dir(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
-        .join("skills")
-}
-
-fn skill_clone_cache_dir(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_cache_dir()
-        .unwrap_or_else(|_| env::temp_dir())
-        .join("skill-clones")
-}
-
 fn skill_inventory_path(app: &AppHandle) -> PathBuf {
     app.path()
         .app_config_dir()
@@ -9228,46 +8937,6 @@ fn apply_skill_inventory_to_hosts(app: &AppHandle, state: &AppState) -> Result<(
             }
         }
     }
-    Ok(())
-}
-
-fn load_skills(app: &AppHandle, state: &AppState) -> Result<Vec<SkillPack>, String> {
-    let path = skills_path(app);
-    let mut skills = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-        serde_json::from_str::<Vec<SkillPack>>(&content)
-            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
-    } else {
-        state
-            .skill_packs
-            .lock()
-            .expect("skill packs mutex poisoned")
-            .clone()
-    };
-    for skill in &mut skills {
-        normalize_skill_pack(skill);
-    }
-    skills.sort_by_key(|skill| skill.name.to_ascii_lowercase());
-    *state
-        .skill_packs
-        .lock()
-        .expect("skill packs mutex poisoned") = skills.clone();
-    Ok(skills)
-}
-
-fn save_skills(app: &AppHandle, state: &AppState, skills: &[SkillPack]) -> Result<(), String> {
-    let path = skills_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(skills).map_err(|error| error.to_string())?;
-    fs::write(&path, content)
-        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
-    *state
-        .skill_packs
-        .lock()
-        .expect("skill packs mutex poisoned") = skills.to_vec();
     Ok(())
 }
 
@@ -13280,18 +12949,6 @@ fn date_label() -> String {
 
 fn default_true() -> bool {
     true
-}
-
-fn default_platform_appearance() -> PlatformAppearance {
-    PlatformAppearance::Auto
-}
-
-fn default_close_button_behavior() -> CloseButtonBehavior {
-    CloseButtonBehavior::Ask
-}
-
-fn default_network_proxy_mode() -> NetworkProxyMode {
-    NetworkProxyMode::Auto
 }
 
 fn home_dir() -> Option<PathBuf> {
