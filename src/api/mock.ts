@@ -7,6 +7,7 @@ import type {
   Host,
   HostDraft,
   HostPatch,
+  HostResourceBatchResult,
   InstalledSkillDownloadResult,
   InstalledSkillRequest,
   LatestCodexVersion,
@@ -595,6 +596,97 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
   };
 }
 
+function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourceBatchResult["snapshots"][number] {
+  const host = fallbackHostForAlias(hostAlias);
+  const profile = index % 3;
+  const nvidia = profile !== 1;
+  const gpuCount = profile === 2 ? 4 : nvidia ? 2 : 1;
+  const nvidiaGpus = Array.from({ length: gpuCount }, (_, gpuIndex) => {
+    const uuid = `GPU-mock-${index}-${gpuIndex}`;
+    const busy = profile === 2 && gpuIndex < 2;
+    return {
+      vendor: "nvidia" as const,
+      index: String(gpuIndex),
+      uuid,
+      name: profile === 2 ? "NVIDIA A800 80GB PCIe" : "NVIDIA RTX 4090",
+      status: "ok" as const,
+      utilizationPercent: busy ? 78 - gpuIndex * 12 : 6 + gpuIndex * 8,
+      memoryUsedBytes: (busy ? 42_000 - gpuIndex * 8_000 : 1_024 + gpuIndex * 512) * 1024 ** 2,
+      memoryTotalBytes: (profile === 2 ? 81_920 : 24_576) * 1024 ** 2,
+      temperatureC: busy ? 68 - gpuIndex : 42 + gpuIndex,
+      powerWatts: busy ? 252.4 - gpuIndex * 18 : 62.5 + gpuIndex * 12,
+      driverVersion: "550.54",
+      processes: busy
+        ? [
+            {
+              gpuUuid: uuid,
+              pid: 4100 + index * 10 + gpuIndex,
+              name: "python",
+              usedMemoryBytes: (18_432 - gpuIndex * 2_048) * 1024 ** 2,
+              user: "amax",
+              elapsedSeconds: 3_600 + index * 300 + gpuIndex * 90,
+              command: `python train_${index}_${gpuIndex}.py --batch-size 8 --precision bf16`
+            },
+            {
+              gpuUuid: uuid,
+              pid: 5100 + index * 10 + gpuIndex,
+              name: "python",
+              usedMemoryBytes: (2_048 + gpuIndex * 512) * 1024 ** 2,
+              user: gpuIndex === 0 ? "jy" : "codex",
+              elapsedSeconds: 940 + gpuIndex * 180,
+              command: "python serve.py --port 8000"
+            }
+          ]
+        : []
+    };
+  });
+  return {
+    hostAlias: host.hostAlias,
+    status: profile === 1 ? "partial" : "ok",
+    sampledAt: new Date().toISOString(),
+    latencyMs: 35 + index * 18,
+    error: null,
+    cpu: {
+      usagePercent: nvidia ? 42.7 : 18.3,
+      load1: nvidia ? 1.46 : 0.38,
+      load5: nvidia ? 1.08 : 0.42,
+      load15: nvidia ? 0.91 : 0.39,
+      cores: nvidia ? 32 : 16,
+      model: nvidia ? "AMD EPYC mock node" : "Intel Xeon mock node"
+    },
+    memory: {
+      totalBytes: nvidia ? 256 * 1024 ** 3 : 128 * 1024 ** 3,
+      availableBytes: nvidia ? 114 * 1024 ** 3 : 92 * 1024 ** 3,
+      usedPercent: nvidia ? 55.5 : 28.1
+    },
+    gpuTool: nvidia ? "nvidia-smi" : "lspci",
+    gpus: nvidia
+      ? nvidiaGpus
+      : [{
+          vendor: "intel",
+          index: null,
+          uuid: null,
+          name: "Intel display controller detected by lspci",
+          status: "detected",
+          utilizationPercent: null,
+          memoryUsedBytes: null,
+          memoryTotalBytes: null,
+          temperatureC: null,
+          powerWatts: null,
+          driverVersion: null,
+          processes: []
+        }]
+  };
+}
+
+function mockSampleHostResources(hostAliases: string[]): HostResourceBatchResult {
+  const aliases = hostAliases.length > 0 ? hostAliases : ["mock-gpu-01", "mock-cpu-01", "mock-gpu-02"];
+  return {
+    checkedAt: new Date().toISOString(),
+    snapshots: aliases.map(mockHostResourceSnapshot)
+  };
+}
+
 function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
   const host = fallbackHostForAlias(hostAlias);
   const actionLabel =
@@ -1155,6 +1247,7 @@ export const mockApi: CodexHubApi = {
       identityFile: fallbackSshStatus().preferredIdentityFile
     }),
   remoteProbeCodex: async (hostAlias: string) => mockRemoteProbe(hostAlias),
+  sampleHostResources: async (hostAliases: string[]) => mockSampleHostResources(hostAliases),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,

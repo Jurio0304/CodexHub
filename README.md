@@ -19,7 +19,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.3.1-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.0-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -98,8 +98,8 @@ For the macOS desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.3.1_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.3.1_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.3.1 macOS artifact has been validated on a real Mac, but it is still unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.4.0_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.4.0_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.0 macOS artifact is unsigned/ad-hoc and should be real-Mac validated before broad rollout, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
@@ -151,7 +151,7 @@ For everyday use, download the latest stable build from this repository's Releas
 
 ## ⚠️ Known Limitations
 
-* The v0.3.1 macOS artifact has completed real-device validation, but Developer ID signing and notarization are not configured yet.
+* The v0.4.0 macOS artifact still requires real-device validation for this release, and Developer ID signing and notarization are not configured yet.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.

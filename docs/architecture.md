@@ -150,7 +150,7 @@ type OperationLog = {
 
 ## Release Channel Data Isolation
 
-CodexHub v0.3.1 continues to define exactly two release channels: `stable` and `dev`.
+CodexHub v0.4.0 continues to define exactly two release channels: `stable` and `dev`.
 
 - `stable` is the public release channel. It uses `src-tauri/tauri.conf.json`, `productName: CodexHub`, `identifier: app.codexhub.desktop`, and window title `CodexHub`.
 - `dev` is for development, test runs, previews, and manual acceptance. It uses `src-tauri/tauri.dev.conf.json`, `productName: CodexHub Dev`, `identifier: dev.codexhub.desktop`, and window title `CodexHub Dev`.
@@ -167,7 +167,7 @@ CodexHub creates a Tauri tray/status icon at startup using the app icon and disp
 
 The main window close button is controlled by persisted `settings.json` field `closeButtonBehavior` with values `ask`, `exit`, or `minimize-to-tray`. Legacy settings without the field default to `ask`. In `ask` mode, the Rust close handler prevents the native close and emits `close-button-behavior-requested`; the React modal lets the user choose Exit app or Minimize to tray, persists the choice through `choose_close_button_behavior`, and immediately performs the selected action. Explicit Quit entries, including tray Quit and the macOS app menu / `Cmd+Q`, remain true exit paths and are not governed by the close-button preference.
 
-macOS keeps the Dock icon in v1. Menu bar/status item behavior, close-to-hidden behavior, restore behavior, and `Cmd+Q` have been real-Mac validated for v0.3.1. Re-run the macOS checklist after lifecycle, packaging, or menu-bar behavior changes.
+macOS keeps the Dock icon in v1. Menu bar/status item behavior, close-to-hidden behavior, restore behavior, and `Cmd+Q` have prior real-Mac validation. Re-run the macOS checklist after lifecycle, packaging, or menu-bar behavior changes, including each new public macOS artifact.
 
 ## Stable Updater Foundation
 

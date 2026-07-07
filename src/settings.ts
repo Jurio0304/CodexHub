@@ -14,6 +14,9 @@ export type AppSettings = {
   closeButtonBehavior: CloseButtonBehavior;
   networkProxyMode: NetworkProxyMode;
   networkProxyUrl: string;
+  resourceMonitorAutoRefresh: boolean;
+  resourceMonitorHostOrder: string[];
+  resourceMonitorRefreshSeconds: number;
   sidebarCompletionIndicators: boolean;
   setupGuideDismissed: boolean;
 };
@@ -33,6 +36,9 @@ export const defaultSettings: AppSettings = {
   closeButtonBehavior: "ask",
   networkProxyMode: "auto",
   networkProxyUrl: "",
+  resourceMonitorAutoRefresh: true,
+  resourceMonitorHostOrder: [],
+  resourceMonitorRefreshSeconds: 60,
   sidebarCompletionIndicators: true,
   setupGuideDismissed: false
 };
@@ -64,6 +70,21 @@ function normalizeFontPreset(value: unknown): FontPreset {
   return value === "english" ? "english" : "zh-cn";
 }
 
+export function normalizeResourceMonitorRefreshSeconds(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(Math.min(300, Math.max(15, value)))
+    : defaultSettings.resourceMonitorRefreshSeconds;
+}
+
+function normalizeStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+}
+
 export function normalizeSettings(value: unknown): AppSettings {
   if (!value || typeof value !== "object") return defaultSettings;
 
@@ -81,6 +102,9 @@ export function normalizeSettings(value: unknown): AppSettings {
       ? (candidate.networkProxyMode as NetworkProxyMode)
       : defaultSettings.networkProxyMode,
     networkProxyUrl: typeof candidate.networkProxyUrl === "string" ? candidate.networkProxyUrl.trim() : defaultSettings.networkProxyUrl,
+    resourceMonitorAutoRefresh: candidate.resourceMonitorAutoRefresh !== false,
+    resourceMonitorHostOrder: normalizeStringList(candidate.resourceMonitorHostOrder),
+    resourceMonitorRefreshSeconds: normalizeResourceMonitorRefreshSeconds(candidate.resourceMonitorRefreshSeconds),
     sidebarCompletionIndicators: candidate.sidebarCompletionIndicators !== false,
     setupGuideDismissed: candidate.setupGuideDismissed === true
   };

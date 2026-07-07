@@ -56,6 +56,7 @@ const requiredFiles = [
   "src-tauri/src/lib.rs",
   "src-tauri/src/hosts.rs",
   "src-tauri/src/profiles.rs",
+  "src-tauri/src/resource_monitor.rs",
   "src-tauri/src/settings.rs",
   "src-tauri/src/skills.rs",
   "src-tauri/src/tasks.rs",
@@ -77,7 +78,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.3.1") fail("package version should be 0.3.1");
+if (packageJson.version !== "0.4.0") fail("package version should be 0.4.0");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -102,11 +103,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.3.1") fail("stable Tauri version should be 0.3.1");
+if (tauriConfig.version !== "0.4.0") fail("stable Tauri version should be 0.4.0");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.3.1") fail("dev Tauri version should be 0.3.1");
+if (devTauriConfig.version !== "0.4.0") fail("dev Tauri version should be 0.4.0");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -212,7 +213,7 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.3.1_aarch64.dmg"],
+  [readme, "CodexHub_0.4.0_aarch64.dmg"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
@@ -266,7 +267,7 @@ const requiredText = [
   [security, "CodexHub-managed remote `~/.codex-hub/env`"],
   [macosSupport, "Menu bar/status item restore behavior"],
   [macosSupport, "Real Mac Validation Status"],
-  [macosSupport, "has completed real-device validation"],
+  [macosSupport, "still needs real-device validation"],
   [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
   [macosSupport, "~/.ssh/config"]
 ];
@@ -323,6 +324,7 @@ const rustBackend = [
   "src-tauri/src/lib.rs",
   "src-tauri/src/hosts.rs",
   "src-tauri/src/profiles.rs",
+  "src-tauri/src/resource_monitor.rs",
   "src-tauri/src/settings.rs",
   "src-tauri/src/skills.rs",
   "src-tauri/src/tasks.rs",
@@ -366,6 +368,7 @@ for (const command of [
   "bootstrap_ssh_host",
   "bootstrap_existing_ssh_host",
   "remote_probe_codex",
+  "sample_host_resources",
   "remote_manage_codex",
   "refresh_latest_codex_version",
   "get_local_codex_status",
@@ -407,6 +410,9 @@ if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false,
 }
 for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos", "stable_update_network_routes", "LOCAL_PROXY_PORTS", "NetworkProxyMode", "detect_network_proxy_status", "builder.proxy(proxy)"]) {
   if (!rustBackend.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
+}
+for (const token of ["mod resource_monitor", "sample_host_resources", "resource_monitor::sample_host_resources", "query-compute-apps", "CH_GPU_PROCESS", "etimes"]) {
+  if (!rustBackend.includes(token)) fail(`missing resource monitor backend token: ${token}`);
 }
 for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status, &attempts))", "Install app update", "Check app update"]) {
   if (!rustBackend.includes(token)) fail(`missing stable updater task token: ${token}`);
@@ -698,6 +704,13 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
+for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
+  if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
+}
+if (app.includes("copy.monitor.noGpuProcesses")) fail("resource monitor should hide empty GPU process text in host cards");
+for (const token of ["MonitorHostRow", "monitorTable"]) {
+  if (app.includes(token)) fail(`resource monitor should use Bento cards instead of table UI: ${token}`);
+}
 for (const label of ["Home", "主页", "Hosts", "Profiles", "Skills", "Tasks", "任务", "Settings", "Host Matrix", "主机矩阵", "Font", "Sidebar visual hints", "侧边栏视觉提示", "Host list", "主机列表", "Local config", "本地配置", "Appearance", "外观", "Local keys", "本地密钥", "Version info", "版本信息", "Other", "其他", "Program close button behavior", "程序关闭按钮行为", "Host IP", "Codex版本", "Test all", "一键测试", "Update outdated", "一键更新", "Details", "详情", "Logs", "日志", "Copied!", "复制成功！", "Add Server", "添加服务器", "来源", "System", "系统", "Codex", "API config", "API 配置", "Test latency", "测试延迟", "stdout", "stderr", "Install Codex", "Update Codex", "新增 SSH Host", "连接进程", "BootstrapProgressLog", "Ask next time", "Exit app", "Minimize to tray", "关闭按钮", "下次询问", "退出程序", "最小化到托盘"]) {
   if (!app.includes(label)) fail(`missing UI label: ${label}`);
 }
@@ -1245,6 +1258,9 @@ for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior"
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
+for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "mockSampleHostResources", "gpuUuid", "processes"]) {
+  if (!api.includes(token)) fail(`missing resource monitor API token: ${token}`);
+}
 for (const token of [
   "Research Default",
   "Safe Editing",
@@ -1340,6 +1356,9 @@ for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "R
 for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileApiKeyResult", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
   if (!models.includes(token)) fail(`missing Profile/API model token: ${token}`);
 }
+for (const token of ["HostResourceSnapshot", "GpuSnapshot", "GpuProcessSnapshot", "HostResourceBatchResult", "CpuSnapshot", "MemorySnapshot", "elapsedSeconds"]) {
+  if (!models.includes(token)) fail(`missing resource monitor model token: ${token}`);
+}
 for (const token of ["SshConfigDeleteResult", "DeleteOperationResult", "task: TaskRun"]) {
   if (!models.includes(token)) fail(`missing delete operation model token: ${token}`);
 }
@@ -1408,6 +1427,9 @@ for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
 for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "networkProxyMode", "networkProxyMode: \"auto\"", "networkProxyUrl", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
   if (!settings.includes(token)) fail(`missing settings token: ${token}`);
 }
+for (const token of ["resourceMonitorAutoRefresh", "resourceMonitorAutoRefresh: true", "resourceMonitorHostOrder", "resourceMonitorHostOrder: []", "resourceMonitorRefreshSeconds", "resourceMonitorRefreshSeconds: 60", "normalizeResourceMonitorRefreshSeconds"]) {
+  if (!settings.includes(token)) fail(`missing resource monitor settings token: ${token}`);
+}
 for (const token of [
   "CloseButtonBehavior",
   "closeButtonBehavior",
@@ -1422,6 +1444,13 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
+for (const token of ["monitorBentoGrid", "monitorHostCard", "monitorSummaryTile", "monitorGpuBlock", "monitorProcessRow", "monitorAutoRefreshControl", "monitorDragHandle", "monitorSegmentedMeter", "monitorDragGhost", "--monitor-gap", "grid-auto-rows: 2px", "data-placeholder", 'data-tone="memory"', 'data-tone="cpu"', 'data-tone="gpu"']) {
+  if (!styles.includes(token)) fail(`missing resource monitor Bento style token: ${token}`);
+}
+if (styles.includes("monitorBentoTile")) fail("resource monitor should use simplified summary tiles instead of old Bento tile styles");
+for (const token of [".monitorTable", "min-width: 980px"]) {
+  if (styles.includes(token)) fail(`resource monitor table style should be removed: ${token}`);
+}
 for (const token of ["appUpdatePanel", "appUpdateSchedule", "sidebarUpdateButton", "versionInfoTable", "taskLogModalHint", "networkProxyControl", "table-layout: fixed", "white-space: normal", "overflow-wrap: anywhere"]) {
   if (!styles.includes(token)) fail(`missing stable updater Settings style token: ${token}`);
 }

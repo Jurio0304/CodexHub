@@ -5,6 +5,7 @@ import type {
   CcSwitchDetection,
   HostDraft,
   HostPatch,
+  HostResourceBatchResult,
   InstalledSkillRequest,
   LatestCodexVersion,
   LocalCodexStatus,
@@ -142,6 +143,10 @@ export const api: CodexHubApi = {
     ),
   remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>
     safeInvoke<RemoteProbeResult>("remote_probe_codex", { hostAlias, timeoutMs }, () => mockApi.remoteProbeCodex(hostAlias, timeoutMs)),
+  sampleHostResources: (hostAliases: string[], timeoutMs = 8000) =>
+    safeInvoke<HostResourceBatchResult>("sample_host_resources", { hostAliases, timeoutMs }, () =>
+      mockApi.sampleHostResources(hostAliases, timeoutMs)
+    ),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,

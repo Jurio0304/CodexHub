@@ -431,6 +431,67 @@ export type RemoteProbeResult = {
   task: TaskRun;
 };
 
+export type HostResourceStatus = "ok" | "partial" | "failed";
+export type GpuVendor = "nvidia" | "amd" | "intel" | "unknown";
+export type GpuTool = "nvidia-smi" | "rocm-smi" | "lspci" | "none" | string;
+
+export type CpuSnapshot = {
+  usagePercent: number | null;
+  load1: number | null;
+  load5: number | null;
+  load15: number | null;
+  cores: number | null;
+  model: string | null;
+};
+
+export type MemorySnapshot = {
+  totalBytes: number | null;
+  availableBytes: number | null;
+  usedPercent: number | null;
+};
+
+export type GpuProcessSnapshot = {
+  gpuUuid: string | null;
+  pid: number | null;
+  name: string;
+  usedMemoryBytes: number | null;
+  user: string | null;
+  elapsedSeconds: number | null;
+  command: string | null;
+};
+
+export type GpuSnapshot = {
+  vendor: GpuVendor;
+  index: string | null;
+  uuid: string | null;
+  name: string;
+  status: "ok" | "detected" | "unavailable";
+  utilizationPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  temperatureC: number | null;
+  powerWatts: number | null;
+  driverVersion: string | null;
+  processes: GpuProcessSnapshot[];
+};
+
+export type HostResourceSnapshot = {
+  hostAlias: string;
+  status: HostResourceStatus;
+  sampledAt: string;
+  latencyMs: number | null;
+  error: string | null;
+  cpu: CpuSnapshot | null;
+  memory: MemorySnapshot | null;
+  gpuTool: GpuTool;
+  gpus: GpuSnapshot[];
+};
+
+export type HostResourceBatchResult = {
+  checkedAt: string;
+  snapshots: HostResourceSnapshot[];
+};
+
 export type RemoteCodexAction = "check-version" | "install" | "update" | "uninstall";
 
 export type RemoteCodexProgressEvent = {

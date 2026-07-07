@@ -1,6 +1,7 @@
 mod hosts;
 mod platform;
 mod profiles;
+mod resource_monitor;
 mod settings;
 mod skills;
 mod ssh;
@@ -2863,6 +2864,17 @@ async fn remote_probe_codex(
     run_blocking_command("remote_probe_codex", move || {
         let state = app.state::<AppState>();
         run_remote_probe(&app, &state, host_alias, timeout_ms)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn sample_host_resources(
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+) -> Result<resource_monitor::HostResourceBatchResult, String> {
+    run_blocking_command("sample_host_resources", move || {
+        resource_monitor::sample_host_resources(host_aliases, timeout_ms)
     })
     .await
 }
@@ -7616,6 +7628,7 @@ mod tests {
             NetworkProxyMode::Auto
         ));
         assert!(settings.network_proxy_url.is_empty());
+        assert!(settings.resource_monitor_host_order.is_empty());
         assert_eq!(
             serde_json::to_string(&CloseButtonBehavior::MinimizeToTray)
                 .expect("serialize behavior"),
@@ -8750,6 +8763,7 @@ pub fn run() {
             bootstrap_ssh_host,
             bootstrap_existing_ssh_host,
             remote_probe_codex,
+            sample_host_resources,
             remote_manage_codex,
             refresh_latest_codex_version,
             get_local_codex_status,

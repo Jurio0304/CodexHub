@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, MouseEventHandler, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, MouseEventHandler, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadInitialAppData } from "./app/bootstrap";
@@ -9,6 +9,8 @@ import type {
   DeleteOperationResult,
   Health,
   Host,
+  HostResourceBatchResult,
+  HostResourceSnapshot,
   HostStatus,
   InstalledSkillDownloadResult,
   InstalledSkillRequest,
@@ -48,10 +50,10 @@ import type {
 } from "./models";
 import { getPlatform, isWindows } from "./platform";
 import type { RuntimePlatform } from "./platform";
-import { applyAppSettings, fontPresets, loadLocalSettings, resolvePlatformAppearance } from "./settings";
+import { applyAppSettings, fontPresets, loadLocalSettings, normalizeResourceMonitorRefreshSeconds, resolvePlatformAppearance } from "./settings";
 import type { AppSettings, CloseButtonBehavior, FontPreset, NetworkProxyMode, PlatformAppearance, ThemeChoice } from "./settings";
 
-type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "tasks" | "settings";
+type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "monitor" | "tasks" | "settings";
 type NavIconId = SectionId;
 type PlatformIconId =
   | SectionId
@@ -99,6 +101,26 @@ type CodexUninstallConfirmState = {
   hostAlias: string;
   hostName: string;
 };
+type MonitorGpuUserUsage = {
+  user: string;
+  processCount: number;
+  elapsedSeconds: number | null;
+  usedMemoryBytes: number;
+  color: string;
+};
+type MonitorMeterTone = "memory" | "cpu" | "gpu" | "green" | "yellow" | "red" | "gray";
+type MonitorDragState = {
+  alias: string;
+  offsetX: number;
+  offsetY: number;
+  pointerId: number;
+  previewOrder: string[];
+  sourceOrder: string[];
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+};
 type ProfileApplyOperationModalState = {
   requestId: string;
   profileName: string;
@@ -128,6 +150,7 @@ const platformEmojiIcons = {
   hosts: "🖥️",
   profiles: "🧾",
   skills: "🧩",
+  monitor: "📊",
   tasks: "✅",
   settings: "⚙️",
   close: "✕",
@@ -149,6 +172,7 @@ const uiCopy = {
     navItems: [
       { id: "dashboard", label: "Home" },
       { id: "hosts", label: "Hosts" },
+      { id: "monitor", label: "Monitor" },
       { id: "profiles", label: "Profiles" },
       { id: "skills", label: "Skills" },
       { id: "tasks", label: "Tasks" },
@@ -174,6 +198,11 @@ const uiCopy = {
         title: "Skills",
         eyebrow: "Skill packs",
         body: "Review skill bundles that will sync to remote ~/.codex/skills/ directories."
+      },
+      monitor: {
+        title: "Monitor",
+        eyebrow: "Host resources",
+        body: "Sample CPU, memory, and GPU status across remembered hosts without installing a remote agent."
       },
       tasks: {
         title: "Tasks",
@@ -222,6 +251,51 @@ const uiCopy = {
       noHosts: "No hosts yet",
       noHostsBody: "Add the first SSH target to populate the host matrix.",
       noSkillPacks: "No skill packs"
+    },
+    monitor: {
+      refreshNow: "Refresh now",
+      refreshing: "Refreshing",
+      autoRefresh: "Auto refresh",
+      refreshEvery: "Refresh every",
+      seconds: "seconds",
+      lastUpdated: "Last updated",
+      never: "Never",
+      hostStatus: "Host resource status",
+      noHosts: "No hosts to monitor",
+      noHostsBody: "Add or import SSH hosts before opening live resource monitoring.",
+      noData: "No sample yet.",
+      cpu: "CPU",
+      memory: "Memory",
+      gpu: "GPU",
+      load: "Load",
+      cores: "Cores",
+      available: "Available",
+      latency: "Latency",
+      sampledAt: "Sampled",
+      status: "Status",
+      gpuTool: "GPU tool",
+      vram: "VRAM",
+      temp: "Temp",
+      power: "Power",
+      driver: "Driver",
+      utilization: "Util",
+      gpuProcesses: "GPU processes",
+      noGpuProcesses: "No GPU processes",
+      processCount: "Processes",
+      processMemory: "Process memory",
+      runtime: "Runtime",
+      usage: "Usage",
+      pid: "PID",
+      command: "Command",
+      noGpu: "No GPU data",
+      detectedOnly: "Detected only",
+      statusOnline: "Online",
+      statusPartial: "Partial",
+      statusFailed: "Failed",
+      statusNoSample: "No sample",
+      dragHandle: "Drag to reorder host",
+      refreshed: (count: number) => `Resource monitor refreshed ${count} hosts.`,
+      refreshFailed: "Resource monitor refresh failed."
     },
     setupGuide: {
       title: "Setup Guide",
@@ -687,6 +761,7 @@ const uiCopy = {
     navItems: [
       { id: "dashboard", label: "主页" },
       { id: "hosts", label: "主机" },
+      { id: "monitor", label: "监控" },
       { id: "profiles", label: "配置" },
       { id: "skills", label: "技能" },
       { id: "tasks", label: "任务" },
@@ -712,6 +787,11 @@ const uiCopy = {
         title: "技能",
         eyebrow: "技能包",
         body: "查看未来会同步到远程 ~/.codex/skills/ 目录的技能包。"
+      },
+      monitor: {
+        title: "监控",
+        eyebrow: "主机资源",
+        body: "通过只读 SSH 同时采样所有主机 CPU、内存和 GPU 状态，无需安装远程 agent。"
       },
       tasks: {
         title: "任务",
@@ -760,6 +840,51 @@ const uiCopy = {
       noHosts: "还没有主机",
       noHostsBody: "添加第一个 SSH 目标后会填充主机矩阵。",
       noSkillPacks: "无技能包"
+    },
+    monitor: {
+      refreshNow: "立即刷新",
+      refreshing: "刷新中",
+      autoRefresh: "自动刷新",
+      refreshEvery: "刷新间隔",
+      seconds: "秒",
+      lastUpdated: "上次更新",
+      never: "未刷新",
+      hostStatus: "主机监控状态",
+      noHosts: "暂无可监控主机",
+      noHostsBody: "请先添加或导入 SSH 主机，再查看实时资源状态。",
+      noData: "尚无采样。",
+      cpu: "CPU",
+      memory: "内存",
+      gpu: "GPU",
+      load: "负载",
+      cores: "核心",
+      available: "可用",
+      latency: "延迟",
+      sampledAt: "采样时间",
+      status: "状态",
+      gpuTool: "GPU 工具",
+      vram: "显存",
+      temp: "温度",
+      power: "功耗",
+      driver: "驱动",
+      utilization: "占用率",
+      gpuProcesses: "GPU 进程",
+      noGpuProcesses: "无 GPU 进程",
+      processCount: "进程数",
+      processMemory: "进程显存",
+      runtime: "运行时",
+      usage: "占用量",
+      pid: "PID",
+      command: "命令",
+      noGpu: "无 GPU 数据",
+      detectedOnly: "统一内存",
+      statusOnline: "在线",
+      statusPartial: "部分",
+      statusFailed: "失败",
+      statusNoSample: "未采样",
+      dragHandle: "拖拽调整主机位置",
+      refreshed: (count: number) => `已刷新 ${count} 台主机监控状态。`,
+      refreshFailed: "监控刷新失败。"
     },
     setupGuide: {
       title: "配置向导",
@@ -1533,6 +1658,15 @@ function WindowsIcon({ id }: { id: PlatformIconId }) {
           <path d="M10 14.2h4" />
         </>
       ) : null}
+      {id === "monitor" ? (
+        <>
+          <path d="M4.5 18.5h15" />
+          <path d="M7 15.5v-4" />
+          <path d="M12 15.5V7" />
+          <path d="M17 15.5v-6" />
+          <path d="m5.5 9.5 3.5 2.8 3.5-4.5 5.8 3.2" />
+        </>
+      ) : null}
       {id === "tasks" ? (
         <>
           <rect x="5" y="4.5" width="14" height="15" rx="1.8" />
@@ -1660,6 +1794,10 @@ function App() {
   const [sshStatus, setSshStatus] = useState<SshStatus | null>(null);
   const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
   const [latestCodexVersion, setLatestCodexVersion] = useState<LatestCodexVersion | null>(null);
+  const [resourceSnapshots, setResourceSnapshots] = useState<HostResourceSnapshot[]>([]);
+  const [resourceCheckedAt, setResourceCheckedAt] = useState<string | null>(null);
+  const [resourceBusy, setResourceBusy] = useState(false);
+  const [resourceError, setResourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
@@ -1679,6 +1817,7 @@ function App() {
   const sidebarCompletionIndicatorsRef = useRef(settings.sidebarCompletionIndicators);
   const appUpdateStatusRef = useRef(fallbackAppUpdateStatus);
   const appUpdateBusyRef = useRef(false);
+  const resourceBusyRef = useRef(false);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
@@ -1706,6 +1845,10 @@ function App() {
   useEffect(() => {
     appUpdateBusyRef.current = appUpdateChecking || appUpdateInstalling;
   }, [appUpdateChecking, appUpdateInstalling]);
+
+  useEffect(() => {
+    resourceBusyRef.current = resourceBusy;
+  }, [resourceBusy]);
 
   const clearSectionCompletionSignal = useCallback((section: SectionId) => {
     setSectionCompletionSignals((current) => {
@@ -1770,6 +1913,50 @@ function App() {
       sshConfigHosts: detectedSshConfigHosts
     };
   };
+
+  const refreshResourceMonitor = useCallback(async (manual = false): Promise<HostResourceBatchResult | null> => {
+    if (resourceBusyRef.current) return null;
+    if (hosts.length === 0) {
+      setResourceSnapshots([]);
+      setResourceCheckedAt(null);
+      return null;
+    }
+
+    resourceBusyRef.current = true;
+    setResourceBusy(true);
+    if (manual) setResourceError(null);
+
+    try {
+      const result = await api.sampleHostResources(hosts.map((host) => host.hostAlias), 8_000);
+      setResourceSnapshots(result.snapshots);
+      setResourceCheckedAt(result.checkedAt);
+      if (manual) setNotice(copy.monitor.refreshed(result.snapshots.length));
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setResourceError(message);
+      if (manual) setNotice(copy.monitor.refreshFailed);
+      return null;
+    } finally {
+      resourceBusyRef.current = false;
+      setResourceBusy(false);
+    }
+  }, [copy.monitor, hosts]);
+
+  useEffect(() => {
+    if (loading || activeSection !== "monitor" || !settings.resourceMonitorAutoRefresh) return;
+    void refreshResourceMonitor(false);
+    const timer = window.setInterval(() => {
+      void refreshResourceMonitor(false);
+    }, settings.resourceMonitorRefreshSeconds * 1000);
+    return () => window.clearInterval(timer);
+  }, [
+    activeSection,
+    loading,
+    refreshResourceMonitor,
+    settings.resourceMonitorAutoRefresh,
+    settings.resourceMonitorRefreshSeconds
+  ]);
 
   const importLocalSshConfig = async () => {
     const [nextSshStatus, detectedSshConfigHosts, nextHosts] = await Promise.all([
@@ -2899,6 +3086,29 @@ function App() {
             onViewTasks={() => setActiveSection("tasks")}
           />
         );
+      case "monitor":
+        return (
+          <MonitorView
+            autoRefresh={settings.resourceMonitorAutoRefresh}
+            busy={resourceBusy}
+            checkedAt={resourceCheckedAt}
+            copy={copy}
+            error={resourceError}
+            hosts={hosts}
+            hostOrder={settings.resourceMonitorHostOrder}
+            refreshSeconds={settings.resourceMonitorRefreshSeconds}
+            snapshots={resourceSnapshots}
+            onAutoRefreshChange={(resourceMonitorAutoRefresh) => persistSettings({ ...settings, resourceMonitorAutoRefresh })}
+            onHostOrderChange={(resourceMonitorHostOrder) => persistSettings({ ...settings, resourceMonitorHostOrder })}
+            onRefresh={() => refreshResourceMonitor(true)}
+            onRefreshSecondsChange={(resourceMonitorRefreshSeconds) =>
+              persistSettings({
+                ...settings,
+                resourceMonitorRefreshSeconds: normalizeResourceMonitorRefreshSeconds(resourceMonitorRefreshSeconds)
+              })
+            }
+          />
+        );
       case "tasks":
         return <TasksView copy={copy} tasks={tasks} />;
       case "settings":
@@ -3006,12 +3216,14 @@ function App() {
         onScrollCapture={handleContentInteraction}
         onWheelCapture={handleContentInteraction}
       >
-        <header className="topBar">
-          <div>
-            <TitleWithIcon icon={activeSection} level={1}>{selectedCopy.title}</TitleWithIcon>
-          </div>
-          {pageActions.length > 0 ? <CommandBarActions ariaLabel={selectedCopy.title} className="topActions" actions={pageActions} /> : null}
-        </header>
+        {activeSection !== "monitor" ? (
+          <header className="topBar">
+            <div>
+              <TitleWithIcon icon={activeSection} level={1}>{selectedCopy.title}</TitleWithIcon>
+            </div>
+            {pageActions.length > 0 ? <CommandBarActions ariaLabel={selectedCopy.title} className="topActions" actions={pageActions} /> : null}
+          </header>
+        ) : null}
 
         {renderContent()}
       </main>
@@ -3524,13 +3736,14 @@ function DashboardView({
   onAddServer: () => void;
   onTestAllSshHosts: () => Promise<unknown>;
 }) {
+  const labelFor = (id: SectionId) => copy.navItems.find((item) => item.id === id)?.label ?? id;
   return (
     <div className="pageGrid">
       <section className="summaryStrip" aria-label={copy.dashboard.summaryLabel}>
-        <MetricCard label={copy.navItems[1].label} value={String(hosts.length)} detailLabel={copy.dashboard.online} detailValue={String(onlineCount)} />
-        <MetricCard label={copy.navItems[2].label} value={String(profiles.length)} detailLabel={copy.dashboard.applied} detailValue={String(appliedProfileCount)} />
-        <MetricCard label={copy.navItems[3].label} value={String(skillPacks.length)} detailLabel={copy.dashboard.enabled} detailValue={String(skillPacks.filter((pack) => pack.enabled).length)} />
-        <MetricCard label={copy.navItems[4].label} value={String(tasks.length)} detailLabel={copy.dashboard.success} detailValue={String(successfulTaskCount)} />
+        <MetricCard label={labelFor("hosts")} value={String(hosts.length)} detailLabel={copy.dashboard.online} detailValue={String(onlineCount)} />
+        <MetricCard label={labelFor("profiles")} value={String(profiles.length)} detailLabel={copy.dashboard.applied} detailValue={String(appliedProfileCount)} />
+        <MetricCard label={labelFor("skills")} value={String(skillPacks.length)} detailLabel={copy.dashboard.enabled} detailValue={String(skillPacks.filter((pack) => pack.enabled).length)} />
+        <MetricCard label={labelFor("tasks")} value={String(tasks.length)} detailLabel={copy.dashboard.success} detailValue={String(successfulTaskCount)} />
       </section>
 
       <ServerMatrix
@@ -3570,6 +3783,609 @@ function MetricCard({
         <b>{detailValue}</b>
       </div>
     </article>
+  );
+}
+
+function MonitorView({
+  autoRefresh,
+  busy,
+  checkedAt,
+  copy,
+  error,
+  hosts,
+  hostOrder,
+  refreshSeconds,
+  snapshots,
+  onAutoRefreshChange,
+  onHostOrderChange,
+  onRefresh,
+  onRefreshSecondsChange
+}: {
+  autoRefresh: boolean;
+  busy: boolean;
+  checkedAt: string | null;
+  copy: UICopy;
+  error: string | null;
+  hosts: Host[];
+  hostOrder: string[];
+  refreshSeconds: number;
+  snapshots: HostResourceSnapshot[];
+  onAutoRefreshChange: (enabled: boolean) => void;
+  onHostOrderChange: (hostOrder: string[]) => void;
+  onRefresh: () => Promise<HostResourceBatchResult | null>;
+  onRefreshSecondsChange: (seconds: number) => void;
+}) {
+  const [dragState, setDragState] = useState<MonitorDragState | null>(null);
+  const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const pendingFlipRectsRef = useRef<Map<string, DOMRect> | null>(null);
+  const pendingReorderTimerRef = useRef<number | null>(null);
+  const pendingReorderSignatureRef = useRef<string | null>(null);
+  const autoScrollFrameRef = useRef<number | null>(null);
+  const autoScrollSpeedRef = useRef(0);
+  const snapshotByAlias = useMemo(
+    () => new Map(snapshots.map((snapshot) => [snapshot.hostAlias.toLowerCase(), snapshot])),
+    [snapshots]
+  );
+  const orderedHosts = useMemo(() => orderMonitorHosts(hosts, hostOrder), [hostOrder, hosts]);
+  const displayedHosts = useMemo(
+    () => (dragState ? orderMonitorHosts(hosts, dragState.previewOrder) : orderedHosts),
+    [dragState, hosts, orderedHosts]
+  );
+  const ghostHost = dragState ? hosts.find((host) => host.hostAlias === dragState.alias) ?? null : null;
+  const ghostSnapshot = ghostHost ? snapshotByAlias.get(ghostHost.hostAlias.toLowerCase()) ?? null : null;
+
+  const registerMonitorCard = useCallback((alias: string, element: HTMLElement | null) => {
+    if (element) {
+      cardRefs.current.set(alias, element);
+    } else {
+      cardRefs.current.delete(alias);
+    }
+  }, []);
+
+  const measureMonitorCards = useCallback(() => measureMonitorCardRects(cardRefs.current), []);
+
+  const scheduleMonitorFlip = useCallback(() => {
+    pendingFlipRectsRef.current = measureMonitorCards();
+  }, [measureMonitorCards]);
+
+  const clearPendingMonitorReorder = useCallback(() => {
+    pendingReorderSignatureRef.current = null;
+    if (pendingReorderTimerRef.current !== null) {
+      window.clearTimeout(pendingReorderTimerRef.current);
+      pendingReorderTimerRef.current = null;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    const firstRects = pendingFlipRectsRef.current;
+    if (!firstRects) return;
+    pendingFlipRectsRef.current = null;
+    const cleanupTimers: number[] = [];
+    cardRefs.current.forEach((element, alias) => {
+      if (dragState?.alias === alias) return;
+      const first = firstRects.get(alias);
+      if (!first) return;
+      const last = element.getBoundingClientRect();
+      const deltaX = first.left - last.left;
+      const deltaY = first.top - last.top;
+      if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+      element.style.transition = "none";
+      element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+      element.style.zIndex = "2";
+      requestAnimationFrame(() => {
+        element.style.transition = "transform 180ms cubic-bezier(0.22, 1, 0.36, 1)";
+        element.style.transform = "";
+        cleanupTimers.push(window.setTimeout(() => {
+          element.style.transition = "";
+          element.style.zIndex = "";
+        }, 210));
+      });
+    });
+    return () => {
+      cleanupTimers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [displayedHosts, dragState?.alias]);
+
+  const stopMonitorAutoScroll = useCallback(() => {
+    autoScrollSpeedRef.current = 0;
+    if (autoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    }
+  }, []);
+
+  const startMonitorAutoScroll = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) return;
+    const tick = () => {
+      const speed = autoScrollSpeedRef.current;
+      if (speed === 0) {
+        autoScrollFrameRef.current = null;
+        return;
+      }
+      window.scrollBy(0, speed);
+      autoScrollFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    autoScrollFrameRef.current = window.requestAnimationFrame(tick);
+  }, []);
+
+  const updateMonitorAutoScroll = useCallback((clientY: number) => {
+    const threshold = Math.max(48, window.innerHeight * 0.1);
+    let speed = 0;
+    if (clientY < threshold) {
+      speed = -Math.ceil((1 - Math.max(0, clientY) / threshold) * 18);
+    } else if (clientY > window.innerHeight - threshold) {
+      speed = Math.ceil((1 - Math.max(0, window.innerHeight - clientY) / threshold) * 18);
+    }
+    autoScrollSpeedRef.current = speed;
+    if (speed === 0) {
+      stopMonitorAutoScroll();
+    } else {
+      startMonitorAutoScroll();
+    }
+  }, [startMonitorAutoScroll, stopMonitorAutoScroll]);
+
+  const finishMonitorDrag = useCallback((commit: boolean) => {
+    if (dragState && commit && !sameStringArray(dragState.sourceOrder, dragState.previewOrder)) {
+      onHostOrderChange(dragState.previewOrder);
+    }
+    setDragState(null);
+    clearPendingMonitorReorder();
+    stopMonitorAutoScroll();
+  }, [clearPendingMonitorReorder, dragState, onHostOrderChange, stopMonitorAutoScroll]);
+
+  useEffect(() => {
+    if (!dragState) return;
+    const handlePointerMove = (event: PointerEvent) => {
+      if (event.pointerId !== dragState.pointerId) return;
+      event.preventDefault();
+      updateMonitorAutoScroll(event.clientY);
+      const nextOrder = previewMonitorHostOrder(
+        dragState.previewOrder,
+        dragState.alias,
+        event.clientX,
+        event.clientY,
+        cardRefs.current
+      );
+      const orderChanged = !sameStringArray(nextOrder, dragState.previewOrder);
+      if (!orderChanged) {
+        clearPendingMonitorReorder();
+      } else {
+        const signature = nextOrder.join("\u0000");
+        if (pendingReorderSignatureRef.current !== signature) {
+          clearPendingMonitorReorder();
+          pendingReorderSignatureRef.current = signature;
+          pendingReorderTimerRef.current = window.setTimeout(() => {
+            pendingReorderTimerRef.current = null;
+            pendingReorderSignatureRef.current = null;
+            scheduleMonitorFlip();
+            setDragState((current) => {
+              if (!current || current.pointerId !== event.pointerId) return current;
+              return sameStringArray(current.previewOrder, nextOrder) ? current : { ...current, previewOrder: nextOrder };
+            });
+          }, 500);
+        }
+      }
+      setDragState((current) => {
+        if (!current || current.pointerId !== event.pointerId) return current;
+        return {
+          ...current,
+          x: event.clientX,
+          y: event.clientY
+        };
+      });
+    };
+    const handlePointerUp = (event: PointerEvent) => {
+      if (event.pointerId === dragState.pointerId) finishMonitorDrag(true);
+    };
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (event.pointerId === dragState.pointerId) finishMonitorDrag(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") finishMonitorDrag(false);
+    };
+    const handleBlur = () => finishMonitorDrag(false);
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [clearPendingMonitorReorder, dragState, finishMonitorDrag, scheduleMonitorFlip, updateMonitorAutoScroll]);
+
+  const handleDragHandlePointerDown = useCallback((alias: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || orderedHosts.length < 2) return;
+    const card = cardRefs.current.get(alias);
+    if (!card) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const rect = card.getBoundingClientRect();
+    const sourceOrder = orderedHosts.map((host) => host.hostAlias);
+    setDragState({
+      alias,
+      height: rect.height,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      pointerId: event.pointerId,
+      previewOrder: sourceOrder,
+      sourceOrder,
+      width: rect.width,
+      x: event.clientX,
+      y: event.clientY
+    });
+  }, [orderedHosts]);
+
+  return (
+    <div className="monitorPage">
+      <section className="panel monitorPanel monitorHeroPanel">
+        <div className="panelHeader monitorHeader monitorHeroHeader">
+          <div>
+            <TitleWithIcon icon="monitor" level={1}>{copy.sections.monitor.title}</TitleWithIcon>
+          </div>
+          <CommandBar ariaLabel={copy.sections.monitor.title} className="topActions monitorActions">
+            <button className="primaryButton monitorRefreshButton" disabled={busy || hosts.length === 0} type="button" onClick={() => void onRefresh()}>
+              {busy ? copy.monitor.refreshing : copy.monitor.refreshNow}
+            </button>
+            <div className="monitorAutoRefreshControl">
+              <span>{copy.monitor.autoRefresh}</span>
+              <button
+                className="pillToggle"
+                data-enabled={autoRefresh}
+                role="switch"
+                aria-checked={autoRefresh}
+                aria-label={copy.monitor.autoRefresh}
+                type="button"
+                onClick={() => onAutoRefreshChange(!autoRefresh)}
+              >
+                <span className="pillToggleThumb" aria-hidden="true" />
+              </button>
+              {autoRefresh ? (
+                <label className="monitorIntervalCompact">
+                  <input
+                    aria-label={copy.monitor.refreshEvery}
+                    max={300}
+                    min={15}
+                    onChange={(event) => onRefreshSecondsChange(Number(event.currentTarget.value))}
+                    type="number"
+                    value={refreshSeconds}
+                  />
+                  <span>{copy.monitor.seconds}</span>
+                </label>
+              ) : null}
+            </div>
+          </CommandBar>
+        </div>
+
+        {error ? <p className="monitorError">{error}</p> : null}
+      </section>
+
+      {hosts.length === 0 ? (
+        <section className="panel monitorEmptyPanel">
+          <EmptyListState copy={copy} message={copy.monitor.noHostsBody} variant="hosts" />
+        </section>
+      ) : (
+        <div className="monitorBentoGrid">
+          {displayedHosts.map((host) => (
+            <MonitorHostCard
+              copy={copy}
+              dragging={dragState?.alias === host.hostAlias}
+              host={host}
+              key={host.id}
+              placeholder={dragState?.alias === host.hostAlias}
+              snapshot={snapshotByAlias.get(host.hostAlias.toLowerCase()) ?? null}
+              onCardElement={registerMonitorCard}
+              onDragHandlePointerDown={handleDragHandlePointerDown}
+            />
+          ))}
+        </div>
+      )}
+      {dragState && ghostHost ? (
+        <MonitorHostDragGhost
+          copy={copy}
+          dragState={dragState}
+          host={ghostHost}
+          snapshot={ghostSnapshot}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MonitorHostCard({
+  copy,
+  dragging,
+  host,
+  placeholder,
+  snapshot,
+  onCardElement,
+  onDragHandlePointerDown
+}: {
+  copy: UICopy;
+  dragging: boolean;
+  host: Host;
+  placeholder: boolean;
+  snapshot: HostResourceSnapshot | null;
+  onCardElement: (alias: string, element: HTMLElement | null) => void;
+  onDragHandlePointerDown: (alias: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
+}) {
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [rowSpan, setRowSpan] = useState(44);
+  const cpuPercent = monitorCpuPercent(snapshot?.cpu);
+  const memoryPercent = snapshot?.memory?.usedPercent ?? null;
+  const gpus = snapshot?.gpus ?? [];
+  const gpuCount = gpus.length;
+  const gpuMemory = summarizeGpuMemory(gpus, copy);
+
+  const setCardElement = useCallback((element: HTMLElement | null) => {
+    cardRef.current = element;
+    onCardElement(host.hostAlias, element);
+  }, [host.hostAlias, onCardElement]);
+
+  useEffect(() => {
+    const element = cardRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const updateSpan = () => {
+      const grid = element.parentElement;
+      if (!grid) return;
+      const styles = window.getComputedStyle(grid);
+      const rowHeight = Number.parseFloat(styles.gridAutoRows) || 2;
+      const rowGap = Number.parseFloat(styles.rowGap) || 0;
+      const height = element.getBoundingClientRect().height;
+      setRowSpan(Math.max(1, Math.ceil((height + rowGap) / (rowHeight + rowGap))));
+    };
+    const observer = new ResizeObserver(updateSpan);
+    observer.observe(element);
+    updateSpan();
+    window.addEventListener("resize", updateSpan);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSpan);
+    };
+  }, [host.id, snapshot]);
+
+  return (
+    <article
+      className="monitorHostCard"
+      data-dragging={dragging}
+      data-placeholder={placeholder}
+      ref={setCardElement}
+      style={{ "--monitor-card-span": rowSpan } as CSSProperties}
+    >
+      <button
+        className="monitorDragHandle"
+        type="button"
+        aria-label={copy.monitor.dragHandle}
+        title={copy.monitor.dragHandle}
+        onPointerDown={(event) => onDragHandlePointerDown(host.hostAlias, event)}
+      >
+        <span aria-hidden="true" />
+      </button>
+      <header className="monitorHostHeader">
+        <div>
+          <h3>{host.hostAlias}</h3>
+        </div>
+        {snapshot ? (
+          <Badge tone={resourceStatusTone(snapshot.status)}>{resourceStatusLabel(snapshot.status, copy)}</Badge>
+        ) : (
+          <Badge tone="gray">{copy.monitor.statusNoSample}</Badge>
+        )}
+      </header>
+
+      {snapshot?.error ? <small className="monitorCellNote">{snapshot.error}</small> : null}
+
+      <div className="monitorSummaryGrid">
+        <MonitorSummaryTile
+          copy={copy}
+          detail={formatMonitorMetricDetail(copy.monitor.available, formatBytes(snapshot?.memory?.availableBytes, copy), copy)}
+          label={copy.monitor.memory}
+          meterValue={memoryPercent}
+          tone="memory"
+          value={formatPercent(memoryPercent, copy)}
+        />
+        <MonitorSummaryTile
+          copy={copy}
+          detail={formatMonitorMetricDetail(copy.monitor.load, formatCpuLoadSummary(snapshot?.cpu, copy), copy)}
+          label={copy.monitor.cpu}
+          meterValue={cpuPercent}
+          tone="cpu"
+          value={formatPercent(cpuPercent, copy)}
+        />
+        <MonitorSummaryTile
+          copy={copy}
+          detail={gpuMemory.detail}
+          label={copy.monitor.gpu}
+          meterValue={gpuMemory.percent}
+          tone={gpuCount > 0 ? "gpu" : "gray"}
+          value={String(gpuCount)}
+        />
+      </div>
+
+      <section className="monitorGpuStack" aria-label={copy.monitor.gpu}>
+        {gpus.length > 0 ? (
+          gpus.map((gpu, index) => <MonitorGpuBlock copy={copy} gpu={gpu} key={`${gpu.uuid ?? gpu.index ?? index}-${index}`} />)
+        ) : (
+          <div className="monitorGpuEmpty">
+            <Badge tone="gray">{copy.monitor.noGpu}</Badge>
+            <span>{snapshot?.gpuTool ? `${copy.monitor.gpuTool}: ${snapshot.gpuTool}` : copy.monitor.noData}</span>
+          </div>
+        )}
+      </section>
+    </article>
+  );
+}
+
+function MonitorSummaryTile({
+  copy,
+  detail,
+  label,
+  meterValue,
+  tone,
+  value
+}: {
+  copy: UICopy;
+  detail: string;
+  label: string;
+  meterValue?: number | null;
+  tone: MonitorMeterTone;
+  value: string;
+}) {
+  return (
+    <div className="monitorSummaryTile">
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      {typeof meterValue === "number" || meterValue === null ? <MonitorMeter value={meterValue ?? null} tone={tone} /> : null}
+      <small>{detail || copy.hosts.unknown}</small>
+    </div>
+  );
+}
+
+function MonitorGpuBlock({
+  copy,
+  gpu
+}: {
+  copy: UICopy;
+  gpu: HostResourceSnapshot["gpus"][number];
+}) {
+  const userUsages = aggregateGpuProcessUsers(gpu);
+  return (
+    <article className="monitorGpuBlock" data-status={gpu.status}>
+      <header className="monitorGpuLineHeader">
+        <strong>{`${gpu.index ? `GPU ${gpu.index}` : copy.monitor.gpu} · ${formatGpuName(gpu.name)}`}</strong>
+        <span>{formatGpuCoreDetails(gpu, copy)}</span>
+      </header>
+      <MonitorGpuMeter copy={copy} gpu={gpu} userUsages={userUsages} />
+      {gpu.status === "detected" ? (
+        <p className="monitorGpuDetected">{copy.monitor.detectedOnly}</p>
+      ) : userUsages.length > 0 ? (
+        <div className="monitorProcessList">
+          {userUsages.map((usage) => (
+            <div
+              className="monitorProcessRow"
+              key={usage.user}
+              style={{ "--monitor-user-color": usage.color } as CSSProperties}
+              title={`${copy.monitor.usage}: ${formatBytes(usage.usedMemoryBytes, copy)}`}
+            >
+              <strong>{usage.user}</strong>
+              <span>{formatProcessCount(usage.processCount, copy)}</span>
+              <span>{formatDuration(usage.elapsedSeconds, copy)}</span>
+              <span>{formatBytes(usage.usedMemoryBytes, copy)}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function MonitorHostDragGhost({
+  copy,
+  dragState,
+  host,
+  snapshot
+}: {
+  copy: UICopy;
+  dragState: MonitorDragState;
+  host: Host;
+  snapshot: HostResourceSnapshot | null;
+}) {
+  const cpuPercent = monitorCpuPercent(snapshot?.cpu);
+  const memoryPercent = snapshot?.memory?.usedPercent ?? null;
+  const gpus = snapshot?.gpus ?? [];
+  const gpuMemory = summarizeGpuMemory(gpus, copy);
+  return (
+    <div
+      className="monitorDragGhost"
+      style={{
+        height: dragState.height,
+        left: dragState.x - dragState.offsetX,
+        top: dragState.y - dragState.offsetY,
+        width: dragState.width
+      } as CSSProperties}
+    >
+      <span className="monitorDragGhostHandle" aria-hidden="true" />
+      <header className="monitorHostHeader">
+        <h3>{host.hostAlias}</h3>
+        {snapshot ? (
+          <Badge tone={resourceStatusTone(snapshot.status)}>{resourceStatusLabel(snapshot.status, copy)}</Badge>
+        ) : (
+          <Badge tone="gray">{copy.monitor.statusNoSample}</Badge>
+        )}
+      </header>
+      <div className="monitorSummaryGrid">
+        <MonitorSummaryTile
+          copy={copy}
+          detail={formatMonitorMetricDetail(copy.monitor.available, formatBytes(snapshot?.memory?.availableBytes, copy), copy)}
+          label={copy.monitor.memory}
+          meterValue={memoryPercent}
+          tone="memory"
+          value={formatPercent(memoryPercent, copy)}
+        />
+        <MonitorSummaryTile
+          copy={copy}
+          detail={formatMonitorMetricDetail(copy.monitor.load, formatCpuLoadSummary(snapshot?.cpu, copy), copy)}
+          label={copy.monitor.cpu}
+          meterValue={cpuPercent}
+          tone="cpu"
+          value={formatPercent(cpuPercent, copy)}
+        />
+        <MonitorSummaryTile
+          copy={copy}
+          detail={gpuMemory.detail}
+          label={copy.monitor.gpu}
+          meterValue={gpuMemory.percent}
+          tone={gpus.length > 0 ? "gpu" : "gray"}
+          value={String(gpus.length)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MonitorGpuMeter({
+  copy,
+  gpu,
+  userUsages
+}: {
+  copy: UICopy;
+  gpu: HostResourceSnapshot["gpus"][number];
+  userUsages: MonitorGpuUserUsage[];
+}) {
+  const denominator = gpu.memoryTotalBytes || userUsages.reduce((sum, usage) => sum + usage.usedMemoryBytes, 0);
+  if (userUsages.length === 0 || denominator <= 0) {
+    return <MonitorMeter value={gpu.utilizationPercent} tone="gpu" />;
+  }
+  return (
+    <div className="monitorMeter monitorSegmentedMeter" aria-label={copy.monitor.gpuProcesses}>
+      {userUsages.map((usage) => {
+        const width = Math.min(100, Math.max(0, usage.usedMemoryBytes / denominator * 100));
+        return (
+          <span
+            key={usage.user}
+            style={{
+              width: `${width > 0 && width < 1 ? 1 : width}%`,
+              background: usage.color
+            } as CSSProperties}
+            title={`${usage.user}: ${formatBytes(usage.usedMemoryBytes, copy)}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function MonitorMeter({ value, tone }: { value: number | null; tone: MonitorMeterTone }) {
+  const width = typeof value === "number" ? `${Math.min(100, Math.max(0, value))}%` : "0%";
+  return (
+    <div className="monitorMeter" data-tone={tone}>
+      <span style={{ width } as CSSProperties} />
+    </div>
   );
 }
 
@@ -7477,6 +8293,262 @@ function formatNullableBoolean(value: boolean | null, copy: UICopy) {
 
 function formatLatency(value: number | null | undefined, copy: UICopy) {
   return typeof value === "number" ? `${value} ms` : copy.hosts.unknown;
+}
+
+function resourceStatusTone(status: HostResourceSnapshot["status"]): BadgeTone {
+  if (status === "ok") return "green";
+  if (status === "partial") return "yellow";
+  return "red";
+}
+
+function resourceStatusLabel(status: HostResourceSnapshot["status"], copy: UICopy) {
+  if (status === "ok") return copy.monitor.statusOnline;
+  if (status === "partial") return copy.monitor.statusPartial;
+  return copy.monitor.statusFailed;
+}
+
+function monitorCpuPercent(cpu: HostResourceSnapshot["cpu"] | null | undefined) {
+  if (typeof cpu?.usagePercent === "number") return cpu.usagePercent;
+  if (typeof cpu?.load1 === "number" && typeof cpu.cores === "number" && cpu.cores > 0) {
+    return Math.min(100, Math.max(0, cpu.load1 / cpu.cores * 100));
+  }
+  return null;
+}
+
+function summarizeGpuMemory(gpus: HostResourceSnapshot["gpus"], copy: UICopy) {
+  if (gpus.length === 0) return { detail: copy.monitor.noGpu, percent: null };
+  let usedBytes = 0;
+  let totalBytes = 0;
+  let hasUsed = false;
+  let hasTotal = false;
+  for (const gpu of gpus) {
+    if (typeof gpu.memoryUsedBytes === "number") {
+      usedBytes += gpu.memoryUsedBytes;
+      hasUsed = true;
+    }
+    if (typeof gpu.memoryTotalBytes === "number") {
+      totalBytes += gpu.memoryTotalBytes;
+      hasTotal = true;
+    }
+  }
+  if (!hasTotal) {
+    return { detail: copy.monitor.detectedOnly, percent: 0 };
+  }
+  const used = hasUsed ? usedBytes : 0;
+  return {
+    detail: `${formatGpuMemoryBytes(used, copy)} / ${formatGpuMemoryBytes(totalBytes, copy)}`,
+    percent: totalBytes > 0 ? used / totalBytes * 100 : 0
+  };
+}
+
+function formatGpuMemoryBytes(value: number | null | undefined, copy: UICopy) {
+  if (value === 0) return "0 MB";
+  return formatBytes(value, copy);
+}
+
+function formatPercent(value: number | null | undefined, copy: UICopy) {
+  return typeof value === "number" ? `${value.toFixed(1)}%` : copy.hosts.unknown;
+}
+
+function formatCompactPercent(value: number | null | undefined, copy: UICopy) {
+  if (typeof value !== "number") return copy.hosts.unknown;
+  return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
+}
+
+function formatLoad(cpu: HostResourceSnapshot["cpu"] | null | undefined, copy: UICopy) {
+  if (!cpu || typeof cpu.load1 !== "number") return copy.hosts.unknown;
+  return [cpu.load1, cpu.load5, cpu.load15]
+    .map((value) => (typeof value === "number" ? value.toFixed(2) : "-"))
+    .join(" / ");
+}
+
+function formatCpuLoadSummary(cpu: HostResourceSnapshot["cpu"] | null | undefined, copy: UICopy) {
+  const load = typeof cpu?.load1 === "number" ? cpu.load1.toFixed(1) : copy.hosts.unknown;
+  const cores = typeof cpu?.cores === "number" ? String(cpu.cores) : copy.hosts.unknown;
+  return `${load} / ${cores}`;
+}
+
+function formatMonitorMetricDetail(label: string, value: string, copy: UICopy) {
+  return `${label}${isZhCopy(copy) ? "：" : ": "}${value}`;
+}
+
+function formatBytes(value: number | null | undefined, copy: UICopy) {
+  if (typeof value !== "number") return copy.hosts.unknown;
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let next = value;
+  let unit = 0;
+  while (next >= 1024 && unit < units.length - 1) {
+    next /= 1024;
+    unit += 1;
+  }
+  return `${next >= 10 || unit === 0 ? next.toFixed(0) : next.toFixed(1)} ${units[unit]}`;
+}
+
+function isZhCopy(copy: UICopy) {
+  return copy.navItems[0].label !== "Home";
+}
+
+function formatMonitorTimestamp(value: string | null, copy: UICopy) {
+  if (!value) return copy.monitor.never;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  const zh = isZhCopy(copy);
+  return new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(new Date(timestamp));
+}
+
+function formatGpuName(name: string) {
+  const compact = name
+    .replace(/\bNVIDIA\b/gi, "")
+    .replace(/\bGeForce\b/gi, "")
+    .replace(/\bGraphics\b/gi, "")
+    .replace(/\bPCIe\b/gi, "")
+    .replace(/\bGPU\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const match = compact.match(/\b(RTX\s?\d{4}|A\d{3,4}|GB\d+|H\d{3}|L\d{2,3})\b/i);
+  return (match?.[1] ?? (compact || name)).replace(/\s+/g, " ");
+}
+
+function formatGpuCoreDetails(gpu: HostResourceSnapshot["gpus"][number], copy: UICopy) {
+  if (gpu.status === "detected") return copy.monitor.detectedOnly;
+  const memory = summarizeGpuMemory([gpu], copy).detail;
+  return [
+    formatCompactPercent(gpu.utilizationPercent, copy),
+    formatWatts(gpu.powerWatts, copy),
+    memory
+  ].join(" · ");
+}
+
+function formatWatts(value: number | null | undefined, copy: UICopy) {
+  return typeof value === "number" ? `${value.toFixed(0)} W` : copy.hosts.unknown;
+}
+
+function formatDuration(value: number | null | undefined, copy: UICopy) {
+  if (typeof value !== "number") return copy.hosts.unknown;
+  if (value >= 3600) {
+    const hours = value / 3600;
+    return `${hours >= 10 ? hours.toFixed(0) : hours.toFixed(1)} h`;
+  }
+  if (value >= 60) return `${Math.round(value / 60)} min`;
+  return `${Math.max(0, Math.round(value))} s`;
+}
+
+function formatProcessCount(value: number, copy: UICopy) {
+  return isZhCopy(copy) ? `${value} 进程` : `${value} proc`;
+}
+
+function aggregateGpuProcessUsers(gpu: HostResourceSnapshot["gpus"][number]): MonitorGpuUserUsage[] {
+  const users = new Map<string, Omit<MonitorGpuUserUsage, "color">>();
+  for (const process of gpu.processes ?? []) {
+    const user = process.user?.trim() || "unknown";
+    const current = users.get(user) ?? {
+      user,
+      processCount: 0,
+      elapsedSeconds: null,
+      usedMemoryBytes: 0
+    };
+    current.processCount += 1;
+    current.usedMemoryBytes += process.usedMemoryBytes ?? 0;
+    if (typeof process.elapsedSeconds === "number") {
+      current.elapsedSeconds = Math.max(current.elapsedSeconds ?? 0, process.elapsedSeconds);
+    }
+    users.set(user, current);
+  }
+  return Array.from(users.values())
+    .sort((left, right) => right.usedMemoryBytes - left.usedMemoryBytes || left.user.localeCompare(right.user))
+    .map((usage) => ({ ...usage, color: monitorUserColor(usage.user) }));
+}
+
+function monitorUserColor(user: string) {
+  const colors = ["#2563eb", "#0f9f6e", "#b7791f", "#c2417f", "#7c3aed", "#0891b2"];
+  let hash = 0;
+  for (const char of user) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
+}
+
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function measureMonitorCardRects(cardRefs: Map<string, HTMLElement>) {
+  const rects = new Map<string, DOMRect>();
+  cardRefs.forEach((element, alias) => {
+    rects.set(alias, element.getBoundingClientRect());
+  });
+  return rects;
+}
+
+function previewMonitorHostOrder(
+  order: string[],
+  draggedAlias: string,
+  pointerX: number,
+  pointerY: number,
+  cardRefs: Map<string, HTMLElement>
+) {
+  const baseOrder = order.filter((alias) => alias !== draggedAlias);
+  const candidates = baseOrder
+    .map((alias) => {
+      const rect = cardRefs.get(alias)?.getBoundingClientRect();
+      if (!rect) return null;
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      return {
+        alias,
+        centerX,
+        centerY,
+        distance: Math.hypot(pointerX - centerX, pointerY - centerY)
+      };
+    })
+    .filter((entry): entry is { alias: string; centerX: number; centerY: number; distance: number } => Boolean(entry))
+    .sort((left, right) => left.distance - right.distance);
+  const nearest = candidates[0];
+  if (!nearest) return order;
+  const verticalIntent = Math.abs(pointerY - nearest.centerY) >= Math.abs(pointerX - nearest.centerX);
+  const insertAfter = verticalIntent ? pointerY > nearest.centerY : pointerX > nearest.centerX;
+  const insertIndex = baseOrder.indexOf(nearest.alias) + (insertAfter ? 1 : 0);
+  const nextOrder = [...baseOrder];
+  nextOrder.splice(insertIndex, 0, draggedAlias);
+  return nextOrder;
+}
+
+function orderMonitorHosts(hosts: Host[], hostOrder: string[]) {
+  const byAlias = new Map(hosts.map((host) => [host.hostAlias.toLowerCase(), host]));
+  const used = new Set<string>();
+  const ordered: Host[] = [];
+  for (const alias of hostOrder) {
+    const key = alias.toLowerCase();
+    const host = byAlias.get(key);
+    if (host && !used.has(key)) {
+      ordered.push(host);
+      used.add(key);
+    }
+  }
+  for (const host of hosts) {
+    const key = host.hostAlias.toLowerCase();
+    if (!used.has(key)) ordered.push(host);
+  }
+  return ordered;
+}
+
+function formatGpuDetails(gpu: HostResourceSnapshot["gpus"][number], tool: string, copy: UICopy) {
+  if (gpu.status === "detected") {
+    return [copy.monitor.detectedOnly, tool ? `${copy.monitor.gpuTool}: ${tool}` : null].filter(Boolean).join(" · ");
+  }
+  const parts = [
+    tool ? `${copy.monitor.gpuTool}: ${tool}` : null,
+    `${copy.monitor.gpu}: ${formatPercent(gpu.utilizationPercent, copy)}`,
+    `${copy.monitor.vram}: ${formatBytes(gpu.memoryUsedBytes, copy)} / ${formatBytes(gpu.memoryTotalBytes, copy)}`,
+    `${copy.monitor.temp}: ${typeof gpu.temperatureC === "number" ? `${gpu.temperatureC.toFixed(1)} C` : copy.hosts.unknown}`,
+    `${copy.monitor.power}: ${typeof gpu.powerWatts === "number" ? `${gpu.powerWatts.toFixed(1)} W` : copy.hosts.unknown}`
+  ].filter(Boolean);
+  if (gpu.driverVersion) parts.push(`${copy.monitor.driver}: ${gpu.driverVersion}`);
+  return parts.join(" · ");
 }
 
 function emptySshHostDraft(identityFile: string): SshHostDraft {

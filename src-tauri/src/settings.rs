@@ -62,6 +62,12 @@ pub(crate) struct AppSettings {
     #[serde(default)]
     pub(crate) network_proxy_url: String,
     #[serde(default = "default_true")]
+    pub(crate) resource_monitor_auto_refresh: bool,
+    #[serde(default)]
+    pub(crate) resource_monitor_host_order: Vec<String>,
+    #[serde(default = "default_resource_monitor_refresh_seconds")]
+    pub(crate) resource_monitor_refresh_seconds: u16,
+    #[serde(default = "default_true")]
     pub(crate) sidebar_completion_indicators: bool,
     #[serde(default)]
     pub(crate) setup_guide_dismissed: bool,
@@ -76,6 +82,9 @@ impl Default for AppSettings {
             close_button_behavior: CloseButtonBehavior::Ask,
             network_proxy_mode: NetworkProxyMode::Auto,
             network_proxy_url: String::new(),
+            resource_monitor_auto_refresh: true,
+            resource_monitor_host_order: Vec::new(),
+            resource_monitor_refresh_seconds: 60,
             sidebar_completion_indicators: true,
             setup_guide_dismissed: false,
         }
@@ -116,6 +125,10 @@ fn default_close_button_behavior() -> CloseButtonBehavior {
 
 fn default_network_proxy_mode() -> NetworkProxyMode {
     NetworkProxyMode::Auto
+}
+
+fn default_resource_monitor_refresh_seconds() -> u16 {
+    60
 }
 
 fn default_true() -> bool {
