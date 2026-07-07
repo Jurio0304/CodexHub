@@ -4,7 +4,7 @@ Date: 2026-07-01
 
 ## macOS
 
-macOS release-build support is merged, and the v0.4.0 public artifact still requires real Mac validation for this release. The artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
+macOS release-build support is merged, and the v0.4.1 public artifact still requires real Mac validation for this release. The artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
 
 The following macOS limitations remain:
 

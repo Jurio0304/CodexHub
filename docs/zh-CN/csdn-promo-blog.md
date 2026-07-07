@@ -90,7 +90,7 @@ CodexHub 也把 skills 管理纳入了同一个工作流。你可以导入包含
 
 Settings 页面负责本地 SSH 就绪检查、公钥复制、应用更新检查，以及窗口关闭行为等桌面偏好。
 
-Windows 版本支持托盘图标；macOS 版本面向 Apple Silicon 提供 `.dmg` 安装包，v0.4.0 本轮仍需要真实 Mac 验证；当前 macOS 构建仍是 unsigned/ad-hoc，首次打开可能需要通过系统安全设置手动允许。日常使用请优先从 GitHub Releases 下载可信构建。
+Windows 版本支持托盘图标；macOS 版本面向 Apple Silicon 提供 `.dmg` 安装包，v0.4.1 本轮仍需要真实 Mac 验证；当前 macOS 构建仍是 unsigned/ad-hoc，首次打开可能需要通过系统安全设置手动允许。日常使用请优先从 GitHub Releases 下载可信构建。
 
 > 【截图占位 07：Settings 设置页】
 > 建议截图内容：Local SSH 检查、公钥状态、版本信息、更新检查、关闭按钮偏好。
