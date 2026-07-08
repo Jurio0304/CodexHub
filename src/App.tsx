@@ -2,7 +2,6 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import type { CSSProperties, FormEvent, MouseEventHandler, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { loadInitialAppData } from "./app/bootstrap";
 import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
 import type {
@@ -705,7 +704,6 @@ const uiCopy = {
       refresh: "Refresh",
       generating: "Generating...",
       generateEd25519: "Generate Ed25519",
-      openKeyDirectory: "Open key directory",
       publicKey: "Public key",
       readyToCopy: "Ready to copy",
       noPublicKey: "No public key detected",
@@ -1299,7 +1297,6 @@ const uiCopy = {
       refresh: "刷新",
       generating: "生成中...",
       generateEd25519: "生成 Ed25519",
-      openKeyDirectory: "打开密钥目录",
       publicKey: "公钥",
       readyToCopy: "可复制",
       noPublicKey: "未检测到公钥",
@@ -2333,17 +2330,6 @@ function App() {
     }
   };
 
-  const handleOpenSshKeyDirectory = async () => {
-    try {
-      const status = sshStatus ?? await api.getSshStatus();
-      setSshStatus(status);
-      await openPath(status.sshDir);
-    } catch (error) {
-      setNotice(formatError(error));
-      throw error;
-    }
-  };
-
   const handleTestHost = async (idOrAlias: string, signalSection: SectionId | null = activeSection) => {
     const run = async () => {
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
@@ -3201,7 +3187,6 @@ function App() {
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
             onNetworkProxyModeChange={(networkProxyMode) => persistSettings({ ...settings, networkProxyMode })}
             onNetworkProxyManualRequest={() => setNetworkProxyManualOpen(true)}
-            onOpenKeyDirectory={handleOpenSshKeyDirectory}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
             onRefreshSsh={async () => {
               await runSectionOperation("settings", refreshSshState);
@@ -7637,10 +7622,7 @@ function TaskLogModal({
               <details className="taskLogFlowRow" data-level={log.level} key={log.id} open={task.status === "failed" || log.level === "error"}>
                 <summary className="codexOperationLogRow" data-level={log.level}>
                   <strong>{copy.status.log[log.level]}</strong>
-                  <span>
-                    <em>{log.timestamp}</em>
-                    {log.message}
-                  </span>
+                  <span>{log.message}</span>
                 </summary>
                 <div className="taskLogFlowDetails">
                   <div className="taskLogMetaGrid">
@@ -7702,7 +7684,6 @@ function SettingsView({
   onFontPresetChange,
   onNetworkProxyModeChange,
   onNetworkProxyManualRequest,
-  onOpenKeyDirectory,
   onPlatformAppearanceChange,
   onRefreshSsh,
   onSidebarCompletionIndicatorsChange,
@@ -7722,7 +7703,6 @@ function SettingsView({
   onFontPresetChange: (fontPreset: FontPreset) => void;
   onNetworkProxyModeChange: (mode: NetworkProxyMode) => void;
   onNetworkProxyManualRequest: () => void;
-  onOpenKeyDirectory: () => Promise<unknown>;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
   onRefreshSsh: () => Promise<unknown>;
   onSidebarCompletionIndicatorsChange: (enabled: boolean) => void;
@@ -7820,11 +7800,8 @@ function SettingsView({
           </div>
           <CommandBar ariaLabel={copy.settings.localSsh} className="topActions">
             <button className="secondaryButton" type="button" onClick={() => void onRefreshSsh()}>{copy.settings.refresh}</button>
-            <button className="secondaryButton copyPublicKeyButton" data-success={publicKeyCopied} disabled={!publicKey} type="button" onClick={() => void handleCopyPublicKey()}>
+            <button className="primaryButton copyPublicKeyButton" data-success={publicKeyCopied} disabled={!publicKey} type="button" onClick={() => void handleCopyPublicKey()}>
               {publicKeyCopied ? copy.settings.copyPublicKeySuccess : copy.settings.copyPublicKey}
-            </button>
-            <button className="primaryButton" disabled={!sshStatus || sshBusy} type="button" onClick={() => void onOpenKeyDirectory()}>
-              {copy.settings.openKeyDirectory}
             </button>
           </CommandBar>
         </div>

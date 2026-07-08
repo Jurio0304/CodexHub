@@ -68,6 +68,18 @@ pnpm release:portable:dev
 
 Do not create a GitHub Release from the `dev` channel. Do not create any GitHub Release until the user explicitly approves publishing the `stable` build.
 
+## GitHub Actions Boundary
+
+Code pushes and pull requests to `master` run the lightweight `CI` workflow only. That workflow validates source state with smoke checks, mock smoke checks, TypeScript typechecking, the web build, and Rust tests. It does not build installers, produce desktop release bundles, upload assets, or change updater feeds.
+
+Platform release workflows are manual-only:
+
+- `.github/workflows/build-windows-release.yml`
+- `.github/workflows/build-macos-release.yml`
+- `.github/workflows/build-linux-release.yml`
+
+Run those workflows with `workflow_dispatch` only after the owner has approved a stable publication. Public Release assets are uploaded only when the manual run sets `upload_to_release=true` and targets an existing GitHub Release tag.
+
 ## Stable Updater Boundary
 
 Only `stable` may use the Tauri updater. The current foundation wires the updater plugin, Settings status/check UI, a gated install action, update-check Task history, a Windows signed-updater release workflow, and an unsigned/ad-hoc Apple Silicon macOS updater release path. Linux deb packages are manual install assets and do not participate in the updater feed yet. The stable Check button remains clickable so formal builds can report their updater state; without both `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`, the backend returns `pending-configuration`. Failed checks open a log dialog and remain reviewable from Tasks. Install stays disabled until a signed stable feed returns `available`.

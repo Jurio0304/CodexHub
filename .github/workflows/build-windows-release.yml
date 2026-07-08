@@ -12,17 +12,6 @@ on:
         required: true
         type: boolean
         default: false
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
-      - "figs/**"
-      - ".agents/**"
-      - "LICENSE"
-      - "SECURITY.md"
-
 jobs:
   windows-release:
     name: Windows signed updater release

@@ -12,27 +12,6 @@ on:
         required: true
         type: boolean
         default: false
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
-      - "figs/**"
-      - ".agents/**"
-      - "LICENSE"
-      - "SECURITY.md"
-  pull_request:
-    branches:
-      - master
-    paths-ignore:
-      - "README.md"
-      - "docs/**"
-      - "figs/**"
-      - ".agents/**"
-      - "LICENSE"
-      - "SECURITY.md"
-
 jobs:
   linux-release:
     name: Linux ${{ matrix.deb_arch }} deb release

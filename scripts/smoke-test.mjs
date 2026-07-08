@@ -64,6 +64,7 @@ const requiredFiles = [
   "src-tauri/src/tasks.rs",
   "src-tauri/src/updater.rs",
   "src-tauri/capabilities/default.json",
+  ".github/workflows/ci.yml",
   ".github/workflows/build-macos-release.yml",
   ".github/workflows/build-linux-release.yml",
   ".github/workflows/build-windows-release.yml"
@@ -350,6 +351,7 @@ const rustBackend = [
 const sshRs = read("src-tauri/src/ssh.rs");
 const rustPlatform = read("src-tauri/src/platform.rs");
 const tsPlatform = read("src/platform.ts");
+const ciWorkflow = read(".github/workflows/ci.yml");
 const macosWorkflow = read(".github/workflows/build-macos-release.yml");
 const linuxWorkflow = read(".github/workflows/build-linux-release.yml");
 const windowsWorkflow = read(".github/workflows/build-windows-release.yml");
@@ -585,6 +587,40 @@ for (const token of [
   "/opt/homebrew/bin/codex"
 ]) {
   if (!tsPlatform.includes(token)) fail(`missing TS platform adapter token: ${token}`);
+}
+for (const token of [
+  "name: CI",
+  "push:",
+  "pull_request:",
+  "branches:",
+  "- master",
+  "runs-on: ubuntu-22.04",
+  "pnpm smoke",
+  "pnpm smoke:mock",
+  "pnpm typecheck",
+  "pnpm build:web",
+  "cargo test --manifest-path src-tauri/Cargo.toml",
+  "concurrency:"
+]) {
+  if (!ciWorkflow.includes(token)) fail(`missing CI workflow token: ${token}`);
+}
+for (const forbiddenCiToken of [
+  "pnpm build:linux:release",
+  "pnpm build:macos:release",
+  "pnpm build:installer:nsis:updater",
+  "gh release upload",
+  "upload_to_release"
+]) {
+  if (ciWorkflow.includes(forbiddenCiToken)) fail(`CI workflow must not package or upload release assets: ${forbiddenCiToken}`);
+}
+for (const [name, workflow] of [
+  ["macOS", macosWorkflow],
+  ["Linux", linuxWorkflow],
+  ["Windows", windowsWorkflow]
+]) {
+  if (workflow.includes("\n  push:")) fail(`${name} release workflow must be manual-only and not run on push`);
+  if (workflow.includes("\n  pull_request:")) fail(`${name} release workflow must be manual-only and not run on pull_request`);
+  if (!workflow.includes("workflow_dispatch:")) fail(`${name} release workflow must keep manual workflow_dispatch`);
 }
 for (const token of [
   "runs-on: macos-14",
@@ -1331,6 +1367,7 @@ if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}
 for (const token of ["TaskLogModal", "taskLogDetailModal", "taskLogFlowRow", "taskLogMetaGrid", "taskLogStreamGrid", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\" || log.level === \"error\"}"]) {
   if (!app.includes(token)) fail(`missing task-history log modal token: ${token}`);
 }
+if (app.includes("<em>{log.timestamp}</em>")) fail("Tasks log summary rows should show message content without timestamp labels");
 for (const token of ["logPanel", "publicKeyBox", "commandGrid", "commands.map((command)"]) {
   if (app.includes(token)) fail(`Tasks/Settings simplification should remove old token: ${token}`);
 }

@@ -4279,14 +4279,6 @@ button:disabled {
   gap: 3px;
 }
 
-.taskLogFlowRow summary.codexOperationLogRow em {
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: 0.74rem;
-  font-style: normal;
-  line-height: 1.2;
-}
-
 .taskLogFlowDetails {
   display: grid;
   gap: 10px;
@@ -4491,9 +4483,9 @@ button:disabled {
 }
 
 .copyPublicKeyButton[data-success="true"] {
-  border-color: color-mix(in srgb, var(--green) 52%, var(--border));
-  color: var(--green);
-  background: color-mix(in srgb, var(--green) 12%, var(--surface-solid));
+  border-color: color-mix(in srgb, var(--blue) 70%, var(--border));
+  color: #ffffff;
+  background: var(--blue);
 }
 
 td code {

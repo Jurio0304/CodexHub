@@ -59,6 +59,7 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 
 - `scripts/validate-release.ps1 -Channel stable -UserTested` completes with zero failures.
 - The owner has manually tested the built app end to end.
+- Ordinary code pushes and pull requests have passed the lightweight `CI` workflow; release workflows have not been triggered automatically by the merge.
 - The summary lists the stable executable or installer, updater feed, and `SHA256SUMS.txt` artifact paths.
 - If stable updater publication is enabled, the build environment injects `CODEXHUB_STABLE_UPDATE_ENDPOINT` and `CODEXHUB_STABLE_UPDATER_PUBKEY`; `TAURI_SIGNING_PRIVATE_KEY` is supplied only as a GitHub Actions secret or trusted local environment value.
 - If stable updater publication is not enabled, Settings Check may be clicked but must report pending configuration; the Update action must remain disabled rather than pretending updates are available or installable.
@@ -68,6 +69,12 @@ Do not run live SSH acceptance by default. It requires an explicit sanitized tes
 - `scripts/check-release-exe.ps1` starts the release executable with temporary app data and confirms it stays running through the startup window.
 - Any live SSH acceptance evidence uses a sanitized test host and no production secrets or personal host names.
 - No GitHub tag, upload, updater feed change, or GitHub Release is created until the owner explicitly approves publication.
+
+## GitHub Actions Trigger Policy
+
+The `CI` workflow is the only workflow that should run automatically for normal code pushes and pull requests to `master`. It validates source state with `pnpm smoke`, `pnpm smoke:mock`, `pnpm typecheck`, `pnpm build:web`, and `cargo test --manifest-path src-tauri/Cargo.toml`.
+
+The Windows, macOS, and Linux release workflows are manual-only. Start them from GitHub Actions with `workflow_dispatch` after the owner approves a stable publication. Set `upload_to_release=true` only when the target GitHub Release already exists and the assets should be attached publicly.
 
 ## Stable Updater Publication
 
@@ -95,8 +102,8 @@ The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` 
 
 The v0.4.2 macOS artifact still requires real Mac validation. For each future macOS public artifact, verify:
 
-- `Build macOS Release` completes on `master`.
-- The uploaded CI artifact uses the current package version, for example `codexhub-macos-v<version>-unsigned-release`.
+- `Build macOS Release` is manually dispatched for the approved tag.
+- The uploaded workflow artifact uses the current package version, for example `codexhub-macos-v<version>-unsigned-release`.
 - The artifact is clearly labeled unsigned until Developer ID signing and notarization are configured.
 - Documentation and GitHub Release notes explain the unsigned/ad-hoc status and manual trust steps when needed; the app UI does not display unsigned or notarization warnings.
 - The real Mac checklist in `docs/macos-support.md` is completed again for the new artifact.
@@ -112,8 +119,8 @@ The Linux workflow can build Ubuntu/Debian `amd64` and `arm64` `.deb` artifacts 
 
 For each future Linux public artifact, verify:
 
-- `Build Linux Release` completes on `master`.
-- The uploaded CI artifacts use the current package version, for example `codexhub-linux-v<version>-amd64-deb-release` and `codexhub-linux-v<version>-arm64-deb-release`.
+- `Build Linux Release` is manually dispatched for the approved tag.
+- The uploaded workflow artifacts use the current package version, for example `codexhub-linux-v<version>-amd64-deb-release` and `codexhub-linux-v<version>-arm64-deb-release`.
 - The GitHub Release includes `CodexHub_<version>_amd64.deb` and `CodexHub_<version>_arm64.deb` only after owner approval.
 - The merged feed does not include a Linux platform key while Linux remains deb-only.
 - The real Linux checklist in `docs/linux-support.md` is completed again for the new artifact.
