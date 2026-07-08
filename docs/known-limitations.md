@@ -1,6 +1,6 @@
 # CodexHub Known Limitations
 
-Date: 2026-07-01
+Date: 2026-07-08
 
 ## macOS
 
@@ -11,6 +11,17 @@ The following macOS limitations remain:
 - Gatekeeper behavior for unsigned/ad-hoc release artifacts.
 - Developer ID signing and notarization are not configured.
 - Future changes to lifecycle, packaging, SSH path handling, or Codex App handoff must re-run the real Mac checklist in `docs/macos-support.md`.
+
+## Linux Desktop
+
+Linux desktop support targets Ubuntu/Debian x86_64 first. AppImage is the updater-capable artifact, and `.deb` is the manual Ubuntu/Debian install artifact.
+
+The following Linux desktop limitations remain:
+
+- rpm, arm64, Snap, and Flatpak packages are not in scope yet.
+- Linux packages require real Ubuntu/Debian desktop validation before broad distribution.
+- AppImage updater support is the first automatic-update path; `.deb` upgrades remain manual unless a package-repository update story is designed later.
+- Some distributions may require FUSE/AppImage desktop integration packages before AppImage launch works normally.
 
 ## Codex App Integration
 

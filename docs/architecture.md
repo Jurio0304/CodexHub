@@ -1,7 +1,7 @@
 # CodexHub Architecture
 
-Date: 2026-07-01
-Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows and macOS release-build support.
+Date: 2026-07-08
+Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 Linux release-build support.
 
 ## Architecture Principle
 
@@ -12,7 +12,7 @@ CodexHub is a desktop control plane for Codex App SSH-based remote development. 
 
 Codex App remains the interactive coding surface. If Codex App has no public API for host registration or reconnect, CodexHub provides a safe fallback wizard instead of touching private app state.
 
-The local platform layer owns OS-specific paths and command discovery. Windows keeps `%USERPROFILE%\.ssh\config`, while macOS uses `~/.ssh/config`, `~/.ssh/id_ed25519`, `~/.codex/config.toml`, `~/.codex/skills`, and the Codex binary search order documented in `docs/macos-support.md`.
+The local platform layer owns OS-specific paths and command discovery. Windows keeps `%USERPROFILE%\.ssh\config`, while macOS and Linux use `~/.ssh/config`, `~/.ssh/id_ed25519`, `~/.codex/config.toml`, `~/.codex/skills`, and the Codex binary search order documented in `docs/macos-support.md` and `docs/linux-support.md`.
 
 ## Runtime Layers
 

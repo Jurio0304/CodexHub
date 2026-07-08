@@ -3,7 +3,7 @@
 
   <h1>CodexHub</h1>
 
-  <p><strong>面向 Codex App SSH 工作流的通用桌面控制台，支持 Windows 和 macOS。</strong></p>
+  <p><strong>面向 Codex App SSH 工作流的通用桌面控制台，支持 Windows、macOS 和 Linux。</strong></p>
   <p>准备 Linux 主机、安装或更新远端 Codex、应用 profile、同步 skills，并查看脱敏任务日志；不写入 Codex App 私有状态。</p>
 
   <p>
@@ -19,7 +19,7 @@
   <p>
     <img alt="Release" src="https://img.shields.io/badge/release-v0.4.2-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
-    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS-0078D4" />
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB" />
     <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-B7410E" />
@@ -28,7 +28,7 @@
 
 ## 🧭 快速了解
 
-CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App 更安全、可审计地使用多台 SSH Linux 主机。
+CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 Codex App 更安全、可审计地使用多台 SSH Linux 主机。
 
 - 管理本地 OpenSSH key 状态和 CodexHub 托管的 SSH alias。
 - 用一次性密码初始化新 Linux 主机，再切换到 key 登录。
@@ -49,9 +49,9 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 
 ## ✨ 核心能力
 
-- 检测 Windows 和 macOS 的本地 OpenSSH、本地公钥和 SSH config 状态。
+- 检测 Windows、macOS 和 Linux 的本地 OpenSSH、本地公钥和 SSH config 状态。
 - 在没有合适密钥时生成不覆盖旧文件的 Ed25519 key。
-- 只读导入本地 SSH config 中安全的 Host alias（Windows 为 `%USERPROFILE%\.ssh\config`，macOS 为 `~/.ssh/config`）。
+- 只读导入本地 SSH config 中安全的 Host alias（Windows 为 `%USERPROFILE%\.ssh\config`，macOS/Linux 为 `~/.ssh/config`）。
 - 只写入 CodexHub 托管的 SSH config block，并在写入前备份。
 - 通过 `ssh <HostAlias> echo ok` 测试连接。
 - 探测远端 Linux 主机的系统、架构、shell、PATH、Codex CLI、`~/.codex/config.toml` 和 skills 数量。
@@ -60,7 +60,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 - 导入本地或 GitHub skill，并安装到本机或远端目标。
 - 对已记住主机展示只读、页面活跃时刷新的 CPU、内存和 GPU 资源采样。
 - 在 Tasks 中查看命令、stdout/stderr、退出码、耗时和失败原因，日志默认脱敏。
-- 提供 Windows 托盘 / macOS 菜单栏状态图标；首次点击窗口关闭按钮时会询问以后是退出程序还是最小化到托盘，后续可在 Settings 修改。
+- 提供 Windows 托盘 / macOS 菜单栏 / Linux 托盘状态图标；首次点击窗口关闭按钮时会询问以后是退出程序还是最小化到托盘，后续可在 Settings 修改。
 - 完成准备后，引导用户到 Codex App 手动添加或启用已验证的 SSH alias。
 
 ## 🔐 安全边界
@@ -91,6 +91,13 @@ macOS 桌面应用需要：
 3. 通过 OpenAI/Codex 官方指引安装 Codex CLI。
 4. 可通过 SSH 登录的 Linux 远端主机。
 
+Linux 桌面应用需要：
+
+1. Ubuntu/Debian x86_64。
+2. OpenSSH client tools 和 `ssh-keygen`。
+3. 通过 OpenAI/Codex 官方指引安装 Codex CLI。
+4. 可通过 SSH 登录的 Linux 远端主机。
+
 ## 🚀 安装
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
@@ -98,6 +105,7 @@ macOS 桌面应用需要：
 - Windows：下载并运行 `CodexHub_0.4.2_x64-setup.exe`。
 - macOS Apple Silicon：下载 `CodexHub_0.4.2_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.4.2 macOS 资产仍为 unsigned/ad-hoc，且本轮仍需要真实 Mac 验证；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
+- Linux x86_64：下载 `CodexHub_0.4.2_amd64.AppImage`，赋予执行权限后运行；也可以在 Ubuntu/Debian 安装 `CodexHub_0.4.2_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
 ## ⚡ 快速开始

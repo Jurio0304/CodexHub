@@ -19,7 +19,7 @@ base64 = "0.22"
 sha2 = "0.10"
 toml = "0.8"
 flate2 = "1"
-keyring = { version = "3", features = ["apple-native", "windows-native"] }
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 russh = { version = "0.61.2", default-features = false, features = ["flate2", "ring", "rsa"] }
 tar = "0.4"

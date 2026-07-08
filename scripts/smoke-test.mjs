@@ -10,6 +10,7 @@ const requiredFiles = [
   "docs/architecture.md",
   "docs/mvp-scope.md",
   "docs/known-limitations.md",
+  "docs/linux-support.md",
   "docs/macos-support.md",
   "docs/public-scope.md",
   "docs/release-checklist.md",
@@ -40,6 +41,7 @@ const requiredFiles = [
   "scripts/check-release-exe.ps1",
   "scripts/create-updater-tauri-config.mjs",
   "scripts/create-windows-updater-feed.mjs",
+  "scripts/create-linux-updater-feed.mjs",
   "scripts/create-macos-updater-feed.mjs",
   "figs/app-logo.png",
   "src-tauri/Cargo.toml",
@@ -63,6 +65,7 @@ const requiredFiles = [
   "src-tauri/src/updater.rs",
   "src-tauri/capabilities/default.json",
   ".github/workflows/build-macos-release.yml",
+  ".github/workflows/build-linux-release.yml",
   ".github/workflows/build-windows-release.yml"
 ];
 
@@ -79,18 +82,22 @@ for (const file of requiredFiles) {
 
 const packageJson = JSON.parse(read("package.json"));
 if (packageJson.version !== "0.4.2") fail("package version should be 0.4.2");
-for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
+for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:linux:release", "build:linux:updater", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:linux-updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
 if (packageJson.scripts.build !== "pnpm build:tauri") fail("default build should use build:tauri");
 if (!packageJson.scripts.dev.includes("--config src-tauri/tauri.dev.conf.json")) fail("default dev should use the dev channel Tauri config");
 if (!packageJson.scripts["build:tauri"].includes("--no-bundle --ci")) fail("build:tauri should skip installer bundling in CI");
 if (!packageJson.scripts["build:tauri:dev"].includes("--config src-tauri/tauri.dev.conf.json")) fail("dev Tauri build should use the dev channel config");
+if (!packageJson.scripts["build:linux:release"].includes("--bundles appimage,deb")) fail("Linux release build should create AppImage and deb bundles");
+if (!packageJson.scripts["build:linux:updater"].includes("create-updater-tauri-config.mjs")) fail("Linux updater build should inject the updater Tauri config");
+if (!packageJson.scripts["build:linux:updater"].includes("--bundles appimage,deb")) fail("Linux updater build should create AppImage and deb bundles");
 if (!packageJson.scripts["build:installer:nsis:updater"].includes("create-updater-tauri-config.mjs")) fail("Windows updater NSIS build should inject the updater Tauri config");
 if (!packageJson.scripts["build:installer:nsis:updater"].includes("src-tauri/tauri.updater.local.json")) fail("Windows updater NSIS build should use the generated local updater artifact config");
 if (!packageJson.scripts["build:macos:updater"].includes("create-updater-tauri-config.mjs")) fail("macOS updater build should inject the updater Tauri config");
 if (!packageJson.scripts["build:macos:updater"].includes("--bundles app,dmg")) fail("macOS updater build should create app and dmg bundles");
 if (!packageJson.scripts["release:updater-feed"].includes("create-windows-updater-feed.mjs")) fail("release:updater-feed should generate the Windows updater feed");
+if (!packageJson.scripts["release:linux-updater-feed"].includes("create-linux-updater-feed.mjs")) fail("release:linux-updater-feed should merge the Linux updater feed");
 if (!packageJson.scripts["release:macos-updater-feed"].includes("create-macos-updater-feed.mjs")) fail("release:macos-updater-feed should merge the macOS updater feed");
 if (!packageJson.scripts["release:portable"].includes("package-portable.ps1")) fail("release:portable should call package-portable.ps1");
 if (!packageJson.scripts["release:portable:dev"].includes("-Channel dev")) fail("dev portable release should pass -Channel dev");
@@ -201,6 +208,7 @@ const research = read("docs/research.md");
 const architecture = read("docs/architecture.md");
 const mvp = read("docs/mvp-scope.md");
 const limitations = read("docs/known-limitations.md");
+const linuxSupport = read("docs/linux-support.md");
 const macosSupport = read("docs/macos-support.md");
 const readme = read("README.md");
 const publicScope = read("docs/public-scope.md");
@@ -211,15 +219,16 @@ const zhReadme = read("docs/zh-CN/README.md");
 
 const requiredText = [
   [readme, "CodexHub is a desktop control console"],
-  [zhReadme, "通用桌面控制台，支持 Windows 和 macOS"],
+  [zhReadme, "通用桌面控制台，支持 Windows、macOS 和 Linux"],
   [readme, "latest stable build"],
   [readme, "CodexHub_0.4.2_aarch64.dmg"],
+  [readme, "CodexHub_0.4.2_amd64.AppImage"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
-  [readme, "Windows tray / macOS menu bar status icon"],
+  [readme, "Windows tray / macOS menu bar / Linux tray status icon"],
   [readme, "MIT"],
-  [zhReadme, "Windows 托盘 / macOS 菜单栏状态图标"],
+  [zhReadme, "Windows 托盘 / macOS 菜单栏 / Linux 托盘状态图标"],
   [publicScope, "source-only"],
   [publicScope, "pnpm audit:public"],
   [releaseChecklist, "Live SSH Acceptance"],
@@ -231,6 +240,7 @@ const requiredText = [
   [releaseChecklist, "Settings > Codex > Connections"],
   [stableUpdater, "tauri-plugin-updater"],
   [stableUpdater, "CODEXHUB_STABLE_UPDATER_PUBKEY"],
+  [stableUpdater, "linux-x86_64"],
   [stableUpdater, "Dev And Portable Boundaries"],
   [security, "CodexHub does not write Codex App private state"],
   [research, "No public, stable API was found"],
@@ -261,6 +271,7 @@ const requiredText = [
   [mvp, "selected host's `~/.codex-hub/env`"],
   [mvp, "Writing local credential-store key names or API key values into remote Codex config"],
   [limitations, "Profiles /"],
+  [limitations, "Linux desktop support targets Ubuntu/Debian x86_64 first"],
   [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "CodexHub writes the value only to the selected host's `~/.codex-hub/env`"],
   [limitations, "CodexHub must not write Codex App private state"],
@@ -269,7 +280,11 @@ const requiredText = [
   [macosSupport, "Real Mac Validation Status"],
   [macosSupport, "still needs real-device validation"],
   [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
-  [macosSupport, "~/.ssh/config"]
+  [macosSupport, "~/.ssh/config"],
+  [linuxSupport, "Ubuntu/Debian x86_64"],
+  [linuxSupport, "CodexHub_<version>_amd64.AppImage"],
+  [linuxSupport, "linux-x86_64"],
+  [linuxSupport, "macOS-style appearance"]
 ];
 
 for (const [content, phrase] of requiredText) {
@@ -277,7 +292,7 @@ for (const [content, phrase] of requiredText) {
 }
 
 if (/\bWindows-first\b/i.test(readme)) {
-  fail("README should describe CodexHub as a Windows and macOS desktop console, not Windows-first");
+  fail("README should describe CodexHub as a Windows, macOS, and Linux desktop console, not Windows-first");
 }
 
 for (const staleDocToken of [
@@ -334,9 +349,11 @@ const sshRs = read("src-tauri/src/ssh.rs");
 const rustPlatform = read("src-tauri/src/platform.rs");
 const tsPlatform = read("src/platform.ts");
 const macosWorkflow = read(".github/workflows/build-macos-release.yml");
+const linuxWorkflow = read(".github/workflows/build-linux-release.yml");
 const windowsWorkflow = read(".github/workflows/build-windows-release.yml");
 const updaterConfigScript = read("scripts/create-updater-tauri-config.mjs");
 const windowsUpdaterFeedScript = read("scripts/create-windows-updater-feed.mjs");
+const linuxUpdaterFeedScript = read("scripts/create-linux-updater-feed.mjs");
 const macosUpdaterFeedScript = read("scripts/create-macos-updater-feed.mjs");
 for (const token of ["sidebar_completion_indicators", "sidebar_completion_indicators: true", "#[serde(default = \"default_true\")]"]) {
   if (!rustBackend.includes(token)) fail(`missing sidebar completion settings Rust token: ${token}`);
@@ -407,6 +424,9 @@ if (!cargoToml.includes('tauri-plugin-updater = { version = "2", default-feature
 }
 if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }')) {
   fail("stable updater GitHub feed resolver must use reqwest with native TLS");
+}
+if (!cargoToml.includes('keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }')) {
+  fail("keyring must keep Windows/macOS backends and enable Linux persistent credential storage");
 }
 for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos", "stable_update_network_routes", "LOCAL_PROXY_PORTS", "NetworkProxyMode", "detect_network_proxy_status", "builder.proxy(proxy)"]) {
   if (!rustBackend.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
@@ -602,6 +622,33 @@ for (const forbiddenWorkflowToken of [
   if (macosWorkflow.includes(forbiddenWorkflowToken)) fail(`macOS release asset label must match the file name: ${forbiddenWorkflowToken}`);
 }
 for (const token of [
+  "runs-on: ubuntu-22.04",
+  "libwebkit2gtk-4.1-dev",
+  "libayatana-appindicator3-dev",
+  "libxdo-dev",
+  "libkeyutils-dev",
+  "actions/upload-artifact@v4",
+  "pnpm typecheck",
+  "pnpm build:web",
+  "cargo test --manifest-path src-tauri/Cargo.toml",
+  "pnpm build:linux:release",
+  "pnpm build:linux:updater",
+  "pnpm release:linux-updater-feed",
+  "CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}",
+  "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
+  "upload_to_release == 'true'",
+  "gh release upload",
+  "CodexHub_${VERSION}_amd64.AppImage#CodexHub_${VERSION}_amd64.AppImage",
+  "CodexHub_${VERSION}_amd64.deb#CodexHub_${VERSION}_amd64.deb",
+  "latest.json#latest.json",
+  "SHA256SUMS.txt#SHA256SUMS.txt"
+]) {
+  if (!linuxWorkflow.includes(token)) fail(`missing Linux workflow token: ${token}`);
+}
+for (const forbiddenWorkflowToken of ["softprops/action-gh-release", "gh release create", "tauri-action@v0"]) {
+  if (linuxWorkflow.includes(forbiddenWorkflowToken)) fail(`Linux release workflow must not create a GitHub Release: ${forbiddenWorkflowToken}`);
+}
+for (const token of [
   "runs-on: windows-2022",
   "CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}",
   "CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}",
@@ -651,6 +698,18 @@ for (const token of [
   "latest.json"
 ]) {
   if (!windowsUpdaterFeedScript.includes(token)) fail(`missing Windows updater feed script token: ${token}`);
+}
+for (const token of [
+  "CodexHub_${version}_${linuxArch}.AppImage",
+  "CodexHub_${version}_${linuxArch}.deb",
+  "linux-x86_64",
+  "existing release feed",
+  "SHA256SUMS.txt",
+  "CODEXHUB_RELEASE_TAG",
+  "https://github.com/${repo}/releases/download/${normalizedTag}/${appImageName}",
+  "[platformKey]"
+]) {
+  if (!linuxUpdaterFeedScript.includes(token)) fail(`missing Linux updater feed script token: ${token}`);
 }
 for (const token of [
   "CodexHub_${version}_${macArch}.dmg",
@@ -1457,6 +1516,9 @@ for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
 }
 for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "networkProxyMode", "networkProxyMode: \"auto\"", "networkProxyUrl", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
   if (!settings.includes(token)) fail(`missing settings token: ${token}`);
+}
+if (!settings.includes('isWindows(platform) ? "windows" : "macos"')) {
+  fail("Platform auto appearance should resolve Linux to the macOS-style UI");
 }
 for (const token of ["resourceMonitorAutoRefresh", "resourceMonitorAutoRefresh: true", "resourceMonitorHostOrder", "resourceMonitorHostOrder: []", "resourceMonitorRefreshSeconds", "resourceMonitorRefreshSeconds: 60", "normalizeResourceMonitorRefreshSeconds"]) {
   if (!settings.includes(token)) fail(`missing resource monitor settings token: ${token}`);

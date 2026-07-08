@@ -1,4 +1,4 @@
-import { getPlatform, isMacOS } from "./platform";
+import { getPlatform, isWindows } from "./platform";
 import type { RuntimePlatform } from "./platform";
 
 export type ThemeChoice = "system" | "light" | "dark";
@@ -140,7 +140,7 @@ export function applyThemeChoice(theme: ThemeChoice) {
 export function resolvePlatformAppearance(platformAppearance: PlatformAppearance): RuntimePlatform {
   if (platformAppearance === "windows" || platformAppearance === "macos") return platformAppearance;
   const platform = getPlatform();
-  return isMacOS(platform) ? "macos" : "windows";
+  return isWindows(platform) ? "windows" : "macos";
 }
 
 export function applyPlatformAppearance(platformAppearance: PlatformAppearance) {
