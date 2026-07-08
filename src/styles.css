@@ -3870,6 +3870,24 @@ button:disabled {
   text-transform: none;
 }
 
+.setupGuideKeyCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: var(--surface-solid);
+}
+
+.setupGuideKeyCard p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
 .setupGuideHostList {
   display: grid;
   max-height: min(360px, 46vh);
@@ -4453,7 +4471,7 @@ button:disabled {
 
 .keyStatusGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -4494,6 +4512,10 @@ td code {
   .sshForm,
   .inlineSetup,
   .keyStatusGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .setupGuideKeyCard {
     grid-template-columns: 1fr;
   }
 

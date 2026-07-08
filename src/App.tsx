@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import type { CSSProperties, FormEvent, MouseEventHandler, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { loadInitialAppData } from "./app/bootstrap";
 import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
 import type {
@@ -310,6 +311,10 @@ const uiCopy = {
       next: "Next",
       bodyWithHosts: (count: number) => `${count} local SSH Host entr${count === 1 ? "y" : "ies"} detected. Importing refreshes CodexHub only.`,
       bodyEmpty: "No usable local SSH config was detected. You can add hosts manually in CodexHub.",
+      ed25519KeyTitle: "Ed25519 identity key",
+      ed25519Ready: "Private key ready",
+      ed25519MissingBody: "CodexHub will automatically create an Ed25519 key for SSH connections, even if you skip this setup step.",
+      ed25519ReadyBody: "CodexHub will use this existing private key for SSH connections.",
       detectedPath: (path: string) => `Detected from ${path}`,
       importLocalConfig: "Import local config",
       skip: "Skip",
@@ -700,6 +705,7 @@ const uiCopy = {
       refresh: "Refresh",
       generating: "Generating...",
       generateEd25519: "Generate Ed25519",
+      openKeyDirectory: "Open key directory",
       publicKey: "Public key",
       readyToCopy: "Ready to copy",
       noPublicKey: "No public key detected",
@@ -899,6 +905,10 @@ const uiCopy = {
       next: "下一步",
       bodyWithHosts: (count: number) => `检测到 ${count} 个本地 SSH Host。导入只刷新 CodexHub，不改写 SSH config。`,
       bodyEmpty: "未检测到本地存在可用的SSH配置，可使用CodexHub手动添加",
+      ed25519KeyTitle: "Ed25519 身份密钥",
+      ed25519Ready: "已有私钥",
+      ed25519MissingBody: "CodexHub 会自动创建用于 SSH 连接的 Ed25519 密钥，即使你选择跳过此步骤也会创建。",
+      ed25519ReadyBody: "CodexHub 会使用这个已有私钥进行 SSH 连接。",
       detectedPath: (path: string) => `检测位置：${path}`,
       importLocalConfig: "导入本地配置",
       skip: "跳过",
@@ -1289,6 +1299,7 @@ const uiCopy = {
       refresh: "刷新",
       generating: "生成中...",
       generateEd25519: "生成 Ed25519",
+      openKeyDirectory: "打开密钥目录",
       publicKey: "公钥",
       readyToCopy: "可复制",
       noPublicKey: "未检测到公钥",
@@ -2322,6 +2333,17 @@ function App() {
     }
   };
 
+  const handleOpenSshKeyDirectory = async () => {
+    try {
+      const status = sshStatus ?? await api.getSshStatus();
+      setSshStatus(status);
+      await openPath(status.sshDir);
+    } catch (error) {
+      setNotice(formatError(error));
+      throw error;
+    }
+  };
+
   const handleTestHost = async (idOrAlias: string, signalSection: SectionId | null = activeSection) => {
     const run = async () => {
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
@@ -2330,7 +2352,19 @@ function App() {
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
 
       try {
-        const result = await api.remoteProbeCodex(hostAlias);
+        const [result] = await Promise.all([
+          api.remoteProbeCodex(hostAlias),
+          refreshLatestCodex(true).catch((error): LatestCodexVersion => {
+            const latest = {
+              version: null,
+              checkedAt: null,
+              source: "npm",
+              error: formatError(error)
+            };
+            setLatestCodexVersion(latest);
+            return latest;
+          })
+        ]);
         setHosts((current) =>
           current.map((host) =>
             host.hostAlias === result.hostAlias
@@ -2964,9 +2998,26 @@ function App() {
     }
   }, [settings.closeButtonBehavior]);
 
-  const handleDismissSetupGuide = () => {
-    setSetupGuideOpen(false);
-    persistSettings({ ...settings, setupGuideDismissed: true });
+  const ensureSetupGuideEd25519Key = async (detectedStatus?: SshStatus | null) => {
+    const status = detectedStatus ?? sshStatus ?? await api.getSshStatus();
+    setSshStatus(status);
+    if (status.ed25519.privateExists) return status;
+    const result = await api.generateEd25519Key();
+    setSshStatus(result.status);
+    return result.status;
+  };
+
+  const handleDismissSetupGuide = async () => {
+    setSetupGuideBusy(true);
+    try {
+      await ensureSetupGuideEd25519Key().catch((error) => {
+        setNotice(formatError(error));
+      });
+      setSetupGuideOpen(false);
+      persistSettings({ ...settings, setupGuideDismissed: true });
+    } finally {
+      setSetupGuideBusy(false);
+    }
   };
 
   const handleSetupGuidePreferencesNext = async (preferences: Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">) => {
@@ -3005,9 +3056,13 @@ function App() {
       setSetupGuideBusy(true);
       try {
         const refreshed = await importLocalSshConfig();
+        let keyError: string | null = null;
+        await ensureSetupGuideEd25519Key(refreshed.sshStatus).catch((error) => {
+          keyError = formatError(error);
+        });
         setSetupGuideOpen(false);
         persistSettings({ ...settings, setupGuideDismissed: true });
-        setNotice(copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
+        setNotice(keyError ?? copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
         return refreshed;
       } finally {
         setSetupGuideBusy(false);
@@ -3144,9 +3199,9 @@ function App() {
             onCloseButtonBehaviorChange={(closeButtonBehavior) => persistSettings({ ...settings, closeButtonBehavior })}
             onCopyPublicKey={handleCopyPublicKey}
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
-            onGenerateEd25519Key={handleGenerateEd25519Key}
             onNetworkProxyModeChange={(networkProxyMode) => persistSettings({ ...settings, networkProxyMode })}
             onNetworkProxyManualRequest={() => setNetworkProxyManualOpen(true)}
+            onOpenKeyDirectory={handleOpenSshKeyDirectory}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
             onRefreshSsh={async () => {
               await runSectionOperation("settings", refreshSshState);
@@ -3398,10 +3453,10 @@ function SetupGuideModal({
   step: SetupGuideStep;
   sshConfigHosts: SshConfigHost[];
   sshStatus: SshStatus | null;
-  onClose: () => void;
+  onClose: () => Promise<unknown>;
   onImport: () => Promise<unknown>;
   onPreferencesNext: (preferences: Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">) => Promise<unknown>;
-  onSkip: () => void;
+  onSkip: () => Promise<unknown>;
 }) {
   const [preferenceDraft, setPreferenceDraft] = useState<Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">>({
     theme: currentSettings.theme,
@@ -3413,6 +3468,7 @@ function SetupGuideModal({
   const hasLocalHosts = sshConfigHosts.length > 0;
   const detectionPending = step === "ssh" && busy && !hasLocalHosts;
   const configPath = sshStatus?.configPath ?? "%USERPROFILE%\\.ssh\\config";
+  const ed25519Ready = Boolean(sshStatus?.ed25519.privateExists);
   const preferencesCopy = uiCopy[preferenceDraft.fontPreset === "zh-cn" ? "zh" : "en"];
 
   useEffect(() => {
@@ -3508,6 +3564,16 @@ function SetupGuideModal({
               <code>{copy.setupGuide.detectedPath(configPath)}</code>
             </ModalHeader>
 
+            <article className="setupGuideKeyCard">
+              <div>
+                <TitleWithIcon icon="key" level={3}>{copy.setupGuide.ed25519KeyTitle}</TitleWithIcon>
+                <p>{ed25519Ready ? copy.setupGuide.ed25519ReadyBody : copy.setupGuide.ed25519MissingBody}</p>
+              </div>
+              <Badge tone={ed25519Ready ? "green" : "gray"}>
+                {ed25519Ready ? copy.setupGuide.ed25519Ready : copy.settings.missing}
+              </Badge>
+            </article>
+
             {hasLocalHosts ? (
               <div className="setupGuideHostList" role="table" aria-label={copy.hosts.detectedSshHosts}>
                 <div className="setupGuideHostRow setupGuideHostHeader" role="row">
@@ -3534,7 +3600,7 @@ function SetupGuideModal({
 
             <ModalActions className="setupGuideActions" dataHasHosts={hasLocalHosts}>
               {hasLocalHosts ? (
-                <button className="secondaryButton" disabled={busy} type="button" onClick={onSkip}>
+                <button className="secondaryButton" disabled={busy} type="button" onClick={() => void onSkip()}>
                   {copy.setupGuide.skip}
                 </button>
               ) : null}
@@ -3543,7 +3609,7 @@ function SetupGuideModal({
                   {busy ? copy.setupGuide.importing : copy.setupGuide.importLocalConfig}
                 </button>
               ) : (
-                <button className="primaryButton" disabled={busy} type="button" onClick={onClose}>
+                <button className="primaryButton" disabled={busy} type="button" onClick={() => void onClose()}>
                   {copy.setupGuide.close}
                 </button>
               )}
@@ -7634,9 +7700,9 @@ function SettingsView({
   onCloseButtonBehaviorChange,
   onCopyPublicKey,
   onFontPresetChange,
-  onGenerateEd25519Key,
   onNetworkProxyModeChange,
   onNetworkProxyManualRequest,
+  onOpenKeyDirectory,
   onPlatformAppearanceChange,
   onRefreshSsh,
   onSidebarCompletionIndicatorsChange,
@@ -7654,16 +7720,15 @@ function SettingsView({
   onCloseButtonBehaviorChange: (behavior: CloseButtonBehavior) => void;
   onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
-  onGenerateEd25519Key: () => Promise<unknown>;
   onNetworkProxyModeChange: (mode: NetworkProxyMode) => void;
   onNetworkProxyManualRequest: () => void;
+  onOpenKeyDirectory: () => Promise<unknown>;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
   onRefreshSsh: () => Promise<unknown>;
   onSidebarCompletionIndicatorsChange: (enabled: boolean) => void;
   onThemeChange: (theme: ThemeChoice) => void;
 }) {
-  const publicKey = sshStatus?.ed25519.publicKey ?? sshStatus?.rsa.publicKey ?? "";
-  const canGenerateEd25519 = Boolean(sshStatus?.sshKeygenAvailable && !sshStatus.ed25519.privateExists && !sshStatus.ed25519.publicExists);
+  const publicKey = sshStatus?.ed25519.publicKey ?? "";
   const appUpdateBusy = appUpdateChecking || appUpdateInstalling;
   const canCheckStableUpdate = appUpdateStatus.channel === "stable" && !appUpdateBusy;
   const canInstallStableUpdate =
@@ -7758,15 +7823,14 @@ function SettingsView({
             <button className="secondaryButton copyPublicKeyButton" data-success={publicKeyCopied} disabled={!publicKey} type="button" onClick={() => void handleCopyPublicKey()}>
               {publicKeyCopied ? copy.settings.copyPublicKeySuccess : copy.settings.copyPublicKey}
             </button>
-            <button className="primaryButton" disabled={!canGenerateEd25519 || sshBusy} type="button" onClick={() => void onGenerateEd25519Key()}>
-              {sshBusy ? copy.settings.generating : copy.settings.generateEd25519}
+            <button className="primaryButton" disabled={!sshStatus || sshBusy} type="button" onClick={() => void onOpenKeyDirectory()}>
+              {copy.settings.openKeyDirectory}
             </button>
           </CommandBar>
         </div>
 
         <div className="keyStatusGrid">
           <KeyStatusCard copy={copy} keyInfo={sshStatus?.ed25519} title="Ed25519" />
-          <KeyStatusCard copy={copy} keyInfo={sshStatus?.rsa} title="RSA" />
         </div>
       </section>
 

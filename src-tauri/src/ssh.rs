@@ -1843,14 +1843,17 @@ fn parse_all_ssh_config_hosts(content: &str) -> Result<Vec<SshConfigHost>, Strin
     }
 
     for block in parse_local_host_blocks(content, &managed_ranges)? {
-        for alias in block.aliases {
-            if validate_ssh_alias(&alias).is_err() {
+        for alias in &block.aliases {
+            if validate_ssh_alias(alias).is_err() {
+                continue;
+            }
+            if !is_local_ssh_config_import_candidate(alias, &block) {
                 continue;
             }
             let key = alias.to_ascii_lowercase();
             if seen.insert(key) {
                 hosts.push(SshConfigHost {
-                    alias,
+                    alias: alias.clone(),
                     host_name: block.host_name.clone(),
                     port: block.port,
                     user: block.user.clone(),
@@ -1944,6 +1947,26 @@ fn push_local_host_block(
         user: builder.user,
         identity_file: builder.identity_file,
     });
+}
+
+fn is_local_ssh_config_import_candidate(alias: &str, block: &LocalHostBlock) -> bool {
+    let alias = alias.trim().to_ascii_lowercase();
+    let host_name = block.host_name.trim().to_ascii_lowercase();
+    // Public Git service entries are SSH client shortcuts, not CodexHub workstation candidates.
+    !is_public_git_service_host(&alias) && !is_public_git_service_host(&host_name)
+}
+
+fn is_public_git_service_host(value: &str) -> bool {
+    matches!(
+        value,
+        "github.com"
+            | "ssh.github.com"
+            | "gitlab.com"
+            | "bitbucket.org"
+            | "git.sr.ht"
+            | "ssh.dev.azure.com"
+            | "vs-ssh.visualstudio.com"
+    )
 }
 
 fn upsert_managed_host_block(content: &str, draft: &SshHostDraft) -> Result<String, String> {
@@ -2346,7 +2369,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_returns_managed_and_local_hosts() {
+    fn parser_returns_managed_and_importable_local_hosts() {
         let content = "Host github.com *.example.com *\n    HostName github.com\n\n# >>> CodexHub managed host: lab\nHost lab\n    HostName 10.0.0.5\n    Port 22\n    User codex\n    IdentityFile C:\\Users\\Example User\\.ssh\\id_ed25519\n# <<< CodexHub managed host: lab\nHost runner\n    HostName 10.0.0.6\n    User codex\n";
 
         let hosts = parse_all_ssh_config_hosts(content).expect("parse all hosts");
@@ -2356,13 +2379,29 @@ mod tests {
                 .iter()
                 .map(|host| host.alias.as_str())
                 .collect::<Vec<_>>(),
-            vec!["lab", "github.com", "runner"]
+            vec!["lab", "runner"]
         );
         assert_eq!(hosts[0].source, "managed");
         assert_eq!(hosts[1].source, "local");
         assert!(!hosts
             .iter()
             .any(|host| host.alias == "*" || host.alias == "*.example.com"));
+    }
+
+    #[test]
+    fn parser_filters_public_git_service_local_hosts() {
+        let content = "Host github.com\n    HostName github.com\n    User git\n\nHost gitlab\n    HostName gitlab.com\n    User git\n\nHost work-box\n    HostName 192.168.1.12\n    User codex\n";
+
+        let hosts = parse_all_ssh_config_hosts(content).expect("parse all hosts");
+
+        assert_eq!(
+            hosts
+                .iter()
+                .map(|host| host.alias.as_str())
+                .collect::<Vec<_>>(),
+            vec!["work-box"]
+        );
+        assert_eq!(hosts[0].host_name, "192.168.1.12");
     }
 
     #[test]
