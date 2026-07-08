@@ -182,7 +182,8 @@ jobs:
           existingPath="dist-release/existing-release/SHA256SUMS.txt"
           mkdir -p "$releaseDir"
           if [ -f "$existingPath" ]; then
-            grep -Ev "CodexHub_${VERSION}_(amd64|arm64)\\.deb$|CodexHub_${VERSION}_amd64\\.AppImage$" "$existingPath" > "$checksumPath" || true
+            tr -d '\r' < "$existingPath" \
+              | grep -Ev "(CodexHub_${VERSION}_(amd64|arm64)\\.deb|CodexHub_${VERSION}_amd64\\.AppImage)$" > "$checksumPath" || true
           else
             : > "$checksumPath"
           fi
@@ -193,7 +194,8 @@ jobs:
               find "$releaseDir" -maxdepth 2 -type f -print >&2
               exit 1
             fi
-            sha256sum "$debPath" >> "$checksumPath"
+            digest=$(sha256sum "$debPath" | awk '{print $1}')
+            printf "%s  CodexHub_%s_%s.deb\n" "$digest" "$VERSION" "$arch" >> "$checksumPath"
           done
           cat "$checksumPath"
 
