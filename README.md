@@ -43,6 +43,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 | View | Windows | macOS |
 | --- | --- | --- |
 | **Dashboard**<br>Review every managed host at a glance, including SSH reachability, remote Codex status, profile alignment, skill inventory, and recent task results. | ![CodexHub Dashboard on Windows showing managed hosts and status checks](figs/Dashboard-en-win.png) | ![CodexHub Dashboard on macOS showing managed hosts and status checks](figs/Dashboard-en-mac.jpg) |
+| **Monitor**<br>Watch remembered hosts with page-active CPU, memory, and GPU snapshots, including refresh status and timeout evidence for slower machines. | ![CodexHub Monitor page on Windows showing host CPU, memory, and GPU resource cards](figs/monitor-en-win.png) | ![CodexHub Monitor page on macOS showing host CPU, memory, and GPU resource cards](figs/monitor-en-mac.jpg) |
 | **Hosts**<br>Add or inspect SSH hosts with guided key setup, one-time password bootstrap, connection tests, and remote Codex probes. | ![CodexHub Hosts page on Windows showing SSH host management](figs/Host-en-win.png) | ![CodexHub Hosts page on macOS showing SSH host management](figs/Host-en-mac.jpg) |
 | **API & Profiles**<br>Keep local API configuration names and profile templates organized before previewing or applying remote config changes. | ![CodexHub API and profile configuration page on Windows](figs/API-en-win.png) | ![CodexHub API and profile configuration page on macOS](figs/API-en-mac.jpg) |
 | **Skills**<br>Import local or GitHub skill packs, check target inventories, preview installed skill tags, and download or remove skills with task-log evidence. | ![CodexHub Skills page on Windows showing local libraries and install targets](figs/Skills-en-win.png) | ![CodexHub Skills page on macOS showing local libraries and install targets](figs/Skills-en-mac.jpg) |
@@ -60,6 +61,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * Installs or updates the real remote `codex` command in the remote user's home directory.
 * Manages local profile templates and applies rendered TOML to remote `~/.codex/config.toml`.
 * Imports local or GitHub skill directories containing `SKILL.md`.
+* Shows read-only, page-active CPU, memory, and GPU resource snapshots for remembered hosts.
 * Shows task history with redacted stdout/stderr, command status, duration, and failure evidence.
 * Keeps a Windows tray / macOS menu bar status icon. The first window close asks whether future closes exit CodexHub or minimize it to the tray, and the choice can be changed later in Settings.
 * Guides the user to Codex App after CodexHub verifies an SSH alias.

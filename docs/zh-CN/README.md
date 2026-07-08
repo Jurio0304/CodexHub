@@ -41,6 +41,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 | 视图 | Windows | macOS |
 | --- | --- | --- |
 | **Dashboard**<br>一屏查看所有托管主机的 SSH 连通性、远端 Codex 状态、profile 对齐情况、skill inventory 和近期任务结果。 | ![CodexHub Dashboard Windows 页面，展示托管主机和状态检查](../../figs/Dashboard-zh-win.png) | ![CodexHub Dashboard macOS 页面，展示托管主机和状态检查](../../figs/Dashboard-zh-mac.jpg) |
+| **监控**<br>查看已记住主机的只读 CPU、内存和 GPU 采样结果，并显示刷新状态和慢主机超时耗时提示。 | ![CodexHub 监控 Windows 页面，展示主机 CPU、内存和 GPU 资源卡片](../../figs/monitor-zh-win.png) | ![CodexHub 监控 macOS 页面，展示主机 CPU、内存和 GPU 资源卡片](../../figs/monitor-zh-mac.jpg) |
 | **Hosts**<br>添加或检查 SSH 主机，完成 key 配置、一次性密码初始化、连接测试和远端 Codex 探测。 | ![CodexHub Hosts Windows 页面，展示 SSH 主机管理](../../figs/Host-zh-win.png) | ![CodexHub Hosts macOS 页面，展示 SSH 主机管理](../../figs/Host-zh-mac.jpg) |
 | **API 与 Profiles**<br>管理本地 API config 名称和 profile 模板，再预览或应用远端配置变更。 | ![CodexHub API 与 profile Windows 配置页面](../../figs/API-zh-win.png) | ![CodexHub API 与 profile macOS 配置页面](../../figs/API-zh-mac.jpg) |
 | **Skills**<br>导入本地或 GitHub skill 包，检查安装目标 inventory，预览已安装 skill 标签，并通过任务日志追踪下载或移除结果。 | ![CodexHub Skills Windows 页面，展示本地技能库和安装目标](../../figs/Skills-zh-win.png) | ![CodexHub Skills macOS 页面，展示本地技能库和安装目标](../../figs/Skills-zh-mac.jpg) |
@@ -57,6 +58,7 @@ CodexHub 聚焦一个清晰场景：让 Windows 或 macOS 桌面上的 Codex App
 - 在远端用户目录安装或更新 `codex` 命令；应用 profile 时可安装同名托管启动器，用来加载受管 env 后再执行真实 Codex。
 - 创建、预览、应用 profile 到远端 `~/.codex/config.toml`。
 - 导入本地或 GitHub skill，并安装到本机或远端目标。
+- 对已记住主机展示只读、页面活跃时刷新的 CPU、内存和 GPU 资源采样。
 - 在 Tasks 中查看命令、stdout/stderr、退出码、耗时和失败原因，日志默认脱敏。
 - 提供 Windows 托盘 / macOS 菜单栏状态图标；首次点击窗口关闭按钮时会询问以后是退出程序还是最小化到托盘，后续可在 Settings 修改。
 - 完成准备后，引导用户到 Codex App 手动添加或启用已验证的 SSH alias。
