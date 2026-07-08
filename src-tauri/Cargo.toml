@@ -1,6 +1,6 @@
 [package]
 name = "codexhub"
-version = "0.4.1"
+version = "0.4.2"
 description = "Windows desktop control plane for Codex App SSH workflows"
 authors = ["CodexHub"]
 edition = "2021"

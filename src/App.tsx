@@ -140,6 +140,7 @@ const DEFAULT_PROFILE_PROVIDER = "openai";
 const DEFAULT_PROFILE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_PROFILE_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const APP_UPDATE_DAILY_CHECK_HOUR = 4;
+const RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS = 30_000;
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
 const PREVIEW_SIDEBAR_UPDATE_BUTTON =
   viteEnv?.DEV === true && viteEnv?.VITE_CODEXHUB_PREVIEW_UPDATE_BUTTON === "1";
@@ -1928,7 +1929,10 @@ function App() {
     if (manual) setResourceError(null);
 
     try {
-      const result = await api.sampleHostResources(hosts.map((host) => host.hostAlias), 8_000);
+      const result = await api.sampleHostResources(
+        hosts.map((host) => host.hostAlias),
+        RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS
+      );
       setResourceSnapshots(result.snapshots);
       setResourceCheckedAt(result.checkedAt);
       if (manual) setNotice(copy.monitor.refreshed(result.snapshots.length));
@@ -2375,7 +2379,20 @@ function App() {
   const handleTestAllSshHosts = async () => {
     const section = activeSection;
     return runSectionOperation(section, async () => {
-      const results = await Promise.all(sshConfigHosts.map((host) => handleTestHost(host.alias, null)));
+      const latestCodexProbe = refreshLatestCodex(true).catch((error): LatestCodexVersion => {
+        const latest = {
+          version: null,
+          checkedAt: null,
+          source: "npm",
+          error: formatError(error)
+        };
+        setLatestCodexVersion(latest);
+        return latest;
+      });
+      const [, ...results] = await Promise.all([
+        latestCodexProbe,
+        ...sshConfigHosts.map((host) => handleTestHost(host.alias, null))
+      ]);
       setNotice(copy.hosts.testedAll);
       return { ok: results.every((result) => result.ok) };
     });

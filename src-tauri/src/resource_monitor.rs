@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::thread;
 
-const DEFAULT_RESOURCE_TIMEOUT_MS: u64 = 8_000;
+const DEFAULT_RESOURCE_TIMEOUT_MS: u64 = 30_000;
 const RESOURCE_SAMPLE_CONCURRENCY: usize = 3;
 
 #[derive(Clone, Serialize)]
@@ -563,7 +563,10 @@ fn json_string(value: &JsonValue) -> Option<String> {
 
 fn command_error(output: &ssh::SshCommandOutput) -> String {
     if output.timed_out {
-        return "Resource sampling timed out.".into();
+        return format!(
+            "Resource sampling timed out after {} ms.",
+            output.duration_ms
+        );
     }
     let stderr = output.stderr.trim();
     if !stderr.is_empty() {
@@ -744,6 +747,23 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
         assert!(matches!(snapshot.status, HostResourceStatus::Partial));
         assert!(snapshot.cpu.is_none());
         assert!(snapshot.memory.is_none());
+    }
+
+    #[test]
+    fn timed_out_error_includes_elapsed_duration() {
+        let output = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: None,
+            duration_ms: 30_042,
+            timed_out: true,
+        };
+
+        assert_eq!(
+            command_error(&output),
+            "Resource sampling timed out after 30042 ms."
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # CodexHub Release Checklist
 
-Date: 2026-07-04
-Version baseline: v0.4.1
+Date: 2026-07-08
+Version baseline: v0.4.2
 
 Use this checklist before any public `stable` release. The checklist is a gate for local validation and owner acceptance only; it does not upload, tag, push, or create a GitHub Release.
 
@@ -83,17 +83,17 @@ The updater foundation is stable-only. Windows signed updater assets are built b
 - The Windows and macOS workflows upload updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
 - The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
 - Signing private keys and passwords are supplied only through the trusted release environment.
-- Portable packaging remains manual/local for now; v0.4.1 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
+- Portable packaging remains manual/local for now; v0.4.2 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
 
 ## macOS Release Artifact
 
-The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.4.1 public GitHub Release includes unsigned Apple Silicon macOS assets:
+The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.4.2 public GitHub Release includes unsigned Apple Silicon macOS assets:
 
 ```text
 .github/workflows/build-macos-release.yml
 ```
 
-The v0.4.1 macOS artifact still requires real Mac validation. For each future macOS public artifact, verify:
+The v0.4.2 macOS artifact still requires real Mac validation. For each future macOS public artifact, verify:
 
 - `Build macOS Release` completes on `master`.
 - The uploaded CI artifact uses the current package version, for example `codexhub-macos-v<version>-unsigned-release`.

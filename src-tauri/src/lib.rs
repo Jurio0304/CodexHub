@@ -8116,13 +8116,13 @@ mod tests {
     #[test]
     fn skill_metadata_parser_reads_frontmatter_and_falls_back_to_directory_name() {
         let content =
-            "---\nname: \"Example Skill\"\ndescription: Run example workflow\nversion: '0.4.1'\n---\nBody";
+            "---\nname: \"Example Skill\"\ndescription: Run example workflow\nversion: '0.4.2'\n---\nBody";
         let parsed =
             parse_skill_metadata(content, Path::new("example-skill")).expect("parse skill");
 
         assert_eq!(parsed.name, "Example Skill");
         assert_eq!(parsed.description.as_deref(), Some("Run example workflow"));
-        assert_eq!(parsed.version.as_deref(), Some("0.4.1"));
+        assert_eq!(parsed.version.as_deref(), Some("0.4.2"));
 
         let fallback = parse_skill_metadata("# Instructions", Path::new("draft-helper"))
             .expect("fallback skill");
