@@ -112,8 +112,8 @@ For everyday use, download the latest stable build from this repository's Releas
 * Windows: download and run `CodexHub_0.4.3_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
 * macOS Apple Silicon: download `CodexHub_0.4.3_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.3 macOS artifact is unsigned/ad-hoc and should be real-Mac validated before broad rollout, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
-* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.3_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings.
-* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.3_arm64.deb`.
+* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.3_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.3_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
 ## ⚡ Quick Start

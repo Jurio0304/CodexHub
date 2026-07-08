@@ -33,6 +33,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: npm install -g pnpm
+
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
@@ -51,14 +59,6 @@ jobs:
             patchelf \
             pkg-config \
             wget
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup pnpm
-        run: npm install -g pnpm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -97,8 +97,44 @@ jobs:
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+      - name: Verify Linux updater release configuration
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        env:
+          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$CODEXHUB_STABLE_UPDATE_ENDPOINT" ]; then
+            echo "CODEXHUB_STABLE_UPDATE_ENDPOINT repository variable is required." >&2
+            exit 1
+          fi
+          if [ -z "$CODEXHUB_STABLE_UPDATER_PUBKEY" ]; then
+            echo "CODEXHUB_STABLE_UPDATER_PUBKEY repository variable is required." >&2
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY repository secret is required." >&2
+            exit 1
+          fi
+          case "$CODEXHUB_STABLE_UPDATE_ENDPOINT" in
+            https://*) ;;
+            *)
+              echo "CODEXHUB_STABLE_UPDATE_ENDPOINT must be HTTPS." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Build Linux deb release
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.upload_to_release != 'true'
         run: pnpm build:linux:release
+
+      - name: Build signed Linux updater deb release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+        run: pnpm build:linux:updater
+        env:
+          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
+          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Upload Linux deb artifact
         uses: actions/upload-artifact@v4
@@ -106,6 +142,7 @@ jobs:
           name: codexhub-linux-v${{ steps.meta.outputs.version }}-${{ matrix.deb_arch }}-deb-release
           path: |
             src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/deb/*.deb.sig
           if-no-files-found: error
 
   linux-release-publish:
@@ -119,6 +156,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: npm install -g pnpm
 
       - name: Resolve release metadata
         id: meta
@@ -144,39 +189,18 @@ jobs:
           path: dist-release/v${{ steps.meta.outputs.version }}/linux-deb
           merge-multiple: true
 
-      - name: Download existing checksums
+      - name: Download existing release feed
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           mkdir -p dist-release/existing-release
-          gh release download "$RELEASE_TAG" --pattern SHA256SUMS.txt --dir dist-release/existing-release || true
+          gh release download "$RELEASE_TAG" --pattern latest.json --pattern SHA256SUMS.txt --dir dist-release/existing-release
 
-      - name: Generate merged Linux deb checksums
+      - name: Generate merged Linux updater feed
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          releaseDir="dist-release/v$VERSION/linux-deb"
-          checksumPath="$releaseDir/SHA256SUMS.txt"
-          existingPath="dist-release/existing-release/SHA256SUMS.txt"
-          mkdir -p "$releaseDir"
-          if [ -f "$existingPath" ]; then
-            tr -d '\r' < "$existingPath" \
-              | grep -Ev "(CodexHub_${VERSION}_(amd64|arm64)\\.deb|CodexHub_${VERSION}_amd64\\.AppImage)$" > "$checksumPath" || true
-          else
-            : > "$checksumPath"
-          fi
-          for arch in amd64 arm64; do
-            debPath="$releaseDir/CodexHub_${VERSION}_${arch}.deb"
-            if [ ! -f "$debPath" ]; then
-              echo "Missing Linux deb asset: $debPath" >&2
-              find "$releaseDir" -maxdepth 2 -type f -print >&2
-              exit 1
-            fi
-            digest=$(sha256sum "$debPath" | awk '{print $1}')
-            printf "%s  CodexHub_%s_%s.deb\n" "$digest" "$VERSION" "$arch" >> "$checksumPath"
-          done
-          cat "$checksumPath"
+          CODEXHUB_RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+        run: pnpm release:linux-updater-feed
 
       - name: Upload Linux deb assets to existing GitHub Release
         env:
@@ -184,9 +208,10 @@ jobs:
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          releaseDir="dist-release/v$VERSION/linux-deb"
+          releaseDir="dist-release/v$VERSION/linux-updater"
           gh release view "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" --clobber \
             "$releaseDir/CodexHub_${VERSION}_amd64.deb#CodexHub_${VERSION}_amd64.deb" \
             "$releaseDir/CodexHub_${VERSION}_arm64.deb#CodexHub_${VERSION}_arm64.deb" \
+            "$releaseDir/latest.json#latest.json" \
             "$releaseDir/SHA256SUMS.txt#SHA256SUMS.txt"

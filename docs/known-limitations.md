@@ -14,13 +14,13 @@ The following macOS limitations remain:
 
 ## Linux Desktop
 
-Linux desktop support targets Ubuntu/Debian x86_64 and arm64 `.deb` packages first. Linux `.deb` packages are manual install artifacts and are not part of the Tauri updater feed yet.
+Linux desktop support targets Ubuntu/Debian x86_64 and arm64 `.deb` packages first. After real Linux desktop validation, signed `.deb` assets are included in the stable updater feed as `linux-x86_64` and `linux-aarch64`.
 
 The following Linux desktop limitations remain:
 
 - rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.4.3.
 - Linux packages require real Ubuntu/Debian desktop validation before broad distribution.
-- `.deb` upgrades remain manual unless a package-repository or lighter updater story is designed later.
+- Package-repository, Snap, Flatpak, and rpm upgrade paths remain later work.
 
 ## Codex App Integration
 
