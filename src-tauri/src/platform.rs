@@ -146,24 +146,30 @@ pub fn expand_home_path_with_home(input: &str, home: &Path) -> Result<PathBuf, S
         return Ok(home.to_path_buf());
     }
     if let Some(rest) = value.strip_prefix("~/").or_else(|| value.strip_prefix("~\\")) {
-        return Ok(home.join(rest));
+        return Ok(home_join_relative(home, rest));
     }
     if let Some(rest) = value.strip_prefix("$HOME/") {
-        return Ok(home.join(rest));
+        return Ok(home_join_relative(home, rest));
     }
     if let Some(rest) = value.strip_prefix("${HOME}/") {
-        return Ok(home.join(rest));
+        return Ok(home_join_relative(home, rest));
     }
     if let Some(rest) = value.strip_prefix("%USERPROFILE%\\") {
-        return Ok(home.join(rest));
+        return Ok(home_join_relative(home, rest));
     }
     if let Some(rest) = value.strip_prefix("%USERPROFILE%/") {
-        return Ok(home.join(rest));
+        return Ok(home_join_relative(home, rest));
     }
     if value == "%USERPROFILE%" {
         return Ok(home.to_path_buf());
     }
     Ok(PathBuf::from(value))
+}
+
+fn home_join_relative(home: &Path, rest: &str) -> PathBuf {
+    let separator = std::path::MAIN_SEPARATOR.to_string();
+    let normalized = rest.replace('\\', &separator).replace('/', &separator);
+    home.join(normalized)
 }
 
 pub fn command_available(command: &str) -> bool {
