@@ -14,14 +14,13 @@ The following macOS limitations remain:
 
 ## Linux Desktop
 
-Linux desktop support targets Ubuntu/Debian x86_64 first. AppImage is the updater-capable artifact, and `.deb` is the manual Ubuntu/Debian install artifact.
+Linux desktop support targets Ubuntu/Debian x86_64 and arm64 `.deb` packages first. Linux `.deb` packages are manual install artifacts and are not part of the Tauri updater feed yet.
 
 The following Linux desktop limitations remain:
 
-- rpm, arm64, Snap, and Flatpak packages are not in scope yet.
+- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.4.2.
 - Linux packages require real Ubuntu/Debian desktop validation before broad distribution.
-- AppImage updater support is the first automatic-update path; `.deb` upgrades remain manual unless a package-repository update story is designed later.
-- Some distributions may require FUSE/AppImage desktop integration packages before AppImage launch works normally.
+- `.deb` upgrades remain manual unless a package-repository or lighter updater story is designed later.
 
 ## Codex App Integration
 

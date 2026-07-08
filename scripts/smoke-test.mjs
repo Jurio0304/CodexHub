@@ -82,22 +82,22 @@ for (const file of requiredFiles) {
 
 const packageJson = JSON.parse(read("package.json"));
 if (packageJson.version !== "0.4.2") fail("package version should be 0.4.2");
-for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:linux:release", "build:linux:updater", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:linux-updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
+for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:linux:release", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
 if (packageJson.scripts.build !== "pnpm build:tauri") fail("default build should use build:tauri");
 if (!packageJson.scripts.dev.includes("--config src-tauri/tauri.dev.conf.json")) fail("default dev should use the dev channel Tauri config");
 if (!packageJson.scripts["build:tauri"].includes("--no-bundle --ci")) fail("build:tauri should skip installer bundling in CI");
 if (!packageJson.scripts["build:tauri:dev"].includes("--config src-tauri/tauri.dev.conf.json")) fail("dev Tauri build should use the dev channel config");
-if (!packageJson.scripts["build:linux:release"].includes("--bundles appimage,deb")) fail("Linux release build should create AppImage and deb bundles");
-if (!packageJson.scripts["build:linux:updater"].includes("create-updater-tauri-config.mjs")) fail("Linux updater build should inject the updater Tauri config");
-if (!packageJson.scripts["build:linux:updater"].includes("--bundles appimage,deb")) fail("Linux updater build should create AppImage and deb bundles");
+if (!packageJson.scripts["build:linux:release"].includes("--bundles deb")) fail("Linux release build should create deb bundles");
+if (packageJson.scripts["build:linux:release"].includes("appimage")) fail("Linux release build should not create AppImage bundles");
+if (packageJson.scripts["build:linux:updater"]) fail("Linux updater build script should stay absent while Linux publishes deb-only test assets");
 if (!packageJson.scripts["build:installer:nsis:updater"].includes("create-updater-tauri-config.mjs")) fail("Windows updater NSIS build should inject the updater Tauri config");
 if (!packageJson.scripts["build:installer:nsis:updater"].includes("src-tauri/tauri.updater.local.json")) fail("Windows updater NSIS build should use the generated local updater artifact config");
 if (!packageJson.scripts["build:macos:updater"].includes("create-updater-tauri-config.mjs")) fail("macOS updater build should inject the updater Tauri config");
 if (!packageJson.scripts["build:macos:updater"].includes("--bundles app,dmg")) fail("macOS updater build should create app and dmg bundles");
 if (!packageJson.scripts["release:updater-feed"].includes("create-windows-updater-feed.mjs")) fail("release:updater-feed should generate the Windows updater feed");
-if (!packageJson.scripts["release:linux-updater-feed"].includes("create-linux-updater-feed.mjs")) fail("release:linux-updater-feed should merge the Linux updater feed");
+if (packageJson.scripts["release:linux-updater-feed"]) fail("Linux updater feed script should stay absent while Linux publishes deb-only test assets");
 if (!packageJson.scripts["release:macos-updater-feed"].includes("create-macos-updater-feed.mjs")) fail("release:macos-updater-feed should merge the macOS updater feed");
 if (!packageJson.scripts["release:portable"].includes("package-portable.ps1")) fail("release:portable should call package-portable.ps1");
 if (!packageJson.scripts["release:portable:dev"].includes("-Channel dev")) fail("dev portable release should pass -Channel dev");
@@ -222,7 +222,8 @@ const requiredText = [
   [zhReadme, "通用桌面控制台，支持 Windows、macOS 和 Linux"],
   [readme, "latest stable build"],
   [readme, "CodexHub_0.4.2_aarch64.dmg"],
-  [readme, "CodexHub_0.4.2_amd64.AppImage"],
+  [readme, "CodexHub_0.4.2_amd64.deb"],
+  [readme, "CodexHub_0.4.2_arm64.deb"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
@@ -240,7 +241,7 @@ const requiredText = [
   [releaseChecklist, "Settings > Codex > Connections"],
   [stableUpdater, "tauri-plugin-updater"],
   [stableUpdater, "CODEXHUB_STABLE_UPDATER_PUBKEY"],
-  [stableUpdater, "linux-x86_64"],
+  [stableUpdater, "Linux deb packages are manual install artifacts"],
   [stableUpdater, "Dev And Portable Boundaries"],
   [security, "CodexHub does not write Codex App private state"],
   [research, "No public, stable API was found"],
@@ -271,7 +272,7 @@ const requiredText = [
   [mvp, "selected host's `~/.codex-hub/env`"],
   [mvp, "Writing local credential-store key names or API key values into remote Codex config"],
   [limitations, "Profiles /"],
-  [limitations, "Linux desktop support targets Ubuntu/Debian x86_64 first"],
+  [limitations, "Linux desktop support targets Ubuntu/Debian x86_64 and arm64"],
   [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "CodexHub writes the value only to the selected host's `~/.codex-hub/env`"],
   [limitations, "CodexHub must not write Codex App private state"],
@@ -282,8 +283,9 @@ const requiredText = [
   [macosSupport, "APPLE_SIGNING_IDENTITY=-"],
   [macosSupport, "~/.ssh/config"],
   [linuxSupport, "Ubuntu/Debian x86_64"],
-  [linuxSupport, "CodexHub_<version>_amd64.AppImage"],
-  [linuxSupport, "linux-x86_64"],
+  [linuxSupport, "Ubuntu/Debian arm64"],
+  [linuxSupport, "CodexHub_<version>_amd64.deb"],
+  [linuxSupport, "CodexHub_<version>_arm64.deb"],
   [linuxSupport, "macOS-style appearance"]
 ];
 
@@ -622,28 +624,38 @@ for (const forbiddenWorkflowToken of [
   if (macosWorkflow.includes(forbiddenWorkflowToken)) fail(`macOS release asset label must match the file name: ${forbiddenWorkflowToken}`);
 }
 for (const token of [
-  "runs-on: ubuntu-22.04",
+  "runs-on: ${{ matrix.runner }}",
+  "ubuntu-22.04-arm",
+  "deb_arch: amd64",
+  "deb_arch: arm64",
   "libwebkit2gtk-4.1-dev",
   "libayatana-appindicator3-dev",
   "libxdo-dev",
   "libkeyutils-dev",
   "actions/upload-artifact@v4",
+  "actions/download-artifact@v4",
   "pnpm typecheck",
   "pnpm build:web",
   "cargo test --manifest-path src-tauri/Cargo.toml",
   "pnpm build:linux:release",
-  "pnpm build:linux:updater",
-  "pnpm release:linux-updater-feed",
-  "CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}",
-  "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}",
   "upload_to_release == 'true'",
   "gh release upload",
-  "CodexHub_${VERSION}_amd64.AppImage#CodexHub_${VERSION}_amd64.AppImage",
   "CodexHub_${VERSION}_amd64.deb#CodexHub_${VERSION}_amd64.deb",
-  "latest.json#latest.json",
+  "CodexHub_${VERSION}_arm64.deb#CodexHub_${VERSION}_arm64.deb",
   "SHA256SUMS.txt#SHA256SUMS.txt"
 ]) {
   if (!linuxWorkflow.includes(token)) fail(`missing Linux workflow token: ${token}`);
+}
+for (const forbiddenLinuxWorkflowToken of [
+  "appimage",
+  "_amd64.AppImage#",
+  "pnpm build:linux:updater",
+  "pnpm release:linux-updater-feed",
+  "latest.json#latest.json",
+  "CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}",
+  "TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+]) {
+  if (linuxWorkflow.includes(forbiddenLinuxWorkflowToken)) fail(`Linux deb-only workflow must not include token: ${forbiddenLinuxWorkflowToken}`);
 }
 for (const forbiddenWorkflowToken of ["softprops/action-gh-release", "gh release create", "tauri-action@v0"]) {
   if (linuxWorkflow.includes(forbiddenWorkflowToken)) fail(`Linux release workflow must not create a GitHub Release: ${forbiddenWorkflowToken}`);
@@ -700,16 +712,15 @@ for (const token of [
   if (!windowsUpdaterFeedScript.includes(token)) fail(`missing Windows updater feed script token: ${token}`);
 }
 for (const token of [
-  "CodexHub_${version}_${linuxArch}.AppImage",
-  "CodexHub_${version}_${linuxArch}.deb",
-  "linux-x86_64",
-  "existing release feed",
-  "SHA256SUMS.txt",
-  "CODEXHUB_RELEASE_TAG",
-  "https://github.com/${repo}/releases/download/${normalizedTag}/${appImageName}",
-  "[platformKey]"
+  "Linux updater feed generation is disabled",
+  "deb-only",
+  "CodexHub_<version>_amd64.deb",
+  "CodexHub_<version>_arm64.deb"
 ]) {
-  if (!linuxUpdaterFeedScript.includes(token)) fail(`missing Linux updater feed script token: ${token}`);
+  if (!linuxUpdaterFeedScript.includes(token)) fail(`missing Linux updater-disabled script token: ${token}`);
+}
+for (const forbiddenLinuxFeedToken of ["AppImage", "linux-x86_64", "[platformKey]"]) {
+  if (linuxUpdaterFeedScript.includes(forbiddenLinuxFeedToken)) fail(`Linux updater-disabled script must not include token: ${forbiddenLinuxFeedToken}`);
 }
 for (const token of [
   "CodexHub_${version}_${macArch}.dmg",

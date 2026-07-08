@@ -1,7 +1,7 @@
 # CodexHub Architecture
 
 Date: 2026-07-08
-Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 Linux release-build support.
+Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 plus arm64 Linux deb release-build support.
 
 ## Architecture Principle
 

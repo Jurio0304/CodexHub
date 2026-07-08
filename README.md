@@ -100,7 +100,7 @@ For the macOS desktop app:
 
 For the Linux desktop app:
 
-1. Ubuntu/Debian x86_64.
+1. Ubuntu/Debian x86_64 or arm64.
 2. OpenSSH client tools and `ssh-keygen`.
 3. Codex CLI installed through official OpenAI/Codex guidance.
 4. SSH access to Linux remote hosts where Codex App will run.
@@ -112,7 +112,8 @@ For everyday use, download the latest stable build from this repository's Releas
 * Windows: download and run `CodexHub_0.4.2_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
 * macOS Apple Silicon: download `CodexHub_0.4.2_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.2 macOS artifact is unsigned/ad-hoc and should be real-Mac validated before broad rollout, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
-* Linux x86_64: download `CodexHub_0.4.2_amd64.AppImage`, mark it executable, and run it; or install `CodexHub_0.4.2_amd64.deb` on Ubuntu/Debian. Linux uses the macOS-style appearance by default and can be switched in Settings.
+* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.2_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings.
+* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.2_arm64.deb`.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
 ## ⚡ Quick Start
@@ -164,7 +165,7 @@ For everyday use, download the latest stable build from this repository's Releas
 ## ⚠️ Known Limitations
 
 * The v0.4.2 macOS artifact still requires real-device validation for this release, and Developer ID signing and notarization are not configured yet.
-* Linux desktop packages target Ubuntu/Debian x86_64 first; rpm, arm64, Snap, and Flatpak are not in scope yet.
+* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.4.2.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.

@@ -93,7 +93,7 @@ macOS 桌面应用需要：
 
 Linux 桌面应用需要：
 
-1. Ubuntu/Debian x86_64。
+1. Ubuntu/Debian x86_64 或 arm64。
 2. OpenSSH client tools 和 `ssh-keygen`。
 3. 通过 OpenAI/Codex 官方指引安装 Codex CLI。
 4. 可通过 SSH 登录的 Linux 远端主机。
@@ -105,7 +105,8 @@ Linux 桌面应用需要：
 - Windows：下载并运行 `CodexHub_0.4.2_x64-setup.exe`。
 - macOS Apple Silicon：下载 `CodexHub_0.4.2_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.4.2 macOS 资产仍为 unsigned/ad-hoc，且本轮仍需要真实 Mac 验证；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
-- Linux x86_64：下载 `CodexHub_0.4.2_amd64.AppImage`，赋予执行权限后运行；也可以在 Ubuntu/Debian 安装 `CodexHub_0.4.2_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换。
+- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.4.2_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换。
+- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.4.2_arm64.deb`。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
 ## ⚡ 快速开始

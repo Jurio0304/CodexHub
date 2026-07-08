@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing GitHub Release tag to use for updater URLs and optional asset upload."
+        description: "Existing GitHub Release tag to use for optional deb asset upload."
         required: true
         default: "v0.4.2"
       upload_to_release:
-        description: "Upload Linux AppImage/deb assets and merged latest.json to the existing GitHub Release."
+        description: "Upload Linux deb assets and merged SHA256SUMS.txt to the existing GitHub Release."
         required: true
         type: boolean
         default: false
@@ -35,10 +35,20 @@ on:
 
 jobs:
   linux-release:
-    name: Linux x86_64 release
-    runs-on: ubuntu-22.04
+    name: Linux ${{ matrix.deb_arch }} deb release
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - deb_arch: amd64
+            runner: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+          - deb_arch: arm64
+            runner: ubuntu-22.04-arm
+            rust_target: aarch64-unknown-linux-gnu
 
     steps:
       - name: Checkout
@@ -73,6 +83,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -106,93 +118,94 @@ jobs:
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Verify Linux updater release configuration
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
-        env:
-          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
-          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "$CODEXHUB_STABLE_UPDATE_ENDPOINT" ]; then
-            echo "CODEXHUB_STABLE_UPDATE_ENDPOINT repository variable is required." >&2
-            exit 1
-          fi
-          if [ -z "$CODEXHUB_STABLE_UPDATER_PUBKEY" ]; then
-            echo "CODEXHUB_STABLE_UPDATER_PUBKEY repository variable is required." >&2
-            exit 1
-          fi
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY repository secret is required." >&2
-            exit 1
-          fi
-          case "$CODEXHUB_STABLE_UPDATE_ENDPOINT" in
-            https://*) ;;
-            *)
-              echo "CODEXHUB_STABLE_UPDATE_ENDPOINT must be HTTPS." >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Build Linux release
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.upload_to_release != 'true'
+      - name: Build Linux deb release
         run: pnpm build:linux:release
 
-      - name: Build Linux updater release
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
-        run: pnpm build:linux:updater
-        env:
-          CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}
-          CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      - name: Upload Linux deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codexhub-linux-v${{ steps.meta.outputs.version }}-${{ matrix.deb_arch }}-deb-release
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
 
-      - name: Download existing release feed
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+  linux-release-publish:
+    name: Publish Linux deb assets
+    needs: linux-release
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="v$VERSION"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) TAG="v$TAG" ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux deb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: codexhub-linux-v${{ steps.meta.outputs.version }}-*-deb-release
+          path: dist-release/v${{ steps.meta.outputs.version }}/linux-deb
+          merge-multiple: true
+
+      - name: Download existing checksums
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           mkdir -p dist-release/existing-release
-          gh release download "$RELEASE_TAG" --pattern latest.json --pattern SHA256SUMS.txt --dir dist-release/existing-release
+          gh release download "$RELEASE_TAG" --pattern SHA256SUMS.txt --dir dist-release/existing-release || true
 
-      - name: Generate merged Linux updater feed
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
-        run: pnpm release:linux-updater-feed
+      - name: Generate merged Linux deb checksums
         env:
-          CODEXHUB_RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          releaseDir="dist-release/v$VERSION/linux-deb"
+          checksumPath="$releaseDir/SHA256SUMS.txt"
+          existingPath="dist-release/existing-release/SHA256SUMS.txt"
+          mkdir -p "$releaseDir"
+          if [ -f "$existingPath" ]; then
+            grep -Ev "CodexHub_${VERSION}_(amd64|arm64)\\.deb$|CodexHub_${VERSION}_amd64\\.AppImage$" "$existingPath" > "$checksumPath" || true
+          else
+            : > "$checksumPath"
+          fi
+          for arch in amd64 arm64; do
+            debPath="$releaseDir/CodexHub_${VERSION}_${arch}.deb"
+            if [ ! -f "$debPath" ]; then
+              echo "Missing Linux deb asset: $debPath" >&2
+              find "$releaseDir" -maxdepth 2 -type f -print >&2
+              exit 1
+            fi
+            sha256sum "$debPath" >> "$checksumPath"
+          done
+          cat "$checksumPath"
 
-      - name: Upload Linux release artifact
-        if: github.event_name != 'workflow_dispatch' || github.event.inputs.upload_to_release != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: codexhub-linux-v${{ steps.meta.outputs.version }}-x86_64-release
-          path: |
-            src-tauri/target/release/bundle/appimage/*.AppImage
-            src-tauri/target/release/bundle/deb/*.deb
-          if-no-files-found: error
-
-      - name: Upload Linux updater artifact
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: codexhub-linux-v${{ steps.meta.outputs.version }}-x86_64-updater-release
-          path: |
-            dist-release/v${{ steps.meta.outputs.version }}/linux-updater/CodexHub_${{ steps.meta.outputs.version }}_amd64.AppImage
-            dist-release/v${{ steps.meta.outputs.version }}/linux-updater/CodexHub_${{ steps.meta.outputs.version }}_amd64.deb
-            dist-release/v${{ steps.meta.outputs.version }}/linux-updater/latest.json
-            dist-release/v${{ steps.meta.outputs.version }}/linux-updater/SHA256SUMS.txt
-          if-no-files-found: error
-
-      - name: Upload Linux assets to existing GitHub Release
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.upload_to_release == 'true'
+      - name: Upload Linux deb assets to existing GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.meta.outputs.tag }}
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          releaseDir="dist-release/v$VERSION/linux-updater"
+          releaseDir="dist-release/v$VERSION/linux-deb"
           gh release view "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" --clobber \
-            "$releaseDir/CodexHub_${VERSION}_amd64.AppImage#CodexHub_${VERSION}_amd64.AppImage" \
             "$releaseDir/CodexHub_${VERSION}_amd64.deb#CodexHub_${VERSION}_amd64.deb" \
-            "$releaseDir/latest.json#latest.json" \
+            "$releaseDir/CodexHub_${VERSION}_arm64.deb#CodexHub_${VERSION}_arm64.deb" \
             "$releaseDir/SHA256SUMS.txt#SHA256SUMS.txt"

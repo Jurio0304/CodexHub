@@ -20,8 +20,8 @@ This document records the internal updater foundation. Public user-facing instal
 - Channel, feed, and signing state remain backend status fields used for status and install gating; they are not exposed as noisy end-user rows in the compact Settings card.
 - Windows signed updater publishing uses `.github/workflows/build-windows-release.yml`, `src-tauri/tauri.updater.conf.json`, `scripts/create-updater-tauri-config.mjs`, and `scripts/create-windows-updater-feed.mjs`.
 - macOS unsigned/ad-hoc updater publishing uses `.github/workflows/build-macos-release.yml` and `scripts/create-macos-updater-feed.mjs` to merge a `darwin-aarch64` entry into `latest.json`.
-- Linux x86_64 updater publishing uses `.github/workflows/build-linux-release.yml` and `scripts/create-linux-updater-feed.mjs` to merge a `linux-x86_64` entry into `latest.json`.
-- The updater feed is `latest.json`; Windows uses `windows-x86_64`, unsigned Apple Silicon macOS uses `darwin-aarch64`, and Ubuntu/Debian x86_64 Linux uses `linux-x86_64`.
+- Linux deb packages are manual install artifacts. Linux is not added to the Tauri updater feed until a lighter signed updater path is designed and tested.
+- The updater feed is `latest.json`; Windows uses `windows-x86_64`, and unsigned Apple Silicon macOS uses `darwin-aarch64`.
 
 ## Release Configuration
 
@@ -45,13 +45,13 @@ Before enabling a public stable update feed:
 2. Confirm the owner explicitly approves public stable availability.
 3. Generate or retrieve the Tauri updater signing key pair from secure storage.
 4. Inject only the public key and stable feed URL into the stable build environment.
-5. Run the Windows, macOS, or Linux release workflow, or the matching local updater build with `TAURI_SIGNING_PRIVATE_KEY` supplied by the trusted environment.
+5. Run the Windows or macOS release workflow, or the matching local updater build with `TAURI_SIGNING_PRIVATE_KEY` supplied by the trusted environment. Linux deb-only release builds do not use the updater signing key.
 6. Generate or merge `latest.json` with the platform-specific feed script.
-7. Upload only the approved public assets to the GitHub Release. Windows publishes the stable setup installer; macOS publishes the Apple Silicon `.dmg` and `.app.tar.gz` updater archive; Linux publishes x86_64 AppImage and `.deb`, with AppImage used by the updater feed. Standalone `.sig` files are not published because signature values are embedded in `latest.json`.
+7. Upload only the approved public assets to the GitHub Release. Windows publishes the stable setup installer; macOS publishes the Apple Silicon `.dmg` and `.app.tar.gz` updater archive; Linux publishes Ubuntu/Debian `amd64` and `arm64` `.deb` packages for manual install. Standalone `.sig` files are not published because signature values are embedded in `latest.json`.
 8. Verify the Settings stable check reports either `up-to-date` or `available` against the public feed.
 9. For an `available` result, verify the Settings install button downloads the signed artifact, launches the installer, and closes CodexHub for Windows to apply the update.
 
-The Windows, macOS, and Linux release workflows only upload updater assets to an existing GitHub Release when manually dispatched with `upload_to_release=true`.
+The Windows and macOS release workflows only upload updater assets to an existing GitHub Release when manually dispatched with `upload_to_release=true`. The Linux workflow may upload deb-only manual install assets with the same dispatch gate.
 
 ## Dev And Portable Boundaries
 

@@ -1,6 +1,6 @@
 # CodexHub Linux Desktop Support
 
-Status: Ubuntu/Debian x86_64 release-build support is implemented as AppImage plus `.deb` packaging. Linux uses the macOS-style appearance when Settings > Platform is `Auto`.
+Status: Ubuntu/Debian x86_64 and arm64 release-build support is implemented as `.deb` packaging. Linux uses the macOS-style appearance when Settings > Platform is `Auto`.
 
 CodexHub on Linux keeps the same safety contract as Windows and macOS: it reads local OpenSSH state, writes only CodexHub-managed SSH blocks after explicit action, avoids Codex App private state, and manages remote Linux hosts through the existing SSH/SFTP path.
 
@@ -15,7 +15,7 @@ CodexHub on Linux keeps the same safety contract as Windows and macOS: it reads 
 | Local Codex skills | `~/.codex/skills` |
 | Local Codex binary candidates | `~/.local/bin/codex`, `~/.npm-global/bin/codex`, then `command -v codex` |
 
-Initial Linux desktop support is limited to Ubuntu/Debian x86_64. rpm, arm64, Snap, and Flatpak packages are not part of this release path.
+Initial Linux desktop support is limited to Ubuntu/Debian x86_64 and arm64 `.deb` packages. rpm, AppImage, Snap, and Flatpak packages are not part of this release path.
 
 ## Release Artifacts
 
@@ -23,19 +23,19 @@ The Linux release workflow is `.github/workflows/build-linux-release.yml`.
 
 Normal push and pull-request runs upload CI artifacts only. Manual dispatch with `upload_to_release=true` may upload:
 
-- `CodexHub_<version>_amd64.AppImage`
 - `CodexHub_<version>_amd64.deb`
-- merged `latest.json`
+- `CodexHub_<version>_arm64.deb`
 - merged `SHA256SUMS.txt`
 
-The Tauri updater feed uses the `linux-x86_64` platform entry and points to the AppImage. The `.deb` package is for manual install or manual upgrade and is not used by the updater feed.
+Linux `.deb` packages are for manual install or manual upgrade and are not used by the Tauri updater feed. Linux is not added to `latest.json` until a lighter signed updater story is designed and tested.
 
 ## Validation Checklist
 
-For each public Linux desktop artifact, verify on a real Ubuntu/Debian x86_64 desktop:
+For each public Linux desktop artifact, verify on a real Ubuntu/Debian desktop matching the package architecture:
 
-- AppImage launches after executable permission is set.
 - `.deb` installs and launches from the desktop environment.
+- Ubuntu/Debian x86_64 installs `CodexHub_<version>_amd64.deb`.
+- Ubuntu/Debian arm64 installs `CodexHub_<version>_arm64.deb`.
 - Settings defaults to the macOS-style appearance when Platform is `Auto`, and the Windows style can still be selected manually.
 - Local SSH status, public-key display, SSH config import, and managed-host writes use `~/.ssh/config`.
 - Host SSH test and remote Codex probe work against a safe Linux host.
@@ -43,7 +43,7 @@ For each public Linux desktop artifact, verify on a real Ubuntu/Debian x86_64 de
 - Skills import, install, download, and uninstall keep task-log evidence and redaction.
 - Monitor page refreshes remembered Linux hosts without background polling when inactive.
 - Close-button behavior, tray/status item restore, and Quit behavior match the current desktop lifecycle contract.
-- Settings update check reads the public feed and handles pending configuration or signed AppImage updates honestly.
+- Settings update check remains honest: Linux `.deb` packages do not participate in the updater feed yet.
 
 ## Build Dependencies
 
