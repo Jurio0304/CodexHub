@@ -185,7 +185,7 @@ jobs:
           fi
           gh release view "$RELEASE_TAG"
           gh release upload "$RELEASE_TAG" --clobber \
-            "$releaseDir/CodexHub_${VERSION}_aarch64.dmg#CodexHub $VERSION macOS Apple Silicon DMG unsigned" \
-            "$updaterArchive#CodexHub $VERSION macOS Apple Silicon updater archive unsigned" \
-            "$releaseDir/latest.json#CodexHub $VERSION stable updater feed" \
-            "$releaseDir/SHA256SUMS.txt#CodexHub $VERSION SHA256 checksums"
+            "$releaseDir/CodexHub_${VERSION}_aarch64.dmg#CodexHub_${VERSION}_aarch64.dmg" \
+            "$updaterArchive#$(basename "$updaterArchive")" \
+            "$releaseDir/latest.json#latest.json" \
+            "$releaseDir/SHA256SUMS.txt#SHA256SUMS.txt"

@@ -586,6 +586,22 @@ for (const forbiddenWorkflowToken of ["softprops/action-gh-release", "gh release
   if (macosWorkflow.includes(forbiddenWorkflowToken)) fail(`macOS release workflow must not create a GitHub Release: ${forbiddenWorkflowToken}`);
 }
 for (const token of [
+  "CodexHub_${VERSION}_aarch64.dmg#CodexHub_${VERSION}_aarch64.dmg",
+  "#$(basename \"$updaterArchive\")",
+  "latest.json#latest.json",
+  "SHA256SUMS.txt#SHA256SUMS.txt"
+]) {
+  if (!macosWorkflow.includes(token)) fail(`missing macOS asset filename label token: ${token}`);
+}
+for (const forbiddenWorkflowToken of [
+  "macOS Apple Silicon DMG unsigned",
+  "macOS Apple Silicon updater archive unsigned",
+  "stable updater feed",
+  "SHA256 checksums"
+]) {
+  if (macosWorkflow.includes(forbiddenWorkflowToken)) fail(`macOS release asset label must match the file name: ${forbiddenWorkflowToken}`);
+}
+for (const token of [
   "runs-on: windows-2022",
   "CODEXHUB_STABLE_UPDATE_ENDPOINT: ${{ vars.CODEXHUB_STABLE_UPDATE_ENDPOINT }}",
   "CODEXHUB_STABLE_UPDATER_PUBKEY: ${{ vars.CODEXHUB_STABLE_UPDATER_PUBKEY }}",
@@ -600,6 +616,20 @@ for (const token of [
   if (!windowsWorkflow.includes(token)) fail(`missing Windows updater workflow token: ${token}`);
 }
 if (windowsWorkflow.includes(".exe.sig#")) fail("Windows GitHub Release upload must not publish standalone updater signature assets");
+for (const token of [
+  "CodexHub_$($env:VERSION)_x64-setup.exe#CodexHub_$($env:VERSION)_x64-setup.exe",
+  "latest.json#latest.json",
+  "SHA256SUMS.txt#SHA256SUMS.txt"
+]) {
+  if (!windowsWorkflow.includes(token)) fail(`missing Windows asset filename label token: ${token}`);
+}
+for (const forbiddenWorkflowToken of [
+  "Windows x64 Setup",
+  "stable updater feed",
+  "SHA256 checksums"
+]) {
+  if (windowsWorkflow.includes(forbiddenWorkflowToken)) fail(`Windows release asset label must match the file name: ${forbiddenWorkflowToken}`);
+}
 for (const token of [
   "CODEXHUB_STABLE_UPDATER_PUBKEY",
   "tauri.updater.local.json",

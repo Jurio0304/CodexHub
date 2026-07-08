@@ -137,6 +137,6 @@ jobs:
           $releaseDir = "dist-release/v$env:VERSION/windows-updater"
           gh release view "$env:RELEASE_TAG"
           gh release upload "$env:RELEASE_TAG" --clobber `
-            "$releaseDir/CodexHub_$($env:VERSION)_x64-setup.exe#CodexHub $env:VERSION Windows x64 Setup" `
-            "$releaseDir/latest.json#CodexHub $env:VERSION stable updater feed" `
-            "$releaseDir/SHA256SUMS.txt#CodexHub $env:VERSION SHA256 checksums"
+            "$releaseDir/CodexHub_$($env:VERSION)_x64-setup.exe#CodexHub_$($env:VERSION)_x64-setup.exe" `
+            "$releaseDir/latest.json#latest.json" `
+            "$releaseDir/SHA256SUMS.txt#SHA256SUMS.txt"
