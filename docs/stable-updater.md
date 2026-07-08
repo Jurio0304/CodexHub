@@ -1,7 +1,7 @@
 # CodexHub Stable Updater Foundation
 
 Date: 2026-07-08
-Version baseline: v0.4.2
+Version baseline: v0.4.3
 
 This document records the internal updater foundation. Public user-facing install instructions stay in `README.md`.
 
@@ -57,4 +57,4 @@ The Windows and macOS release workflows only upload updater assets to an existin
 
 `dev` does not use automatic updates because it represents local development, previews, and acceptance artifacts that should never become a public update source.
 
-Portable packaging remains manual/local for now. The v0.4.2 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package. The v0.4.2 macOS public artifact still requires real Mac validation, remains unsigned/ad-hoc, and is documented only in README, docs, and Release notes; the app UI must not display unsigned or notarization warnings.
+Portable packaging remains manual/local for now. The v0.4.3 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package. The v0.4.3 macOS public artifact still requires real Mac validation, remains unsigned/ad-hoc, and is documented only in README, docs, and Release notes; the app UI must not display unsigned or notarization warnings.

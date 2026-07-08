@@ -4,7 +4,7 @@ Date: 2026-07-08
 
 ## macOS
 
-macOS release-build support is merged, and the v0.4.2 public artifact still requires real Mac validation for this release. The artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
+macOS release-build support is merged, and the v0.4.3 public artifact still requires real Mac validation for this release. The artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
 
 The following macOS limitations remain:
 
@@ -18,7 +18,7 @@ Linux desktop support targets Ubuntu/Debian x86_64 and arm64 `.deb` packages fir
 
 The following Linux desktop limitations remain:
 
-- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.4.2.
+- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.4.3.
 - Linux packages require real Ubuntu/Debian desktop validation before broad distribution.
 - `.deb` upgrades remain manual unless a package-repository or lighter updater story is designed later.
 

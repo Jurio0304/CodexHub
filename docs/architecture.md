@@ -150,7 +150,7 @@ type OperationLog = {
 
 ## Release Channel Data Isolation
 
-CodexHub v0.4.2 continues to define exactly two release channels: `stable` and `dev`.
+CodexHub v0.4.3 continues to define exactly two release channels: `stable` and `dev`.
 
 - `stable` is the public release channel. It uses `src-tauri/tauri.conf.json`, `productName: CodexHub`, `identifier: app.codexhub.desktop`, and window title `CodexHub`.
 - `dev` is for development, test runs, previews, and manual acceptance. It uses `src-tauri/tauri.dev.conf.json`, `productName: CodexHub Dev`, `identifier: dev.codexhub.desktop`, and window title `CodexHub Dev`.
