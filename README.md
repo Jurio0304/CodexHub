@@ -165,3 +165,7 @@ See [docs/known-limitations.md](docs/known-limitations.md).
 ## 📄 License
 
 MIT. See [LICENSE](LICENSE).
+
+## 🤝 Community
+
+This project actively participates in and recognizes the [linux.do community](https://linux.do/).
