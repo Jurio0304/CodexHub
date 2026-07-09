@@ -24,6 +24,7 @@ tasks.json
 settings.json
 skill-inventory.json
 codex-latest.json
+.agents/skills/
 *.db
 *.sqlite
 *.sqlite3
