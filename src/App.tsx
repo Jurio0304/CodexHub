@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent, MouseEventHandler, PointerEvent as React
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadInitialAppData } from "./app/bootstrap";
-import { api, fallbackAppUpdateStatus, fallbackHealth } from "./api";
+import { api, apiMode, fallbackAppUpdateStatus, fallbackHealth } from "./api";
 import type {
   AppUpdateStatus,
   DeleteOperationResult,
@@ -220,6 +220,9 @@ const uiCopy = {
       common: {
       addServer: "Add Server",
       backendMode: "Backend mode",
+      mockMode: "Mock mode — no desktop/SSH writes",
+      backendUnavailableTitle: "Desktop backend unavailable",
+      backendUnavailableBody: "CodexHub could not load authoritative desktop data. Start the Tauri desktop app or explicitly use the Web/Mock command.",
       host: "Host",
       justNow: "just now",
       primaryNavigation: "Primary navigation",
@@ -813,6 +816,9 @@ const uiCopy = {
       common: {
       addServer: "添加服务器",
       backendMode: "后端模式",
+      mockMode: "模拟模式——不会执行桌面或 SSH 写入",
+      backendUnavailableTitle: "桌面后端不可用",
+      backendUnavailableBody: "CodexHub 无法加载权威桌面数据。请启动 Tauri 桌面应用，或明确使用 Web/Mock 命令。",
       host: "主机",
       justNow: "刚刚",
       primaryNavigation: "主导航",
@@ -1809,6 +1815,7 @@ function App() {
   const [resourceBusy, setResourceBusy] = useState(false);
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
   const [hostModalOpen, setHostModalOpen] = useState(false);
@@ -2128,6 +2135,9 @@ function App() {
         if (nextSettings.setupGuideDismissed || nextHosts.length > 0) {
           void refreshSshState();
         }
+      })
+      .catch((error) => {
+        if (mounted) setBootstrapError(formatError(error));
       })
       .finally(() => {
         if (mounted) setLoading(false);
@@ -3251,7 +3261,7 @@ function App() {
         <div className="sidebarFooter">
           <span className="statusDot" data-status={health.mode === "tauri" ? "online" : "unknown"} />
           <div>
-            <strong>{copy.common.backendMode}</strong>
+            <strong>{apiMode === "mock" ? copy.common.mockMode : copy.common.backendMode}</strong>
           </div>
           {showSidebarStableUpdateButton ? (
             <button
@@ -3283,7 +3293,13 @@ function App() {
           </header>
         ) : null}
 
-        {renderContent()}
+        {bootstrapError ? (
+          <section className="panel" role="alert">
+            <TitleWithIcon icon="warning" level={2}>{copy.common.backendUnavailableTitle}</TitleWithIcon>
+            <p>{copy.common.backendUnavailableBody}</p>
+            <p className="monoText">{bootstrapError}</p>
+          </section>
+        ) : renderContent()}
       </main>
       {codexUninstallConfirm ? (
         <CodexUninstallConfirmModal

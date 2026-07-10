@@ -34,45 +34,32 @@ import type {
   TaskRun
 } from "../models";
 import type { AppSettings, CloseButtonBehavior } from "../settings";
-import { loadLocalSettings, normalizeSettings, saveLocalSettings } from "../settings";
+import { normalizeSettings, saveLocalSettings } from "../settings";
 import type { CodexHubApi } from "./contracts";
-import {
-  fallbackAppUpdateStatus,
-  fallbackHealth,
-  fallbackNetworkProxyStatus,
-  fallbackSshConfigHosts,
-  fallbackSshStatus
-} from "./fallbacks";
-import { hasTauriRuntime, requiredInvoke, safeInvoke } from "./invoke";
-import { mockApi, normalizeProfile, normalizeProfileApplyResult } from "./mock";
+import { assertTauriRuntime, requiredInvoke } from "./invoke";
+import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
 
-export const api: CodexHubApi = {
-  getHealth: () => safeInvoke("app_health", undefined, fallbackHealth),
-  getAppUpdateStatus: () => safeInvoke("get_app_update_status", undefined, fallbackAppUpdateStatus),
+export const desktopApi: CodexHubApi = {
+  getHealth: () => requiredInvoke("app_health"),
+  getAppUpdateStatus: () => requiredInvoke("get_app_update_status"),
   checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update"),
   installStableUpdate: () => requiredInvoke<AppUpdateStatus>("install_stable_update"),
-  detectNetworkProxy: () => safeInvoke<NetworkProxyStatus>("detect_network_proxy", undefined, fallbackNetworkProxyStatus),
+  detectNetworkProxy: () => requiredInvoke<NetworkProxyStatus>("detect_network_proxy"),
   getSettings: () =>
-    safeInvoke<AppSettings>("get_settings", undefined, () => loadLocalSettings()).then((settings) => {
+    requiredInvoke<AppSettings>("get_settings").then((settings) => {
       const normalized = normalizeSettings(settings);
       saveLocalSettings(normalized);
       return normalized;
     }),
   saveSettings: (settings: AppSettings) => {
     const normalized = normalizeSettings(settings);
-    saveLocalSettings(normalized);
-    return safeInvoke<AppSettings>("save_settings", { settings: normalized }, normalized).then((saved) => {
+    return requiredInvoke<AppSettings>("save_settings", { settings: normalized }).then((saved) => {
       const nextSettings = normalizeSettings(saved);
       saveLocalSettings(nextSettings);
       return nextSettings;
     });
   },
   chooseCloseButtonBehavior: (behavior: Exclude<CloseButtonBehavior, "ask">) => {
-    const normalized = normalizeSettings({ ...loadLocalSettings(), closeButtonBehavior: behavior });
-    if (!hasTauriRuntime()) {
-      saveLocalSettings(normalized);
-      return Promise.resolve(normalized);
-    }
     return requiredInvoke<AppSettings>("choose_close_button_behavior", { behavior }).then((saved) => {
       const nextSettings = normalizeSettings(saved);
       saveLocalSettings(nextSettings);
@@ -80,32 +67,25 @@ export const api: CodexHubApi = {
     });
   },
   onCloseButtonBehaviorRequested: async (handler: () => void): Promise<UnlistenFn> => {
-    if (!hasTauriRuntime()) return () => {};
+    assertTauriRuntime("choose_close_button_behavior");
     return listen("close-button-behavior-requested", () => handler());
   },
-  getSshStatus: () => safeInvoke("get_ssh_status", undefined, () => fallbackSshStatus()),
+  getSshStatus: () => requiredInvoke("get_ssh_status"),
   generateEd25519Key: () => requiredInvoke("generate_ed25519_key"),
-  listSshConfigHosts: () => safeInvoke("list_ssh_config_hosts", undefined, () => mockApi.listSshConfigHosts()),
+  listSshConfigHosts: () => requiredInvoke("list_ssh_config_hosts"),
   upsertSshConfigHost: (draft: SshHostDraft) => requiredInvoke("upsert_ssh_config_host", { draft }),
-  deleteSshConfigHost: async (alias: string): Promise<SshConfigDeleteResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("delete_ssh_config_host", { alias });
-    }
-    return mockApi.deleteSshConfigHost(alias);
-  },
-  listHosts: () => safeInvoke("list_hosts", undefined, () => mockApi.listHosts()),
-  refreshDiscoveredHosts: () => safeInvoke("refresh_discovered_hosts", undefined, () => mockApi.refreshDiscoveredHosts()),
+  deleteSshConfigHost: (alias: string): Promise<SshConfigDeleteResult> => requiredInvoke("delete_ssh_config_host", { alias }),
+  listHosts: () => requiredInvoke("list_hosts"),
+  refreshDiscoveredHosts: () => requiredInvoke("refresh_discovered_hosts"),
   refreshLatestCodexVersion: (force = false, timeoutMs = 30000) =>
-    safeInvoke<LatestCodexVersion>("refresh_latest_codex_version", { force, timeoutMs }, () =>
-      mockApi.refreshLatestCodexVersion(force, timeoutMs)
-    ),
-  getLocalCodexStatus: () => safeInvoke<LocalCodexStatus>("get_local_codex_status", undefined, () => mockApi.getLocalCodexStatus()),
-  addHost: (draft: HostDraft) => safeInvoke("add_host", { draft }, () => mockApi.addHost(draft)),
-  updateHost: (id: string, patch: HostPatch) => safeInvoke("update_host", { id, patch }, () => mockApi.updateHost(id, patch)),
-  deleteHost: (id: string) => safeInvoke("delete_host", { id }, () => mockApi.deleteHost(id)),
-  testSshConnection: (id: string) => safeInvoke("test_ssh_connection", { id }, () => mockApi.testSshConnection(id)),
+    requiredInvoke<LatestCodexVersion>("refresh_latest_codex_version", { force, timeoutMs }),
+  getLocalCodexStatus: () => requiredInvoke<LocalCodexStatus>("get_local_codex_status"),
+  addHost: (draft: HostDraft) => requiredInvoke("add_host", { draft }),
+  updateHost: (id: string, patch: HostPatch) => requiredInvoke("update_host", { id, patch }),
+  deleteHost: (id: string) => requiredInvoke("delete_host", { id }),
+  testSshConnection: (id: string) => requiredInvoke("test_ssh_connection", { id }),
   sshCheck: (hostAlias: string, timeoutMs = 10000) =>
-    safeInvoke("ssh_check", { hostAlias, timeoutMs }, () => mockApi.sshCheck(hostAlias, timeoutMs)),
+    requiredInvoke("ssh_check", { hostAlias, timeoutMs }),
   connectSshHost: async (
     draft: SshHostDraft,
     password: string,
@@ -113,11 +93,8 @@ export const api: CodexHubApi = {
     onProgress?: (event: SshBootstrapProgressEvent) => void,
     timeoutMs = 10000
   ): Promise<SshBootstrapResult> => {
-    if (!hasTauriRuntime()) {
-      return mockApi.connectSshHost(draft, password, requestId, onProgress, timeoutMs);
-    }
-
     let unlisten: UnlistenFn | null = null;
+    assertTauriRuntime("bootstrap_ssh_host");
     if (onProgress) {
       unlisten = await listen<SshBootstrapProgressEvent>("ssh-bootstrap-progress", (event) => {
         if (event.payload.requestId === requestId) onProgress(event.payload);
@@ -136,17 +113,13 @@ export const api: CodexHubApi = {
     }
   },
   bootstrapSshHost: (draft: SshHostDraft, password: string, timeoutMs = 10000) =>
-    safeInvoke("bootstrap_ssh_host", { draft, password, timeoutMs }, () => mockApi.bootstrapSshHost(draft, password, timeoutMs)),
+    requiredInvoke("bootstrap_ssh_host", { draft, password, timeoutMs }),
   bootstrapExistingSshHost: (hostAlias: string, password: string, timeoutMs = 10000) =>
-    safeInvoke("bootstrap_existing_ssh_host", { hostAlias, password, timeoutMs }, () =>
-      mockApi.bootstrapExistingSshHost(hostAlias, password, timeoutMs)
-    ),
+    requiredInvoke("bootstrap_existing_ssh_host", { hostAlias, password, timeoutMs }),
   remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>
-    safeInvoke<RemoteProbeResult>("remote_probe_codex", { hostAlias, timeoutMs }, () => mockApi.remoteProbeCodex(hostAlias, timeoutMs)),
+    requiredInvoke<RemoteProbeResult>("remote_probe_codex", { hostAlias, timeoutMs }),
   sampleHostResources: (hostAliases: string[], timeoutMs = 8000) =>
-    safeInvoke<HostResourceBatchResult>("sample_host_resources", { hostAliases, timeoutMs }, () =>
-      mockApi.sampleHostResources(hostAliases, timeoutMs)
-    ),
+    requiredInvoke<HostResourceBatchResult>("sample_host_resources", { hostAliases, timeoutMs }),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,
@@ -154,11 +127,8 @@ export const api: CodexHubApi = {
     requestId?: string,
     onProgress?: (event: RemoteCodexProgressEvent) => void
   ): Promise<RemoteCodexMaintenanceResult> => {
-    if (!hasTauriRuntime()) {
-      return mockApi.remoteManageCodex(hostAlias, action, timeoutMs, requestId, onProgress);
-    }
-
     let unlisten: UnlistenFn | null = null;
+    assertTauriRuntime("remote_manage_codex");
     if (requestId && onProgress) {
       unlisten = await listen<RemoteCodexProgressEvent>("remote-codex-progress", (event) => {
         if (event.payload.requestId === requestId) onProgress(event.payload);
@@ -176,126 +146,57 @@ export const api: CodexHubApi = {
       unlisten?.();
     }
   },
-  listProfiles: () => safeInvoke<Profile[]>("list_profiles", undefined, () => mockApi.listProfiles()).then((profiles) => profiles.map(normalizeProfile)),
+  listProfiles: () => requiredInvoke<Profile[]>("list_profiles").then((profiles) => profiles.map(normalizeProfile)),
   createProfile: (draft: ProfileDraft) =>
-    safeInvoke<Profile>("create_profile", { draft }, () => mockApi.createProfile(draft)).then(normalizeProfile),
+    requiredInvoke<Profile>("create_profile", { draft }).then(normalizeProfile),
   updateProfile: (id: string, patch: ProfilePatch) =>
-    safeInvoke<Profile>("update_profile", { id, patch }, () => mockApi.updateProfile(id, patch)).then(normalizeProfile),
-  deleteProfile: (id: string) => safeInvoke("delete_profile", { id }, () => mockApi.deleteProfile(id)),
-  duplicateProfile: (id: string) => safeInvoke<Profile>("duplicate_profile", { id }, () => mockApi.duplicateProfile(id)).then(normalizeProfile),
+    requiredInvoke<Profile>("update_profile", { id, patch }).then(normalizeProfile),
+  deleteProfile: (id: string) => requiredInvoke("delete_profile", { id }),
+  duplicateProfile: (id: string) => requiredInvoke<Profile>("duplicate_profile", { id }).then(normalizeProfile),
   importProfiles: (bundle: ProfileImportExport) =>
-    safeInvoke<ProfileImportExport>("import_profiles", { bundle }, () => mockApi.importProfiles(bundle)).then((result) => ({
+    requiredInvoke<ProfileImportExport>("import_profiles", { bundle }).then((result) => ({
       ...result,
       profiles: result.profiles.map(normalizeProfile)
     })),
-  setProfileApiKey: async (profileId: string, apiKey: string) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile);
-    }
-    return mockApi.setProfileApiKey(profileId, apiKey);
-  },
-  getProfileApiKey: async (profileId: string) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("get_profile_api_key", { profileId });
-    }
-    return mockApi.getProfileApiKey(profileId);
-  },
-  deleteProfileApiKey: async (profileId: string) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke<Profile>("delete_profile_api_key", { profileId }).then(normalizeProfile);
-    }
-    return mockApi.deleteProfileApiKey(profileId);
-  },
+  setProfileApiKey: (profileId: string, apiKey: string) =>
+    requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile),
+  getProfileApiKey: (profileId: string) => requiredInvoke("get_profile_api_key", { profileId }),
+  deleteProfileApiKey: (profileId: string) =>
+    requiredInvoke<Profile>("delete_profile_api_key", { profileId }).then(normalizeProfile),
   previewProfileApply: (profileId: string, hostIds: string[]) =>
-    safeInvoke<ProfileApplyPreview>("preview_profile_apply", { profileId, hostIds }, () => mockApi.previewProfileApply(profileId, hostIds)),
-  applyProfile: async (profileId: string, hostIds: string[]) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke<ProfileApplyBatchResult>("apply_profile", { profileId, hostIds }).then(normalizeProfileApplyResult);
-    }
-    return mockApi.applyProfile(profileId, hostIds);
-  },
+    requiredInvoke<ProfileApplyPreview>("preview_profile_apply", { profileId, hostIds }),
+  applyProfile: (profileId: string, hostIds: string[]) =>
+    requiredInvoke<ProfileApplyBatchResult>("apply_profile", { profileId, hostIds }).then(normalizeProfileApplyResult),
   detectCcSwitchProfiles: () =>
-    safeInvoke<CcSwitchDetection>("detect_cc_switch_profiles", undefined, () => mockApi.detectCcSwitchProfiles()).then((detection) => ({
+    requiredInvoke<CcSwitchDetection>("detect_cc_switch_profiles").then((detection) => ({
       ...detection,
       importExport: { ...detection.importExport, profiles: detection.importExport.profiles.map(normalizeProfile) }
     })),
   importCcSwitchProfiles: (detection: CcSwitchDetection) =>
-    safeInvoke<ProfileImportExport>("import_cc_switch_profiles", { detection }, () => mockApi.importCcSwitchProfiles(detection)).then((result) => ({
+    requiredInvoke<ProfileImportExport>("import_cc_switch_profiles", { detection }).then((result) => ({
       ...result,
       profiles: result.profiles.map(normalizeProfile)
     })),
-  listSkillPacks: () => safeInvoke<SkillPack[]>("list_local_skills", undefined, () => mockApi.listSkillPacks()),
-  getSkillInventoryStatus: () =>
-    safeInvoke<SkillInventoryStatus>("get_skill_inventory_status", undefined, () => mockApi.getSkillInventoryStatus()),
-  detectInstalledSkills: async (includeHosts: boolean, timeoutMs = 120000): Promise<SkillDetectionResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("detect_installed_skills", { includeHosts, timeoutMs });
-    }
-    return mockApi.detectInstalledSkills(includeHosts, timeoutMs);
-  },
-  importLocalSkill: async (path: string): Promise<SkillImportResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("import_local_skill", { path });
-    }
-    return mockApi.importLocalSkill(path);
-  },
-  downloadGithubSkill: async (repoUrl: string, timeoutMs = 120000): Promise<SkillImportResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("download_github_skill", { repoUrl, timeoutMs });
-    }
-    return mockApi.downloadGithubSkill(repoUrl, timeoutMs);
-  },
-  getSkillTargets: async (skillId: string, timeoutMs = 30000): Promise<SkillTargetsResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("get_skill_targets", { skillId, timeoutMs });
-    }
-    return mockApi.getSkillTargets(skillId, timeoutMs);
-  },
-  installSkillTargets: async (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("install_skill_targets", {
-        skillId,
-        targets,
-        timeoutMs
-      });
-    }
-    return mockApi.installSkillTargets(skillId, targets, timeoutMs);
-  },
-  uninstallSkillTargets: async (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("uninstall_skill_targets", {
-        skillId,
-        targets,
-        timeoutMs
-      });
-    }
-    return mockApi.uninstallSkillTargets(skillId, targets, timeoutMs);
-  },
-  deleteLibrarySkill: async (skillId: string, uninstallFirst: boolean, timeoutMs = 120000): Promise<SkillTargetOperationResult> => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("delete_library_skill", { skillId, uninstallFirst, timeoutMs });
-    }
-    return mockApi.deleteLibrarySkill(skillId, uninstallFirst, timeoutMs);
-  },
-  downloadInstalledSkill: async (request: InstalledSkillRequest, timeoutMs = 120000) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("download_installed_skill", { request, timeoutMs });
-    }
-    return mockApi.downloadInstalledSkill(request, timeoutMs);
-  },
-  uninstallInstalledSkill: async (request: InstalledSkillRequest, timeoutMs = 120000) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke("uninstall_installed_skill", { request, timeoutMs });
-    }
-    return mockApi.uninstallInstalledSkill(request, timeoutMs);
-  },
-  updateLibrarySkillAbout: async (skillId: string, about: string) => {
-    if (hasTauriRuntime()) {
-      return requiredInvoke<SkillPack[]>("update_library_skill_about", { skillId, about });
-    }
-    return mockApi.updateLibrarySkillAbout(skillId, about);
-  },
-  listTasks: () => safeInvoke<TaskRun[]>("list_tasks", undefined, () => mockApi.listTasks())
+  listSkillPacks: () => requiredInvoke<SkillPack[]>("list_local_skills"),
+  getSkillInventoryStatus: () => requiredInvoke<SkillInventoryStatus>("get_skill_inventory_status"),
+  detectInstalledSkills: (includeHosts: boolean, timeoutMs = 120000): Promise<SkillDetectionResult> =>
+    requiredInvoke("detect_installed_skills", { includeHosts, timeoutMs }),
+  importLocalSkill: (path: string): Promise<SkillImportResult> => requiredInvoke("import_local_skill", { path }),
+  downloadGithubSkill: (repoUrl: string, timeoutMs = 120000): Promise<SkillImportResult> =>
+    requiredInvoke("download_github_skill", { repoUrl, timeoutMs }),
+  getSkillTargets: (skillId: string, timeoutMs = 30000): Promise<SkillTargetsResult> =>
+    requiredInvoke("get_skill_targets", { skillId, timeoutMs }),
+  installSkillTargets: (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
+    requiredInvoke("install_skill_targets", { skillId, targets, timeoutMs }),
+  uninstallSkillTargets: (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
+    requiredInvoke("uninstall_skill_targets", { skillId, targets, timeoutMs }),
+  deleteLibrarySkill: (skillId: string, uninstallFirst: boolean, timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
+    requiredInvoke("delete_library_skill", { skillId, uninstallFirst, timeoutMs }),
+  downloadInstalledSkill: (request: InstalledSkillRequest, timeoutMs = 120000) =>
+    requiredInvoke("download_installed_skill", { request, timeoutMs }),
+  uninstallInstalledSkill: (request: InstalledSkillRequest, timeoutMs = 120000) =>
+    requiredInvoke("uninstall_installed_skill", { request, timeoutMs }),
+  updateLibrarySkillAbout: (skillId: string, about: string) =>
+    requiredInvoke<SkillPack[]>("update_library_skill_about", { skillId, about }),
+  listTasks: () => requiredInvoke<TaskRun[]>("list_tasks")
 };
-
-void fallbackSshConfigHosts;

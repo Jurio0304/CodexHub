@@ -6,7 +6,9 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "dev:web": "vite --config vite.config.mjs --host 127.0.0.1 --port 1420",
+    "dev:web": "pnpm dev:web:mock",
+    "dev:web:mock": "vite --mode mock --config vite.config.mjs --host 127.0.0.1 --port 1420",
+    "dev:web:desktop": "vite --mode desktop --config vite.config.mjs --host 127.0.0.1 --port 1420",
     "dev:mock": "node ./scripts/mock-dev.mjs",
     "build": "pnpm build:tauri",
     "build:tauri": "tauri build --no-bundle --ci",
@@ -20,11 +22,14 @@
     "build:installer:nsis:dev": "tauri build --config src-tauri/tauri.dev.conf.json --bundles nsis --ci",
     "build:installer:msi": "tauri build --bundles msi --ci",
     "build:installer:msi:dev": "tauri build --config src-tauri/tauri.dev.conf.json --bundles msi --ci",
-    "build:web": "vite build --config vite.config.mjs",
+    "build:web": "pnpm build:web:mock",
+    "build:web:mock": "vite build --mode mock --config vite.config.mjs",
+    "build:web:desktop": "vite build --mode desktop --config vite.config.mjs",
     "preview": "vite preview --config vite.config.mjs",
     "typecheck": "tsc --noEmit",
     "smoke": "node ./scripts/smoke-test.mjs",
     "smoke:mock": "node ./scripts/mock-smoke-test.mjs",
+    "test:api": "node ./scripts/api-boundary-test.mjs",
     "audit:public": "node ./scripts/audit-public-scope.mjs",
     "release:updater-feed": "node ./scripts/create-windows-updater-feed.mjs",
     "release:linux-updater-feed": "node ./scripts/create-linux-updater-feed.mjs",
@@ -33,7 +38,7 @@
     "release:portable:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1 -Channel dev",
     "validate:release": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-release.ps1",
     "validate:release:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-release.ps1 -Channel dev -SkipTauriBuild -SkipPortable -NoLive",
-    "test": "pnpm smoke && pnpm smoke:mock && pnpm typecheck"
+    "test": "pnpm test:api && pnpm smoke && pnpm smoke:mock && pnpm typecheck"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

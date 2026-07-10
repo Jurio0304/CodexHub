@@ -4,9 +4,9 @@
   "version": "0.4.3",
   "identifier": "app.codexhub.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev:web",
+    "beforeDevCommand": "pnpm dev:web:desktop",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "pnpm build:web",
+    "beforeBuildCommand": "pnpm build:web:desktop",
     "frontendDist": "../dist"
   },
   "app": {

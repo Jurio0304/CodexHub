@@ -1,4 +1,10 @@
-export { api } from "./desktop";
+import { desktopApi } from "./desktop";
+import { mockApi } from "./mock";
+import { apiMode } from "./runtime";
+
+export const api = apiMode === "mock" ? mockApi : desktopApi;
+export { apiMode } from "./runtime";
+export type { ApiMode } from "./runtime";
 export type { CodexHubApi, RemoteCodexProgressHandler, SshBootstrapProgressHandler } from "./contracts";
 export {
   fallbackAppUpdateStatus,
@@ -14,4 +20,4 @@ export {
   fallbackSshStatus,
   fallbackTasks
 } from "./fallbacks";
-export { formatInvokeError, hasTauriRuntime, requiredInvoke, safeInvoke } from "./invoke";
+export { DesktopCommandError, formatInvokeError, hasTauriRuntime, requiredInvoke } from "./invoke";
