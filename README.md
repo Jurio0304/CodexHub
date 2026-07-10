@@ -64,7 +64,8 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * Manages local profile templates and applies rendered TOML to remote `~/.codex/config.toml`.
 * Imports local or GitHub skill directories containing `SKILL.md`.
 * Shows read-only, page-active CPU, memory, and GPU resource snapshots for remembered hosts.
-* Shows task history with redacted stdout/stderr, command status, duration, and failure evidence.
+* Persists redacted task history across restarts and surfaces running or unacknowledged failures in a global Task drawer.
+* Keeps dialogs keyboard-contained with Escape close, trigger-focus restoration, scoped live announcements, and reduced-motion support.
 * Keeps a Windows tray / macOS menu bar / Linux tray status icon. The first window close asks whether future closes exit CodexHub or minimize it to the tray, and the choice can be changed later in Settings.
 * Guides the user to Codex App after CodexHub verifies an SSH alias.
 

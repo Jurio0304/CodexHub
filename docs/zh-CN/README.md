@@ -59,7 +59,8 @@ CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 C
 - 创建、预览、应用 profile 到远端 `~/.codex/config.toml`。
 - 导入本地或 GitHub skill，并安装到本机或远端目标。
 - 对已记住主机展示只读、页面活跃时刷新的 CPU、内存和 GPU 资源采样。
-- 在 Tasks 中查看命令、stdout/stderr、退出码、耗时和失败原因，日志默认脱敏。
+- 任务历史会跨重启持久保存；全局任务抽屉优先显示运行中任务和未确认失败，命令与 stdout/stderr 默认脱敏。
+- 弹窗支持键盘焦点锁定、Esc 关闭、关闭后焦点恢复、范围明确的状态播报和 reduced-motion。
 - 提供 Windows 托盘 / macOS 菜单栏 / Linux 托盘状态图标；首次点击窗口关闭按钮时会询问以后是退出程序还是最小化到托盘，后续可在 Settings 修改。
 - 完成准备后，引导用户到 Codex App 手动添加或启用已验证的 SSH alias。
 
