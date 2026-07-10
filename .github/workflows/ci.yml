@@ -77,6 +77,16 @@ jobs:
       - name: Run TypeScript typecheck
         run: pnpm typecheck
 
+      - name: Run API and generated binding checks
+        run: |
+          pnpm test:api
+          pnpm test:bindings
+
+      - name: Run UI accessibility and i18n checks
+        run: |
+          pnpm test:ui
+          pnpm test:i18n
+
       - name: Build frontend
         run: pnpm build:web
 
