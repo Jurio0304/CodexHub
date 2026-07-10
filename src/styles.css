@@ -3288,6 +3288,42 @@ tr:last-child td {
   background: var(--surface-solid);
 }
 
+.credentialVisibilityButton {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: transparent;
+  opacity: 1;
+  z-index: 1;
+}
+
+.credentialVisibilityButton:hover,
+.credentialVisibilityButton[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.credentialVisibilityButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.credentialEyeIcon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
 .fieldGroup input,
 .fieldGroup select,
 .fieldGroup textarea {
@@ -3365,7 +3401,7 @@ tr:last-child td {
   min-width: 0;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 10px 42px 10px 12px;
   color: var(--text);
   background: var(--surface-solid);
 }
@@ -4025,6 +4061,11 @@ button:disabled {
   display: none !important;
   visibility: hidden;
   pointer-events: none;
+}
+
+.passwordInputWrap .credentialVisibilityButton {
+  right: 6px;
+  opacity: 1;
 }
 
 .identityRow button {

@@ -73,7 +73,8 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 CodexHub is designed to be conservative by default:
 
 * It never stores SSH private keys, passphrases, one-time passwords, or OpenAI API keys in plaintext app files.
-* It returns and copies public key text only.
+* One-time passwords and stored API keys can be revealed only by an explicit user action for verification or copying; they remain transient in the UI and are never written to browser storage or task logs.
+* For SSH key material, it returns and copies public key text only.
 * It does not edit unmanaged SSH config blocks.
 * It writes only marked blocks between `# >>> CodexHub managed host: <alias>` and `# <<< CodexHub managed host: <alias>`.
 * It does not write Codex App private files, databases, sockets, caches, or undocumented state.

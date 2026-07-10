@@ -4,6 +4,7 @@ export type CommandPolicy = {
   effect: CommandEffect;
   liveSsh: boolean;
   sensitiveInput: boolean;
+  sensitiveOutput?: boolean;
 };
 
 // Keep this registry aligned with Rust's `generate_handler!` command surface.
@@ -42,7 +43,7 @@ export const commandPolicies = {
   duplicate_profile: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   import_profiles: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   set_profile_api_key: { effect: "local-write", liveSsh: false, sensitiveInput: true },
-  get_profile_credential_status: { effect: "read", liveSsh: false, sensitiveInput: false },
+  get_profile_api_key: { effect: "read", liveSsh: false, sensitiveInput: false, sensitiveOutput: true },
   delete_profile_api_key: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   preview_profile_apply: { effect: "read", liveSsh: false, sensitiveInput: false },
   apply_profile: { effect: "remote-write", liveSsh: true, sensitiveInput: false },

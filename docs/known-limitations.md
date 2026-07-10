@@ -71,6 +71,6 @@ The MVP intentionally does not require a separate remote Codex wrapper command. 
 
 ## Security
 
-CodexHub must not store SSH private keys, passphrases, OpenAI tokens, or remote secrets in plaintext. Local profile data may contain a credential-store key reference, but not the credential value.
+CodexHub must not store SSH private keys, passphrases, OpenAI tokens, or remote secrets in plaintext. Local profile data may contain a credential-store key reference, but not the credential value. One-time passwords and stored profile API keys can be revealed only through an explicit UI action; the revealed value stays in the active form state and is not written to browser storage or task logs.
 
 Profile API key handling is env-var-first. Remote config writes must use `env_key` / `apiKeyEnvVar` so the remote host reads its own environment variable. When a profile with a stored local credential is explicitly applied, CodexHub writes the value only to the selected host's `~/.codex-hub/env` with restrictive permissions and shell-source backups. The key is never written to remote `~/.codex/config.toml`, `applied-profile.json`, app JSON, or task logs. Probes and profile apply tasks check whether the referenced remote env var exists without printing its value.

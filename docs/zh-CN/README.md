@@ -65,8 +65,9 @@ CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 C
 
 ## 🔐 安全边界
 
-- 不读取、不显示、不保存 SSH 私钥、passphrase、一次性密码或 OpenAI API key 明文。
-- UI 只返回和复制 public key。
+- 不读取或显示 SSH 私钥，也不在 app 明文文件中保存 SSH 私钥、passphrase、一次性密码或 OpenAI API key。
+- 一次性密码和已存储 API key 仅在用户主动点击后临时显示，便于核对或复制；不会写入浏览器存储或 task log。
+- 对 SSH key 材料，UI 只返回和复制 public key。
 - 不修改非 CodexHub 托管的 SSH config 内容。
 - 托管 Host block 使用 `# >>> CodexHub managed host: <alias>` 和 `# <<< CodexHub managed host: <alias>` 标记。
 - 不写 Codex App 私有文件、数据库、socket、缓存或未公开 IPC。

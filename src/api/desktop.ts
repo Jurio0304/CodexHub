@@ -177,7 +177,7 @@ export const desktopApi: CodexHubApi = {
     })),
   setProfileApiKey: (profileId: string, apiKey: string) =>
     requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile),
-  getProfileCredentialStatus: (profileId: string) => requiredInvoke("get_profile_credential_status", { profileId }),
+  getProfileApiKey: (profileId: string) => requiredInvoke("get_profile_api_key", { profileId }),
   deleteProfileApiKey: (profileId: string) =>
     requiredInvoke<Profile>("delete_profile_api_key", { profileId }).then(normalizeProfile),
   previewProfileApply: (profileId: string, hostIds: string[]) =>

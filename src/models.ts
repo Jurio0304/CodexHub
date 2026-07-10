@@ -158,9 +158,10 @@ export type ProfileImportExport = {
   profiles: Profile[];
 };
 
-export type ProfileCredentialStatus = {
+export type ProfileApiKeyResult = {
   profileId: string;
   exists: boolean;
+  apiKey: string | null;
 };
 
 export type ProfileApplyHostResult = {

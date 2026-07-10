@@ -34,6 +34,9 @@ if (JSON.stringify(sorted(policyCommands)) !== JSON.stringify(sorted(rustCommand
   fail("commandPolicies and Rust generate_handler! are not identical");
 }
 if (policyCommands.length !== 54) fail(`expected 54 command policies, received ${policyCommands.length}`);
+if (!commandsSource.includes('get_profile_api_key: { effect: "read", liveSsh: false, sensitiveInput: false, sensitiveOutput: true }')) {
+  fail("get_profile_api_key must be declared as sensitive output");
+}
 for (const command of desktopCommands) {
   if (!policyCommands.includes(command)) fail(`desktop command is missing policy: ${command}`);
 }
@@ -43,11 +46,11 @@ for (const forbidden of ["safeInvoke", "mockApi", "./fallbacks", "fallbackHealth
 for (const required of ["DesktopCommandError", "assertTauriRuntime(command)", "redactSensitiveText", "isTauri()"] ) {
   if (!invokeSource.includes(required)) fail(`invoke boundary is missing: ${required}`);
 }
-for (const required of ["requireHostAlias", "get_profile_credential_status", "test_connection_host_alias"]) {
+for (const required of ["requireHostAlias", "get_profile_api_key", "test_connection_host_alias"]) {
   if (!`${invokeSource}\n${desktopSource}\n${rustSource}`.includes(required)) fail(`backend hardening is missing: ${required}`);
 }
-for (const forbidden of ["Mock SSH handshake", '"Mock Host"', "get_profile_api_key", "ProfileApiKeyResult"]) {
-  if (`${rustSource}\n${desktopSource}`.includes(forbidden)) fail(`desktop backend contains forbidden Mock/secret token: ${forbidden}`);
+for (const forbidden of ["Mock SSH handshake", '"Mock Host"', "get_profile_credential_status", "ProfileCredentialStatus"]) {
+  if (`${rustSource}\n${desktopSource}`.includes(forbidden)) fail(`desktop backend contains forbidden Mock/stale token: ${forbidden}`);
 }
 for (const command of policyCommands) {
   if (!boundaryDoc.includes(`\`${command}\``)) fail(`desktop command boundary doc is missing: ${command}`);

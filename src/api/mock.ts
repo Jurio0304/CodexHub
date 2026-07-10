@@ -14,7 +14,7 @@ import type {
   LocalCodexStatus,
   NetworkProxyStatus,
   Profile,
-  ProfileCredentialStatus,
+  ProfileApiKeyResult,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
   ProfileDraft,
@@ -1295,10 +1295,12 @@ export const mockApi: CodexHubApi = {
     mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
     return clone(profile);
   },
-  getProfileCredentialStatus: async (profileId: string): Promise<ProfileCredentialStatus> => {
+  getProfileApiKey: async (profileId: string): Promise<ProfileApiKeyResult> => {
     const current = mockProfiles.find((item) => item.id === profileId);
     if (!current) throw new Error(`Profile ${profileId} was not found.`);
-    return { profileId, exists: mockProfileCredentialIds.has(profileId) };
+    const exists = mockProfileCredentialIds.has(profileId);
+    // Explicit Mock mode never retains the user's real input value.
+    return { profileId, exists, apiKey: exists ? "mock-api-key-not-for-real-use" : null };
   },
   deleteProfileApiKey: async (profileId: string) => {
     const current = mockProfiles.find((item) => item.id === profileId);

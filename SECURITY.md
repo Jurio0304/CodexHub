@@ -16,7 +16,7 @@ CodexHub must not store these values in plaintext app files, repository files, r
 - OpenAI API keys or provider tokens.
 - Remote host secrets.
 
-The UI may display and copy public keys. Optional profile credentials are stored through the local OS credential store and are represented in profile JSON only as credential state. When a user explicitly applies a profile to selected remote hosts, CodexHub may copy that stored API key only into the CodexHub-managed remote `~/.codex-hub/env` file with restrictive permissions and redacted task logs.
+The UI may display and copy public keys. A user may explicitly reveal the one-time password currently entered in the connection form or retrieve a stored API key from the local OS credential store into the active profile editor for verification and copying. These secret values remain transient UI state and are not written to browser storage or task logs. Profile JSON keeps only credential state. When a user explicitly applies a profile to selected remote hosts, CodexHub may copy that stored API key only into the CodexHub-managed remote `~/.codex-hub/env` file with restrictive permissions and redacted task logs.
 
 ## Local SSH Config Boundary
 

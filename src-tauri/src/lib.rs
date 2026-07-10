@@ -262,9 +262,10 @@ struct ProfileImportExport {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProfileCredentialStatus {
+struct ProfileApiKeyResult {
     profile_id: String,
     exists: bool,
+    api_key: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -3011,20 +3012,34 @@ fn set_profile_api_key(
 }
 
 #[tauri::command]
-fn get_profile_credential_status(
+// This command has sensitive output and is used only by the explicit profile-editor reveal action.
+fn get_profile_api_key(
     app: AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
-) -> Result<ProfileCredentialStatus, String> {
-    let profiles = load_profiles(&app, &state)?;
-    profiles
+) -> Result<ProfileApiKeyResult, String> {
+    let mut profiles = load_profiles(&app, &state)?;
+    let profile = profiles
         .iter()
         .find(|profile| profile.id == profile_id)
+        .cloned()
         .ok_or_else(|| format!("Profile {profile_id} was not found."))?;
-    let exists = load_profile_api_key_local(&profile_id)?.is_some();
-    Ok(ProfileCredentialStatus {
+    let mut api_key = load_profile_api_key_local(&profile_id)?;
+    if api_key.is_none() && profile.source == "cc-switch" {
+        api_key = migrate_cc_switch_api_key_for_profile(&app, &state, &profile)?;
+        if api_key.is_some() {
+            for item in &mut profiles {
+                if item.id == profile_id {
+                    item.credential_stored = true;
+                }
+            }
+            save_profiles(&app, &state, &profiles)?;
+        }
+    }
+    Ok(ProfileApiKeyResult {
         profile_id,
-        exists,
+        exists: api_key.is_some(),
+        api_key,
     })
 }
 
@@ -8727,7 +8742,7 @@ pub fn run() {
             duplicate_profile,
             import_profiles,
             set_profile_api_key,
-            get_profile_credential_status,
+            get_profile_api_key,
             delete_profile_api_key,
             preview_profile_apply,
             apply_profile,

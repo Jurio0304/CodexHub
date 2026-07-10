@@ -16,7 +16,7 @@ import type {
   InstalledSkillRequest,
   LatestCodexVersion,
   Profile,
-  ProfileCredentialStatus,
+  ProfileApiKeyResult,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
   ProfileDraft,
@@ -364,6 +364,8 @@ const uiCopy = {
       identityFile: "IdentityFile",
       bootstrapPassword: "One-time password",
       bootstrapPasswordHelp: "Optional. Used once to log in, append your public key to ~/.ssh/authorized_keys, then test key login.",
+      showPassword: "Show one-time password",
+      hidePassword: "Hide one-time password",
       cancel: "Cancel",
       saving: "Saving...",
       writeSshConfig: "Connect",
@@ -476,8 +478,10 @@ const uiCopy = {
       apiKey: "API key",
       apiKeyPlaceholder: "Paste a new key to store",
       apiKeyStoredPlaceholder: "Saved API key",
-      apiKeyLoading: "Checking credential status...",
+      apiKeyLoading: "Loading key...",
       apiKeyMissing: "No stored key was found.",
+      showApiKey: "Show API key",
+      hideApiKey: "Hide API key",
       credentialStored: "Credential stored",
       thirdPartyImport: "Third-party import",
       localStorageLabel: "Local storage",
@@ -962,6 +966,8 @@ const uiCopy = {
       identityFile: "IdentityFile",
       bootstrapPassword: "一次性密码",
       bootstrapPasswordHelp: "可选。仅用于首次登录，把本地公钥追加到远端 ~/.ssh/authorized_keys，然后测试密钥登录。",
+      showPassword: "显示一次性密码",
+      hidePassword: "隐藏一次性密码",
       cancel: "取消",
       saving: "保存中...",
       writeSshConfig: "连接",
@@ -1074,8 +1080,10 @@ const uiCopy = {
       apiKey: "API key",
       apiKeyPlaceholder: "粘贴新 key 后存储",
       apiKeyStoredPlaceholder: "已保存 API key",
-      apiKeyLoading: "正在检查凭据状态...",
+      apiKeyLoading: "正在加载 key...",
       apiKeyMissing: "未找到已保存的 key。",
+      showApiKey: "显示 API key",
+      hideApiKey: "隐藏 API key",
       credentialStored: "凭据已存储",
       thirdPartyImport: "第三方导入",
       localStorageLabel: "本地存储",
@@ -2853,8 +2861,8 @@ function App() {
     });
   };
 
-  const handleGetProfileCredentialStatus = useCallback(async (profileId: string) => {
-    const result = await api.getProfileCredentialStatus(profileId);
+  const handleGetProfileApiKey = useCallback(async (profileId: string) => {
+    const result = await api.getProfileApiKey(profileId);
     if (result.exists) {
       setProfiles((current) => {
         let changed = false;
@@ -3170,7 +3178,7 @@ function App() {
             onDeleteProfile={handleDeleteProfile}
             onDetectCcSwitchProfiles={handleDetectCcSwitchProfiles}
             onDuplicateProfile={handleDuplicateProfile}
-            onGetProfileCredentialStatus={handleGetProfileCredentialStatus}
+            onGetProfileApiKey={handleGetProfileApiKey}
             onImportCcSwitchProfiles={handleImportCcSwitchProfiles}
             onImportProfiles={handleImportProfiles}
             onPreviewProfileApply={handlePreviewProfileApply}
@@ -4892,6 +4900,7 @@ function SshHostModal({
 }) {
   const [draft, setDraft] = useState<SshHostDraft>(() => initialDraft ?? emptySshHostDraft(defaultIdentityFile));
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [message, setMessage] = useState<string>(copy.hosts.formIntro);
   const [showProgress, setShowProgress] = useState(false);
@@ -4905,6 +4914,7 @@ function SshHostModal({
     const nextDraft = initialDraft ?? emptySshHostDraft(defaultIdentityFile);
     setDraft({ ...nextDraft, identityFile: nextDraft.identityFile || defaultIdentityFile });
     setPassword("");
+    setPasswordVisible(false);
     setConnecting(false);
     setMessage(copy.hosts.formIntro);
     setShowProgress(false);
@@ -5002,12 +5012,22 @@ function SshHostModal({
               <input
                 autoComplete="new-password"
                 disabled={connecting}
-                type="password"
+                type={passwordVisible ? "text" : "password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Password"
                 required
               />
+              <button
+                aria-label={passwordVisible ? copy.hosts.hidePassword : copy.hosts.showPassword}
+                aria-pressed={passwordVisible}
+                className="credentialVisibilityButton"
+                title={passwordVisible ? copy.hosts.hidePassword : copy.hosts.showPassword}
+                type="button"
+                onClick={() => setPasswordVisible((current) => !current)}
+              >
+                <CredentialVisibilityIcon visible={passwordVisible} />
+              </button>
             </div>
           </label>
           <div className="fieldGroup identityRow" data-has-action={!hasIdentityFile}>
@@ -5202,7 +5222,7 @@ function ProfilesView({
   onDeleteProfile,
   onDetectCcSwitchProfiles,
   onDuplicateProfile,
-  onGetProfileCredentialStatus,
+  onGetProfileApiKey,
   onImportCcSwitchProfiles,
   onImportProfiles,
   onPreviewProfileApply,
@@ -5219,7 +5239,7 @@ function ProfilesView({
   onDeleteProfile: (id: string) => Promise<DeleteOperationResult>;
   onDetectCcSwitchProfiles: () => Promise<CcSwitchDetection>;
   onDuplicateProfile: (id: string) => Promise<Profile>;
-  onGetProfileCredentialStatus: (profileId: string) => Promise<ProfileCredentialStatus>;
+  onGetProfileApiKey: (profileId: string) => Promise<ProfileApiKeyResult>;
   onImportCcSwitchProfiles: (detection: CcSwitchDetection) => Promise<ProfileImportExport>;
   onImportProfiles: (bundle: ProfileImportExport) => Promise<ProfileImportExport>;
   onPreviewProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyPreview>;
@@ -5609,7 +5629,7 @@ function ProfilesView({
         open={profileEditorOpen}
         profile={editingProfile}
         onClose={() => setProfileEditorOpen(false)}
-        onGetCredentialStatus={onGetProfileCredentialStatus}
+        onGetCredential={onGetProfileApiKey}
         onSave={handleSaveProfile}
         onStoreCredential={handleStoreCredential}
       />
@@ -5833,7 +5853,7 @@ function ProfileEditModal({
   open,
   profile,
   onClose,
-  onGetCredentialStatus,
+  onGetCredential,
   onSave,
   onStoreCredential
 }: {
@@ -5842,12 +5862,14 @@ function ProfileEditModal({
   open: boolean;
   profile: Profile | null;
   onClose: () => void;
-  onGetCredentialStatus: (profileId: string) => Promise<ProfileCredentialStatus>;
+  onGetCredential: (profileId: string) => Promise<ProfileApiKeyResult>;
   onSave: (profile: Profile | null, draft: ProfileDraft) => Promise<Profile>;
   onStoreCredential: (profileId: string, apiKey: string) => Promise<Profile>;
 }) {
   const [draft, setDraft] = useState<ProfileDraft>(() => profileToDraft(profile));
   const [credentialInput, setCredentialInput] = useState("");
+  const [credentialVisible, setCredentialVisible] = useState(false);
+  const [credentialLoaded, setCredentialLoaded] = useState(false);
   const [credentialLoading, setCredentialLoading] = useState(false);
   const [credentialError, setCredentialError] = useState<string | null>(null);
   const canLoadStoredCredential = Boolean(profile?.credentialStored || profile?.source === "cc-switch");
@@ -5856,32 +5878,11 @@ function ProfileEditModal({
     if (!open) return;
     setDraft(profileToDraft(profile));
     setCredentialInput("");
+    setCredentialVisible(false);
+    setCredentialLoaded(false);
     setCredentialLoading(false);
     setCredentialError(null);
   }, [open, profile]);
-
-  useEffect(() => {
-    if (!open || !profile || !canLoadStoredCredential) return;
-    let cancelled = false;
-    setCredentialLoading(true);
-    setCredentialError(null);
-    onGetCredentialStatus(profile.id)
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.exists) {
-          setCredentialError(copy.profiles.apiKeyMissing);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) setCredentialError(formatError(error));
-      })
-      .finally(() => {
-        if (!cancelled) setCredentialLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canLoadStoredCredential, copy.profiles.apiKeyMissing, onGetCredentialStatus, open, profile?.id]);
 
   if (!open) return null;
 
@@ -5892,10 +5893,38 @@ function ProfileEditModal({
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const saved = await onSave(profile, profile ? draft : profileDraftWithCreateDefaults(draft));
-    if (credentialInput.trim()) {
+    if (credentialInput.trim() && !credentialLoaded) {
       await onStoreCredential(saved.id, credentialInput.trim());
     }
     onClose();
+  };
+
+  const handleToggleCredentialVisible = async () => {
+    if (credentialLoading) return;
+    if (credentialVisible) {
+      setCredentialVisible(false);
+      return;
+    }
+    // Read the stored value only after an explicit reveal action; never place it in app caches.
+    if (profile && canLoadStoredCredential && !credentialLoaded && !credentialInput.trim()) {
+      setCredentialLoading(true);
+      setCredentialError(null);
+      try {
+        const result = await onGetCredential(profile.id);
+        if (!result.apiKey) {
+          setCredentialError(copy.profiles.apiKeyMissing);
+          return;
+        }
+        setCredentialInput(result.apiKey);
+        setCredentialLoaded(true);
+      } catch (error) {
+        setCredentialError(formatError(error));
+        return;
+      } finally {
+        setCredentialLoading(false);
+      }
+    }
+    setCredentialVisible(true);
   };
 
   return (
@@ -5934,14 +5963,26 @@ function ProfileEditModal({
             <div className="passwordInputWrap profileCredentialInputWrap">
               <input
                 autoComplete="new-password"
-                placeholder={canLoadStoredCredential ? copy.profiles.apiKeyStoredPlaceholder : copy.profiles.apiKeyPlaceholder}
-                type="password"
+                placeholder={canLoadStoredCredential && !credentialLoaded ? copy.profiles.apiKeyStoredPlaceholder : copy.profiles.apiKeyPlaceholder}
+                type={credentialVisible ? "text" : "password"}
                 value={credentialInput}
                 onChange={(event) => {
                   setCredentialInput(event.target.value);
+                  setCredentialLoaded(false);
                   setCredentialError(null);
                 }}
               />
+              <button
+                aria-label={credentialVisible ? copy.profiles.hideApiKey : copy.profiles.showApiKey}
+                aria-pressed={credentialVisible}
+                className="credentialVisibilityButton"
+                disabled={credentialLoading}
+                title={credentialVisible ? copy.profiles.hideApiKey : copy.profiles.showApiKey}
+                type="button"
+                onClick={() => void handleToggleCredentialVisible()}
+              >
+                <CredentialVisibilityIcon visible={credentialVisible} />
+              </button>
             </div>
             {credentialLoading || credentialError ? (
               <p className="profileCredentialHint">{credentialLoading ? copy.profiles.apiKeyLoading : credentialError}</p>
@@ -6013,6 +6054,38 @@ function ProfileEditModal({
         </form>
       </ModalFrame>
     </div>
+  );
+}
+
+function CredentialVisibilityIcon({ visible }: { visible: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="credentialEyeIcon"
+      data-visible={visible}
+      fill="none"
+      height="18"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+      width="18"
+    >
+      {visible ? (
+        <>
+          <path d="M2.1 12.3c2.2-4.5 5.5-6.8 9.9-6.8s7.7 2.3 9.9 6.8c-2.2 4.1-5.5 6.2-9.9 6.2s-7.7-2.1-9.9-6.2Z" />
+          <circle cx="12" cy="12" r="3" />
+        </>
+      ) : (
+        <>
+          <path d="M3 3l18 18" />
+          <path d="M10.6 10.6A3 3 0 0 0 12 15a3 3 0 0 0 2.4-4.8" />
+          <path d="M9.9 5.8A10.8 10.8 0 0 1 12 5.5c4.4 0 7.7 2.3 9.9 6.8a13.2 13.2 0 0 1-3.1 3.9" />
+          <path d="M6.1 7.6a14.3 14.3 0 0 0-4 4.7c2.2 4.1 5.5 6.2 9.9 6.2 1.5 0 2.9-.3 4.1-.8" />
+        </>
+      )}
+    </svg>
   );
 }
 

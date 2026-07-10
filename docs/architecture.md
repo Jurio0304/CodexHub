@@ -61,7 +61,7 @@ The complete desktop/mock failure policy is documented in [Desktop Command Bound
 - `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command.
 - `refresh_latest_codex_version()`: refresh/cache the latest known Codex CLI version.
 - `list_profiles()`, `create_profile()`, `update_profile()`, `delete_profile()`, `duplicate_profile()`, `import_profiles()`: manage local structured profile templates without exporting secret values.
-- `set_profile_api_key(profile_id, api_key)`, `get_profile_credential_status(profile_id)`, `delete_profile_api_key(profile_id)`: store, check existence, or delete a local credential-store value while profile JSON keeps only credential state; stored values are never returned to the frontend.
+- `set_profile_api_key(profile_id, api_key)`, `get_profile_api_key(profile_id)`, `delete_profile_api_key(profile_id)`: store, explicitly retrieve, or delete a local OS credential-store value while profile JSON keeps only credential state. Retrieval is used only by the profile editor's reveal control, and the value is never logged or cached.
 - `detect_cc_switch_profiles()` / `import_cc_switch_profiles()`: import compatible local profile definitions without persisting credential values in profile JSON.
 - `preview_profile_apply(profile_id, host_ids)`: render TOML and summarize per-host remote config actions before mutation.
 - `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, refresh host/profile state, and record redacted task logs.
