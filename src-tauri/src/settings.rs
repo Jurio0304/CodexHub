@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum ThemeChoice {
     System,
@@ -11,7 +13,7 @@ pub(crate) enum ThemeChoice {
     Dark,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum FontPreset {
     #[serde(
         rename = "english",
@@ -24,7 +26,7 @@ pub(crate) enum FontPreset {
     ZhCn,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum PlatformAppearance {
     Auto,
@@ -32,7 +34,7 @@ pub(crate) enum PlatformAppearance {
     Macos,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum CloseButtonBehavior {
     Ask,
@@ -40,7 +42,7 @@ pub(crate) enum CloseButtonBehavior {
     MinimizeToTray,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum NetworkProxyMode {
     Auto,
@@ -48,7 +50,7 @@ pub(crate) enum NetworkProxyMode {
     Manual,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AppSettings {
     pub(crate) theme: ThemeChoice,
@@ -73,6 +75,14 @@ pub(crate) struct AppSettings {
     pub(crate) setup_guide_dismissed: bool,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SettingsSaveResult {
+    pub(crate) settings: AppSettings,
+    pub(crate) changed: bool,
+    pub(crate) backup_path: Option<String>,
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -91,28 +101,114 @@ impl Default for AppSettings {
     }
 }
 
-pub(crate) fn read_settings(app: &AppHandle) -> AppSettings {
-    let path = settings_path(app);
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<AppSettings>(&content).ok())
-        .unwrap_or_default()
-}
-
-pub(crate) fn write_settings(app: &AppHandle, settings: &AppSettings) -> Result<(), String> {
-    let path = settings_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+impl AppSettings {
+    fn normalized(mut self) -> Self {
+        self.network_proxy_url = self.network_proxy_url.trim().to_string();
+        self.resource_monitor_refresh_seconds =
+            self.resource_monitor_refresh_seconds.clamp(15, 300);
+        let mut seen = HashSet::new();
+        self.resource_monitor_host_order = self
+            .resource_monitor_host_order
+            .into_iter()
+            .map(|alias| alias.trim().to_string())
+            .filter(|alias| !alias.is_empty() && seen.insert(alias.clone()))
+            .collect();
+        self
     }
-    let content = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
 }
 
-fn settings_path(app: &AppHandle) -> PathBuf {
+pub(crate) fn read_settings(app: &AppHandle) -> Result<AppSettings, String> {
+    read_settings_at(&settings_path(app)?)
+}
+
+pub(crate) fn write_settings(
+    app: &AppHandle,
+    settings: &AppSettings,
+) -> Result<SettingsSaveResult, String> {
+    write_settings_at(&settings_path(app)?, settings)
+}
+
+fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(AppSettings::default()),
+        Err(error) => return Err(format!("Could not read settings.json: {error}")),
+    };
+    serde_json::from_str::<AppSettings>(&content)
+        .map(AppSettings::normalized)
+        .map_err(|error| format!("settings.json is invalid and was not overwritten: {error}"))
+}
+
+fn write_settings_at(path: &Path, settings: &AppSettings) -> Result<SettingsSaveResult, String> {
+    let normalized = settings.clone().normalized();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create the settings directory: {error}"))?;
+    }
+
+    let existing = if path.exists() {
+        Some(read_settings_at(path)?)
+    } else {
+        None
+    };
+    if existing.as_ref() == Some(&normalized) {
+        return Ok(SettingsSaveResult {
+            settings: normalized,
+            changed: false,
+            backup_path: None,
+        });
+    }
+
+    let content = serde_json::to_string_pretty(&normalized)
+        .map_err(|error| format!("Could not serialize settings.json: {error}"))?;
+    let temp_path = sidecar_path(path, ".codexhub.tmp");
+    let backup_path = sidecar_path(path, ".bak");
+
+    let write_result = (|| -> Result<Option<String>, String> {
+        let mut temp_file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp_path)
+            .map_err(|error| format!("Could not create the settings temporary file: {error}"))?;
+        temp_file
+            .write_all(content.as_bytes())
+            .and_then(|_| temp_file.sync_all())
+            .map_err(|error| format!("Could not flush the settings temporary file: {error}"))?;
+
+        let backup = if existing.is_some() {
+            fs::copy(path, &backup_path)
+                .map_err(|error| format!("Could not back up settings.json: {error}"))?;
+            Some(backup_path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        fs::rename(&temp_path, path)
+            .map_err(|error| format!("Could not atomically replace settings.json: {error}"))?;
+        Ok(backup)
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    let backup_path = write_result?;
+    Ok(SettingsSaveResult {
+        settings: normalized,
+        changed: true,
+        backup_path,
+    })
+}
+
+fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("codexhub"))
-        .join("settings.json")
+        .map(|path| path.join("settings.json"))
+        .map_err(|error| format!("Could not resolve the app settings directory: {error}"))
+}
+
+fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{}", path.to_string_lossy(), suffix))
 }
 
 fn default_platform_appearance() -> PlatformAppearance {
@@ -133,4 +229,68 @@ fn default_resource_monitor_refresh_seconds() -> u16 {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "codexhub-settings-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn missing_settings_use_defaults() {
+        let path = test_dir("missing").join("settings.json");
+        assert_eq!(
+            read_settings_at(&path).expect("missing settings should load"),
+            AppSettings::default()
+        );
+    }
+
+    #[test]
+    fn invalid_settings_are_reported() {
+        let dir = test_dir("invalid");
+        fs::create_dir_all(&dir).expect("test directory should be created");
+        let path = dir.join("settings.json");
+        fs::write(&path, "{invalid").expect("invalid fixture should be written");
+        let error = read_settings_at(&path).expect_err("invalid settings should fail");
+        assert!(error.contains("invalid and was not overwritten"));
+        fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
+
+    #[test]
+    fn writes_are_idempotent_and_back_up_changes() {
+        let dir = test_dir("write");
+        let path = dir.join("settings.json");
+        let initial = AppSettings::default();
+        let first = write_settings_at(&path, &initial).expect("initial settings should save");
+        assert!(first.changed);
+        assert!(first.backup_path.is_none());
+
+        let unchanged = write_settings_at(&path, &initial).expect("unchanged settings should save");
+        assert!(!unchanged.changed);
+        assert!(unchanged.backup_path.is_none());
+
+        let mut changed = initial;
+        changed.resource_monitor_refresh_seconds = 120;
+        let saved = write_settings_at(&path, &changed).expect("changed settings should save");
+        assert!(saved.changed);
+        let backup = saved
+            .backup_path
+            .expect("changed settings should have a backup");
+        assert!(Path::new(&backup).exists());
+        assert_eq!(
+            read_settings_at(&path).expect("saved settings should load"),
+            changed
+        );
+        fs::remove_dir_all(dir).expect("test directory should be removed");
+    }
 }

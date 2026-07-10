@@ -33,8 +33,8 @@ import type {
   SshHostDraft,
   TaskRun
 } from "../models";
-import type { AppSettings, CloseButtonBehavior } from "../settings";
-import { normalizeSettings, saveLocalSettings } from "../settings";
+import type { AppSettings, CloseButtonBehavior, SettingsSaveResult } from "../settings";
+import { normalizeSettings, saveDesktopSettingsCache } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import { assertTauriRuntime, requiredInvoke } from "./invoke";
 import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
@@ -48,22 +48,22 @@ export const desktopApi: CodexHubApi = {
   getSettings: () =>
     requiredInvoke<AppSettings>("get_settings").then((settings) => {
       const normalized = normalizeSettings(settings);
-      saveLocalSettings(normalized);
+      saveDesktopSettingsCache(normalized);
       return normalized;
     }),
   saveSettings: (settings: AppSettings) => {
     const normalized = normalizeSettings(settings);
-    return requiredInvoke<AppSettings>("save_settings", { settings: normalized }).then((saved) => {
-      const nextSettings = normalizeSettings(saved);
-      saveLocalSettings(nextSettings);
-      return nextSettings;
+    return requiredInvoke<SettingsSaveResult>("save_settings", { settings: normalized }).then((saved) => {
+      const nextSettings = normalizeSettings(saved.settings);
+      saveDesktopSettingsCache(nextSettings);
+      return { ...saved, settings: nextSettings };
     });
   },
   chooseCloseButtonBehavior: (behavior: Exclude<CloseButtonBehavior, "ask">) => {
-    return requiredInvoke<AppSettings>("choose_close_button_behavior", { behavior }).then((saved) => {
-      const nextSettings = normalizeSettings(saved);
-      saveLocalSettings(nextSettings);
-      return nextSettings;
+    return requiredInvoke<SettingsSaveResult>("choose_close_button_behavior", { behavior }).then((saved) => {
+      const nextSettings = normalizeSettings(saved.settings);
+      saveDesktopSettingsCache(nextSettings);
+      return { ...saved, settings: nextSettings };
     });
   },
   onCloseButtonBehaviorRequested: async (handler: () => void): Promise<UnlistenFn> => {

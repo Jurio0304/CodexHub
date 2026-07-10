@@ -11,6 +11,9 @@ const fail = (message) => {
 const commandsSource = read("src/api/commands.ts");
 const desktopSource = read("src/api/desktop.ts");
 const invokeSource = read("src/api/invoke.ts");
+const settingsSource = read("src/settings.ts");
+const appSource = read("src/App.tsx");
+const rustSettingsSource = read("src-tauri/src/settings.rs");
 const rustSource = read("src-tauri/src/lib.rs");
 const packageJson = JSON.parse(read("package.json"));
 const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
@@ -45,5 +48,14 @@ if (!packageJson.scripts["build:web:mock"]?.includes("--mode mock")) fail("build
 if (!packageJson.scripts["build:web:desktop"]?.includes("--mode desktop")) fail("build:web:desktop must explicitly select desktop mode");
 if (tauriConfig.build?.beforeDevCommand !== "pnpm dev:web:desktop") fail("Tauri dev must use desktop frontend mode");
 if (tauriConfig.build?.beforeBuildCommand !== "pnpm build:web:desktop") fail("Tauri build must use desktop frontend mode");
+for (const required of ["desktopSettingsCacheKey", "mockSettingsStorageKey", "legacySettingsStorageKey"]) {
+  if (!settingsSource.includes(required)) fail(`settings storage boundary is missing: ${required}`);
+}
+for (const required of ["settingsSaveError", "pendingSettings", "retrySettingsSave", "await api.saveSettings"]) {
+  if (!appSource.includes(required)) fail(`settings transaction UI is missing: ${required}`);
+}
+for (const required of ["SettingsSaveResult", 'sidecar_path(path, ".bak")', "sync_all()", "ErrorKind::NotFound"]) {
+  if (!rustSettingsSource.includes(required)) fail(`Rust settings transaction is missing: ${required}`);
+}
 
 console.log(`API BOUNDARY PASS: ${policyCommands.length} Tauri commands use explicit desktop/mock boundaries.`);

@@ -21,13 +21,21 @@ export type AppSettings = {
   setupGuideDismissed: boolean;
 };
 
+export type SettingsSaveResult = {
+  settings: AppSettings;
+  changed: boolean;
+  backupPath: string | null;
+};
+
 type FontPresetDefinition = {
   label: string;
   fontUi: string;
   fontMono: string;
 };
 
-export const settingsStorageKey = "codexhub.settings.v1";
+export const legacySettingsStorageKey = "codexhub.settings.v1";
+export const desktopSettingsCacheKey = "codexhub.desktop-settings-cache.v1";
+export const mockSettingsStorageKey = "codexhub.mock-settings.v1";
 
 export const defaultSettings: AppSettings = {
   theme: "system",
@@ -110,21 +118,45 @@ export function normalizeSettings(value: unknown): AppSettings {
   };
 }
 
-export function loadLocalSettings(): AppSettings {
+function loadSettingsFromStorage(key: string): AppSettings | null {
   try {
-    const raw = window.localStorage.getItem(settingsStorageKey);
-    return raw ? normalizeSettings(JSON.parse(raw)) : defaultSettings;
+    const raw = window.localStorage.getItem(key);
+    return raw ? normalizeSettings(JSON.parse(raw)) : null;
   } catch {
-    return defaultSettings;
+    return null;
   }
 }
 
-export function saveLocalSettings(settings: AppSettings) {
+function saveSettingsToStorage(key: string, settings: AppSettings) {
   try {
-    window.localStorage.setItem(settingsStorageKey, JSON.stringify(normalizeSettings(settings)));
+    window.localStorage.setItem(key, JSON.stringify(normalizeSettings(settings)));
   } catch {
-    // Local persistence is best-effort when storage is disabled.
+    // Browser storage is only a render cache in desktop mode.
   }
+}
+
+export function loadDesktopSettingsCache(): AppSettings {
+  return loadSettingsFromStorage(desktopSettingsCacheKey) ?? defaultSettings;
+}
+
+export function saveDesktopSettingsCache(settings: AppSettings) {
+  saveSettingsToStorage(desktopSettingsCacheKey, settings);
+}
+
+export function loadMockSettings(): AppSettings {
+  const current = loadSettingsFromStorage(mockSettingsStorageKey);
+  if (current) return current;
+
+  const legacy = loadSettingsFromStorage(legacySettingsStorageKey);
+  if (legacy) {
+    saveSettingsToStorage(mockSettingsStorageKey, legacy);
+    return legacy;
+  }
+  return defaultSettings;
+}
+
+export function saveMockSettings(settings: AppSettings) {
+  saveSettingsToStorage(mockSettingsStorageKey, settings);
 }
 
 export function applyThemeChoice(theme: ThemeChoice) {

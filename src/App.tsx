@@ -50,7 +50,15 @@ import type {
 } from "./models";
 import { getPlatform, isWindows } from "./platform";
 import type { RuntimePlatform } from "./platform";
-import { applyAppSettings, fontPresets, loadLocalSettings, normalizeResourceMonitorRefreshSeconds, resolvePlatformAppearance } from "./settings";
+import {
+  applyAppSettings,
+  fontPresets,
+  loadDesktopSettingsCache,
+  loadMockSettings,
+  normalizeSettings,
+  normalizeResourceMonitorRefreshSeconds,
+  resolvePlatformAppearance
+} from "./settings";
 import type { AppSettings, CloseButtonBehavior, FontPreset, NetworkProxyMode, PlatformAppearance, ThemeChoice } from "./settings";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "monitor" | "tasks" | "settings";
@@ -703,6 +711,10 @@ const uiCopy = {
       installStableUpdate: "Update",
       sidebarInstallStableUpdate: "Update",
       previewUpdateButtonNotice: "Dev preview: this button is shown for visual inspection only.",
+      settingsSaved: "Settings saved.",
+      settingsSaveFailed: "Settings could not be saved. The last confirmed values are still active.",
+      settingsRetry: "Retry save",
+      settingsSaving: "Saving settings...",
       updateInstalling: "Installing...",
       refresh: "Refresh",
       generating: "Generating...",
@@ -1299,6 +1311,10 @@ const uiCopy = {
       installStableUpdate: "更新",
       sidebarInstallStableUpdate: "更新",
       previewUpdateButtonNotice: "Dev 预览：此按钮仅用于视觉检查。",
+      settingsSaved: "设置已保存。",
+      settingsSaveFailed: "设置保存失败，当前仍使用上一次确认成功的值。",
+      settingsRetry: "重试保存",
+      settingsSaving: "正在保存设置...",
       updateInstalling: "安装中...",
       refresh: "刷新",
       generating: "生成中...",
@@ -1791,7 +1807,9 @@ function WindowsIcon({ id }: { id: PlatformIconId }) {
 
 function App() {
   const [activeSection, setActiveSection] = useState<SectionId>("dashboard");
-  const [settings, setSettings] = useState<AppSettings>(() => loadLocalSettings());
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    apiMode === "mock" ? loadMockSettings() : loadDesktopSettingsCache()
+  );
   const [health, setHealth] = useState<Health>(fallbackHealth);
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus>(fallbackAppUpdateStatus);
   const [appUpdateFailureTask, setAppUpdateFailureTask] = useState<TaskRun | null>(null);
@@ -1816,6 +1834,9 @@ function App() {
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaveError, setSettingsSaveError] = useState<string | null>(null);
+  const [pendingSettings, setPendingSettings] = useState<AppSettings | null>(null);
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
   const [hostModalOpen, setHostModalOpen] = useState(false);
@@ -1835,6 +1856,7 @@ function App() {
   const appUpdateStatusRef = useRef(fallbackAppUpdateStatus);
   const appUpdateBusyRef = useRef(false);
   const resourceBusyRef = useRef(false);
+  const settingsSaveBusyRef = useRef(false);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
@@ -2955,17 +2977,43 @@ function App() {
     });
   };
 
-  const persistSettings = (nextSettings: AppSettings) => {
-    setSettings(nextSettings);
-    applyAppSettings(nextSettings);
-    void api.saveSettings(nextSettings).then(setSettings);
+  const persistSettings = async (nextSettings: AppSettings): Promise<boolean> => {
+    const normalized = normalizeSettings(nextSettings);
+    if (settingsSaveBusyRef.current) {
+      setPendingSettings(normalized);
+      return false;
+    }
+
+    settingsSaveBusyRef.current = true;
+    setSettingsSaving(true);
+    setSettingsSaveError(null);
+    setPendingSettings(normalized);
+    try {
+      const result = await api.saveSettings(normalized);
+      setSettings(result.settings);
+      applyAppSettings(result.settings);
+      setPendingSettings(null);
+      setNotice(copy.settings.settingsSaved);
+      return true;
+    } catch (error) {
+      const detail = formatError(error);
+      setSettingsSaveError(detail);
+      setNotice(`${copy.settings.settingsSaveFailed} ${detail}`);
+      return false;
+    } finally {
+      settingsSaveBusyRef.current = false;
+      setSettingsSaving(false);
+    }
   };
+
+  const retrySettingsSave = async () => pendingSettings ? persistSettings(pendingSettings) : true;
 
   const handleChooseCloseButtonBehavior = async (behavior: Exclude<CloseButtonBehavior, "ask">) => {
     setCloseButtonPromptBusy(true);
     setCloseButtonPromptOpen(false);
     try {
-      const nextSettings = await api.chooseCloseButtonBehavior(behavior);
+      const result = await api.chooseCloseButtonBehavior(behavior);
+      const nextSettings = result.settings;
       setSettings(nextSettings);
       applyAppSettings(nextSettings);
     } catch (error) {
@@ -3009,8 +3057,9 @@ function App() {
       await ensureSetupGuideEd25519Key().catch((error) => {
         setNotice(formatError(error));
       });
-      setSetupGuideOpen(false);
-      persistSettings({ ...settings, setupGuideDismissed: true });
+      if (await persistSettings({ ...settings, setupGuideDismissed: true })) {
+        setSetupGuideOpen(false);
+      }
     } finally {
       setSetupGuideBusy(false);
     }
@@ -3019,7 +3068,7 @@ function App() {
   const handleSetupGuidePreferencesNext = async (preferences: Pick<AppSettings, "theme" | "platformAppearance" | "fontPreset">) => {
     const section = activeSection;
     return runSectionOperation(section, async () => {
-      persistSettings({ ...settings, ...preferences });
+      if (!(await persistSettings({ ...settings, ...preferences }))) return null;
       setSetupGuideStep("ssh");
       setSetupGuideBusy(true);
       try {
@@ -3056,8 +3105,8 @@ function App() {
         await ensureSetupGuideEd25519Key(refreshed.sshStatus).catch((error) => {
           keyError = formatError(error);
         });
+        if (!(await persistSettings({ ...settings, setupGuideDismissed: true }))) return refreshed;
         setSetupGuideOpen(false);
-        persistSettings({ ...settings, setupGuideDismissed: true });
         setNotice(keyError ?? copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
         return refreshed;
       } finally {
@@ -3166,6 +3215,7 @@ function App() {
             hosts={hosts}
             hostOrder={settings.resourceMonitorHostOrder}
             refreshSeconds={settings.resourceMonitorRefreshSeconds}
+            settingsSaving={settingsSaving}
             snapshots={resourceSnapshots}
             onAutoRefreshChange={(resourceMonitorAutoRefresh) => persistSettings({ ...settings, resourceMonitorAutoRefresh })}
             onHostOrderChange={(resourceMonitorHostOrder) => persistSettings({ ...settings, resourceMonitorHostOrder })}
@@ -3188,6 +3238,8 @@ function App() {
             appUpdateStatus={appUpdateStatus}
             copy={copy}
             settings={settings}
+            settingsSaveError={settingsSaveError}
+            settingsSaving={settingsSaving}
             sshBusy={sshBusy}
             sshStatus={sshStatus}
             onCheckStableUpdate={handleCheckStableUpdate}
@@ -3198,6 +3250,7 @@ function App() {
             onNetworkProxyModeChange={(networkProxyMode) => persistSettings({ ...settings, networkProxyMode })}
             onNetworkProxyManualRequest={() => setNetworkProxyManualOpen(true)}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
+            onRetrySettings={retrySettingsSave}
             onRefreshSsh={async () => {
               await runSectionOperation("settings", refreshSshState);
             }}
@@ -3357,9 +3410,10 @@ function App() {
           copy={copy}
           initialValue={settings.networkProxyUrl}
           onClose={() => setNetworkProxyManualOpen(false)}
-          onSave={(networkProxyUrl) => {
-            persistSettings({ ...settings, networkProxyMode: "manual", networkProxyUrl });
-            setNetworkProxyManualOpen(false);
+          onSave={async (networkProxyUrl) => {
+            if (await persistSettings({ ...settings, networkProxyMode: "manual", networkProxyUrl })) {
+              setNetworkProxyManualOpen(false);
+            }
           }}
         />
       ) : null}
@@ -3880,6 +3934,7 @@ function MonitorView({
   hosts,
   hostOrder,
   refreshSeconds,
+  settingsSaving,
   snapshots,
   onAutoRefreshChange,
   onHostOrderChange,
@@ -3894,6 +3949,7 @@ function MonitorView({
   hosts: Host[];
   hostOrder: string[];
   refreshSeconds: number;
+  settingsSaving: boolean;
   snapshots: HostResourceSnapshot[];
   onAutoRefreshChange: (enabled: boolean) => void;
   onHostOrderChange: (hostOrder: string[]) => void;
@@ -4085,6 +4141,7 @@ function MonitorView({
   }, [clearPendingMonitorReorder, dragState, finishMonitorDrag, scheduleMonitorFlip, updateMonitorAutoScroll]);
 
   const handleDragHandlePointerDown = useCallback((alias: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (settingsSaving) return;
     if (event.button !== 0 || orderedHosts.length < 2) return;
     const card = cardRefs.current.get(alias);
     if (!card) return;
@@ -4104,7 +4161,7 @@ function MonitorView({
       x: event.clientX,
       y: event.clientY
     });
-  }, [orderedHosts]);
+  }, [orderedHosts, settingsSaving]);
 
   return (
     <div className="monitorPage">
@@ -4125,6 +4182,7 @@ function MonitorView({
                 role="switch"
                 aria-checked={autoRefresh}
                 aria-label={copy.monitor.autoRefresh}
+                disabled={settingsSaving}
                 type="button"
                 onClick={() => onAutoRefreshChange(!autoRefresh)}
               >
@@ -4134,6 +4192,7 @@ function MonitorView({
                 <label className="monitorIntervalCompact">
                   <input
                     aria-label={copy.monitor.refreshEvery}
+                    disabled={settingsSaving}
                     max={300}
                     min={15}
                     onChange={(event) => onRefreshSecondsChange(Number(event.currentTarget.value))}
@@ -7691,6 +7750,8 @@ function SettingsView({
   appUpdateStatus,
   copy,
   settings,
+  settingsSaveError,
+  settingsSaving,
   sshBusy,
   sshStatus,
   onCheckStableUpdate,
@@ -7702,6 +7763,7 @@ function SettingsView({
   onNetworkProxyManualRequest,
   onPlatformAppearanceChange,
   onRefreshSsh,
+  onRetrySettings,
   onSidebarCompletionIndicatorsChange,
   onThemeChange
 }: {
@@ -7710,6 +7772,8 @@ function SettingsView({
   appUpdateStatus: AppUpdateStatus;
   copy: UICopy;
   settings: AppSettings;
+  settingsSaveError: string | null;
+  settingsSaving: boolean;
   sshBusy: boolean;
   sshStatus: SshStatus | null;
   onCheckStableUpdate: () => Promise<unknown>;
@@ -7721,6 +7785,7 @@ function SettingsView({
   onNetworkProxyManualRequest: () => void;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
   onRefreshSsh: () => Promise<unknown>;
+  onRetrySettings: () => Promise<boolean>;
   onSidebarCompletionIndicatorsChange: (enabled: boolean) => void;
   onThemeChange: (theme: ThemeChoice) => void;
 }) {
@@ -7752,6 +7817,23 @@ function SettingsView({
 
   return (
     <div className="settingsGrid">
+      {settingsSaveError || settingsSaving ? (
+        <section className="panel spanWide" aria-live="polite">
+          <div className="panelHeader compact">
+            <div>
+              <TitleWithIcon icon={settingsSaveError ? "warning" : "settings"} level={2}>
+                {settingsSaveError ? copy.settings.settingsSaveFailed : copy.settings.settingsSaving}
+              </TitleWithIcon>
+              {settingsSaveError ? <p className="mutedText">{settingsSaveError}</p> : null}
+            </div>
+            {settingsSaveError ? (
+              <button className="secondaryButton" disabled={settingsSaving} type="button" onClick={() => void onRetrySettings()}>
+                {copy.settings.settingsRetry}
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       <section className="panel spanWide">
         <div className="panelHeader compact">
           <div>
@@ -7763,7 +7845,7 @@ function SettingsView({
             <span>{copy.settings.theme}</span>
             <div className="segmentedControl" role="group" aria-label={copy.settings.theme}>
               {(["system", "light", "dark"] as ThemeChoice[]).map((choice) => (
-                <button data-active={settings.theme === choice} key={choice} onClick={() => onThemeChange(choice)} type="button">
+                <button data-active={settings.theme === choice} disabled={settingsSaving} key={choice} onClick={() => onThemeChange(choice)} type="button">
                   {copy.settings.themeOptions[choice]}
                 </button>
               ))}
@@ -7774,7 +7856,7 @@ function SettingsView({
             <span>{copy.settings.platformAppearance}</span>
             <div className="segmentedControl" role="group" aria-label={copy.settings.platformAppearance}>
               {(["auto", "windows", "macos"] as PlatformAppearance[]).map((choice) => (
-                <button data-active={settings.platformAppearance === choice} key={choice} onClick={() => onPlatformAppearanceChange(choice)} type="button">
+                <button data-active={settings.platformAppearance === choice} disabled={settingsSaving} key={choice} onClick={() => onPlatformAppearanceChange(choice)} type="button">
                   {copy.settings.platformOptions[choice]}
                 </button>
               ))}
@@ -7785,7 +7867,7 @@ function SettingsView({
             <span>{copy.settings.font}</span>
             <div className="segmentedControl" data-options="2" role="group" aria-label={copy.settings.font}>
               {(Object.keys(fontPresets) as FontPreset[]).map((preset) => (
-                <button data-active={settings.fontPreset === preset} key={preset} onClick={() => onFontPresetChange(preset)} type="button">
+                <button data-active={settings.fontPreset === preset} disabled={settingsSaving} key={preset} onClick={() => onFontPresetChange(preset)} type="button">
                   {fontPresets[preset].label}
                 </button>
               ))}
@@ -7800,6 +7882,7 @@ function SettingsView({
               role="switch"
               aria-checked={settings.sidebarCompletionIndicators}
               aria-label={copy.settings.sidebarCompletionIndicators}
+              disabled={settingsSaving}
               type="button"
               onClick={() => onSidebarCompletionIndicatorsChange(!settings.sidebarCompletionIndicators)}
             >
@@ -7888,6 +7971,7 @@ function SettingsView({
               {(["ask", "exit", "minimize-to-tray"] as CloseButtonBehavior[]).map((choice) => (
                 <button
                   data-active={settings.closeButtonBehavior === choice}
+                  disabled={settingsSaving}
                   key={choice}
                   onClick={() => onCloseButtonBehaviorChange(choice)}
                   type="button"
@@ -7904,6 +7988,7 @@ function SettingsView({
               {(["auto", "direct", "manual"] as NetworkProxyMode[]).map((choice) => (
                 <button
                   data-active={settings.networkProxyMode === choice}
+                  disabled={settingsSaving}
                   key={choice}
                   onClick={() => handleNetworkProxyChoice(choice)}
                   type="button"

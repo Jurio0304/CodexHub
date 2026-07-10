@@ -44,7 +44,7 @@ import type {
 } from "../models";
 import { getCodexSkillsPath, getPlatform } from "../platform";
 import type { AppSettings, CloseButtonBehavior } from "../settings";
-import { loadLocalSettings, normalizeSettings, saveLocalSettings } from "../settings";
+import { loadMockSettings, normalizeSettings, saveMockSettings } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
 import {
@@ -1118,19 +1118,21 @@ export const mockApi: CodexHubApi = {
   installStableUpdate: async () => fallbackAppUpdateStatus,
   detectNetworkProxy: async () => fallbackNetworkProxyStatus,
   getSettings: async () => {
-    const settings = normalizeSettings(loadLocalSettings());
-    saveLocalSettings(settings);
+    const settings = normalizeSettings(loadMockSettings());
+    saveMockSettings(settings);
     return settings;
   },
   saveSettings: async (settings: AppSettings) => {
+    const current = normalizeSettings(loadMockSettings());
     const normalized = normalizeSettings(settings);
-    saveLocalSettings(normalized);
-    return normalized;
+    saveMockSettings(normalized);
+    return { settings: normalized, changed: JSON.stringify(current) !== JSON.stringify(normalized), backupPath: null };
   },
   chooseCloseButtonBehavior: async (behavior: Exclude<CloseButtonBehavior, "ask">) => {
-    const normalized = normalizeSettings({ ...loadLocalSettings(), closeButtonBehavior: behavior });
-    saveLocalSettings(normalized);
-    return normalized;
+    const current = normalizeSettings(loadMockSettings());
+    const normalized = normalizeSettings({ ...current, closeButtonBehavior: behavior });
+    saveMockSettings(normalized);
+    return { settings: normalized, changed: JSON.stringify(current) !== JSON.stringify(normalized), backupPath: null };
   },
   onCloseButtonBehaviorRequested: async () => () => {},
   getSshStatus: async () => fallbackSshStatus(),

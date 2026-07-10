@@ -14,7 +14,12 @@ use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use hosts::{load_hosts, save_current_hosts, save_hosts};
 use profiles::{load_profiles, save_profiles};
 use serde::{Deserialize, Serialize};
+use settings::{
+    read_settings, write_settings, AppSettings, CloseButtonBehavior, NetworkProxyMode,
+    SettingsSaveResult,
+};
 use sha2::{Digest, Sha256};
+use skills::{load_skills, managed_skills_dir, save_skills, skill_clone_cache_dir};
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fmt::Display;
@@ -25,17 +30,13 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tar::{Archive as TarArchive, Builder as TarBuilder};
+use tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, State, Window, WindowEvent,
 };
 use tauri_plugin_updater::UpdaterExt;
-use settings::{
-    read_settings, write_settings, AppSettings, CloseButtonBehavior, NetworkProxyMode,
-};
-use skills::{load_skills, managed_skills_dir, save_skills, skill_clone_cache_dir};
-use tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus};
 use toml::map::Map as TomlMap;
 use toml::Value as TomlValue;
 use updater::{AppUpdateState, AppUpdateStatus, GitHubReleaseResponse, StableUpdaterConfig};
@@ -1605,12 +1606,16 @@ async fn check_stable_update(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<AppUpdateStatus, String> {
-    let (status, attempts) = check_stable_update_status(app).await;
+    let settings = read_settings(&app)?;
+    let (status, attempts) = check_stable_update_status(app, &settings).await;
     record_task(&state, app_update_check_task(&status, &attempts));
     Ok(status)
 }
 
-async fn check_stable_update_status(app: AppHandle) -> (AppUpdateStatus, Vec<String>) {
+async fn check_stable_update_status(
+    app: AppHandle,
+    settings: &AppSettings,
+) -> (AppUpdateStatus, Vec<String>) {
     let channel = current_app_channel(&app);
     let current_version = current_app_version(&app);
     if channel != "stable" {
@@ -1675,8 +1680,7 @@ async fn check_stable_update_status(app: AppHandle) -> (AppUpdateStatus, Vec<Str
     }
 
     let pubkey = config.pubkey.clone().unwrap_or_default();
-    let settings = read_settings(&app);
-    let (routes, route_notes) = stable_update_network_routes(&settings);
+    let (routes, route_notes) = stable_update_network_routes(settings);
     let mut attempts = route_notes;
     let mut last_error = None;
 
@@ -1814,7 +1818,7 @@ async fn install_stable_update(
     }
 
     let pubkey = config.pubkey.clone().unwrap_or_default();
-    let settings = read_settings(&app);
+    let settings = read_settings(&app)?;
     let (routes, route_notes) = stable_update_network_routes(&settings);
     let mut attempts = route_notes;
     let mut last_error = None;
@@ -2521,30 +2525,29 @@ where
 }
 
 #[tauri::command]
-fn get_settings(app: AppHandle) -> AppSettings {
+fn get_settings(app: AppHandle) -> Result<AppSettings, String> {
     read_settings(&app)
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
-    write_settings(&app, &settings)?;
-    Ok(settings)
+fn save_settings(app: AppHandle, settings: AppSettings) -> Result<SettingsSaveResult, String> {
+    write_settings(&app, &settings)
 }
 
 #[tauri::command]
-fn detect_network_proxy(app: AppHandle) -> NetworkProxyStatus {
-    let settings = read_settings(&app);
-    detect_network_proxy_status(&settings)
+fn detect_network_proxy(app: AppHandle) -> Result<NetworkProxyStatus, String> {
+    let settings = read_settings(&app)?;
+    Ok(detect_network_proxy_status(&settings))
 }
 
 #[tauri::command]
 fn choose_close_button_behavior(
     app: AppHandle,
     behavior: CloseButtonBehavior,
-) -> Result<AppSettings, String> {
-    let mut settings = read_settings(&app);
+) -> Result<SettingsSaveResult, String> {
+    let mut settings = read_settings(&app)?;
     settings.close_button_behavior = behavior.clone();
-    write_settings(&app, &settings)?;
+    let saved = write_settings(&app, &settings)?;
 
     match behavior {
         CloseButtonBehavior::Ask => {}
@@ -2552,7 +2555,7 @@ fn choose_close_button_behavior(
         CloseButtonBehavior::MinimizeToTray => hide_main_window(&app),
     }
 
-    Ok(settings)
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -8853,7 +8856,7 @@ fn handle_window_close_request(window: &Window, event: &WindowEvent) {
 
     api.prevent_close();
     let app = window.app_handle();
-    match read_settings(app).close_button_behavior {
+    match read_settings(app).unwrap_or_default().close_button_behavior {
         CloseButtonBehavior::Ask => {
             let _ = app.emit(CLOSE_BUTTON_BEHAVIOR_REQUESTED_EVENT, ());
         }

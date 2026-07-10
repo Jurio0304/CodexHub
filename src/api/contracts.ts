@@ -43,7 +43,7 @@ import type {
   SshStatus,
   TaskRun
 } from "../models";
-import type { AppSettings, CloseButtonBehavior } from "../settings";
+import type { AppSettings, CloseButtonBehavior, SettingsSaveResult } from "../settings";
 
 export type SshBootstrapProgressHandler = (event: SshBootstrapProgressEvent) => void;
 export type RemoteCodexProgressHandler = (event: RemoteCodexProgressEvent) => void;
@@ -55,8 +55,8 @@ export type CodexHubApi = {
   installStableUpdate: () => Promise<AppUpdateStatus>;
   detectNetworkProxy: () => Promise<NetworkProxyStatus>;
   getSettings: () => Promise<AppSettings>;
-  saveSettings: (settings: AppSettings) => Promise<AppSettings>;
-  chooseCloseButtonBehavior: (behavior: Exclude<CloseButtonBehavior, "ask">) => Promise<AppSettings>;
+  saveSettings: (settings: AppSettings) => Promise<SettingsSaveResult>;
+  chooseCloseButtonBehavior: (behavior: Exclude<CloseButtonBehavior, "ask">) => Promise<SettingsSaveResult>;
   onCloseButtonBehaviorRequested: (handler: () => void) => Promise<UnlistenFn>;
   getSshStatus: () => Promise<SshStatus>;
   generateEd25519Key: () => Promise<SshKeyGenerationResult>;
