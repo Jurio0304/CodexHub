@@ -14,6 +14,7 @@ const invokeSource = read("src/api/invoke.ts");
 const settingsSource = read("src/settings.ts");
 const appSource = read("src/App.tsx");
 const rustSettingsSource = read("src-tauri/src/settings.rs");
+const boundaryDoc = read("docs/desktop-command-boundaries.md");
 const rustSource = read("src-tauri/src/lib.rs");
 const packageJson = JSON.parse(read("package.json"));
 const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
@@ -41,6 +42,15 @@ for (const forbidden of ["safeInvoke", "mockApi", "./fallbacks", "fallbackHealth
 }
 for (const required of ["DesktopCommandError", "assertTauriRuntime(command)", "redactSensitiveText", "isTauri()"] ) {
   if (!invokeSource.includes(required)) fail(`invoke boundary is missing: ${required}`);
+}
+for (const required of ["requireHostAlias", "get_profile_credential_status", "test_connection_host_alias"]) {
+  if (!`${invokeSource}\n${desktopSource}\n${rustSource}`.includes(required)) fail(`backend hardening is missing: ${required}`);
+}
+for (const forbidden of ["Mock SSH handshake", '"Mock Host"', "get_profile_api_key", "ProfileApiKeyResult"]) {
+  if (`${rustSource}\n${desktopSource}`.includes(forbidden)) fail(`desktop backend contains forbidden Mock/secret token: ${forbidden}`);
+}
+for (const command of policyCommands) {
+  if (!boundaryDoc.includes(`\`${command}\``)) fail(`desktop command boundary doc is missing: ${command}`);
 }
 if (!packageJson.scripts["dev:web:mock"]?.includes("--mode mock")) fail("dev:web:mock must explicitly select mock mode");
 if (!packageJson.scripts["dev:web:desktop"]?.includes("--mode desktop")) fail("dev:web:desktop must explicitly select desktop mode");

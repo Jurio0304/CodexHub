@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { TauriCommand } from "./commands";
 
-export type DesktopCommandErrorKind = "backend-unavailable" | "invoke-failed";
+export type DesktopCommandErrorKind = "backend-unavailable" | "invalid-arguments" | "invoke-failed";
 
 export class DesktopCommandError extends Error {
   readonly command: TauriCommand;
@@ -31,6 +31,14 @@ export function assertTauriRuntime(command: TauriCommand) {
       "The Tauri desktop backend is unavailable. Start CodexHub Desktop or explicitly use Mock mode."
     );
   }
+}
+
+export function requireHostAlias(command: TauriCommand, value: string | null | undefined) {
+  const alias = value?.trim() ?? "";
+  if (!alias) {
+    throw new DesktopCommandError(command, "invalid-arguments", `${command}: A non-empty SSH host alias is required.`);
+  }
+  return alias;
 }
 
 export async function requiredInvoke<T>(command: TauriCommand, args?: Record<string, unknown>): Promise<T> {

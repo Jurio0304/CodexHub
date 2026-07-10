@@ -43,6 +43,8 @@ flowchart LR
 
 Tauri command surface:
 
+The complete desktop/mock failure policy is documented in [Desktop Command Boundaries](desktop-command-boundaries.md). Desktop command failures never fall back to Mock results.
+
 - `app_health()`: smoke-test command exposed by the desktop backend.
 - `get_settings()` / `save_settings(settings)`: persist local appearance, setup-guide state, close-button behavior, and updater proxy preference.
 - `detect_network_proxy()`: inspect updater proxy configuration, environment proxy variables, and common localhost proxy ports without reading proxy credentials.
@@ -59,7 +61,7 @@ Tauri command surface:
 - `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command.
 - `refresh_latest_codex_version()`: refresh/cache the latest known Codex CLI version.
 - `list_profiles()`, `create_profile()`, `update_profile()`, `delete_profile()`, `duplicate_profile()`, `import_profiles()`: manage local structured profile templates without exporting secret values.
-- `set_profile_api_key(profile_id, api_key)`, `get_profile_api_key(profile_id)`, `delete_profile_api_key(profile_id)`: optionally store or retrieve a local credential-store value while profile JSON keeps only credential state.
+- `set_profile_api_key(profile_id, api_key)`, `get_profile_credential_status(profile_id)`, `delete_profile_api_key(profile_id)`: store, check existence, or delete a local credential-store value while profile JSON keeps only credential state; stored values are never returned to the frontend.
 - `detect_cc_switch_profiles()` / `import_cc_switch_profiles()`: import compatible local profile definitions without persisting credential values in profile JSON.
 - `preview_profile_apply(profile_id, host_ids)`: render TOML and summarize per-host remote config actions before mutation.
 - `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, refresh host/profile state, and record redacted task logs.
@@ -156,6 +158,8 @@ CodexHub v0.4.3 continues to define exactly two release channels: `stable` and `
 - `dev` is for development, test runs, previews, and manual acceptance. It uses `src-tauri/tauri.dev.conf.json`, `productName: CodexHub Dev`, `identifier: dev.codexhub.desktop`, and window title `CodexHub Dev`.
 
 The backend must keep local runtime state on Tauri's app-scoped path resolver rather than hand-built app data paths. Config files such as `settings.json`, `hosts.json`, `profiles.json`, `skills.json`, `skills-inventory.json`, and `codex-latest.json` use `app.path().app_config_dir()`. Temporary profile-apply files and cloned GitHub skill cache use `app.path().app_cache_dir()`. Tauri resolves both paths under the OS config/cache root plus the bundle identifier, so the different identifiers give `stable` and `dev` separate local app config/cache directories while still allowing both apps to be installed and run side by side.
+
+In desktop mode, backend `settings.json` is the authoritative settings source. Frontend local storage is only a first-render cache and updates after confirmed backend reads or writes. Explicit Mock mode uses a separate browser-storage key.
 
 This isolation does not automatically isolate shared local or remote surfaces. `%USERPROFILE%\.ssh\config`, local SSH keys, remote `~/.codex/config.toml`, remote `~/.codex/skills/`, and remote shell files remain shared unless the user deliberately points a workflow at separate hosts, aliases, or paths. Any write to those surfaces must keep the same scoped-write, backup, idempotency, and redaction rules.
 

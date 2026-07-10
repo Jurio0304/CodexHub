@@ -8,6 +8,7 @@ const requiredFiles = [
   "SECURITY.md",
   "docs/research.md",
   "docs/architecture.md",
+  "docs/desktop-command-boundaries.md",
   "docs/mvp-scope.md",
   "docs/known-limitations.md",
   "docs/linux-support.md",
@@ -326,7 +327,7 @@ for (const token of ["ValidateSet(\"dev\", \"stable\")", "Stable validation requ
   if (!releaseValidationScript.includes(token)) fail(`missing release validation token: ${token}`);
 }
 const publicAuditScript = read("scripts/audit-public-scope.mjs");
-for (const token of ["PRIVATE KEY", "sk-[A-Za-z0-9_-]{20,}", "release-artifacts", "personal repository or user identifier", "local home directory", "PUBLIC AUDIT PASS"]) {
+for (const token of ["PRIVATE KEY", "sk-[A-Za-z0-9_-]{20,}", "release-artifacts", "personal repository or user identifier", "local home directory", "(?:windows|macos|linux)-updater", "PUBLIC AUDIT PASS"]) {
   if (!publicAuditScript.includes(token)) fail(`missing public audit token: ${token}`);
 }
 const exeCheckScript = read("scripts/check-release-exe.ps1");
@@ -403,7 +404,7 @@ for (const command of [
   "duplicate_profile",
   "import_profiles",
   "set_profile_api_key",
-  "get_profile_api_key",
+  "get_profile_credential_status",
   "delete_profile_api_key",
   "preview_profile_apply",
   "apply_profile",
@@ -1104,7 +1105,7 @@ for (const token of [
   "api.duplicateProfile",
   "api.importProfiles",
   "api.setProfileApiKey",
-  "api.getProfileApiKey",
+  "api.getProfileCredentialStatus",
   "api.previewProfileApply",
   "api.applyProfile",
   "api.detectCcSwitchProfiles",
@@ -1120,14 +1121,14 @@ for (const token of ["api.exportProfiles", "copy.profiles.export"]) {
 for (const token of ["Store key", "Delete key", "存储 key", "删除 key", "未存储凭据", "No stored credential", "api.deleteProfileApiKey"]) {
   if (app.includes(token)) fail(`removed credential editor token should not appear in App UI: ${token}`);
 }
-for (const token of ["SimpleDeleteConfirmModal", "deleteHostAlias", "deleteProfileId", "credentialVisible", "CredentialVisibilityIcon", "viewBox=\"0 0 24 24\"", "showApiKey", "hideApiKey", "onGetProfileApiKey", "handleDetectLocalSshHosts"]) {
-  if (!app.includes(token)) fail(`missing delete confirmation or API key editor token: ${token}`);
+for (const token of ["SimpleDeleteConfirmModal", "deleteHostAlias", "deleteProfileId", "onGetProfileCredentialStatus", "handleDetectLocalSshHosts"]) {
+  if (!app.includes(token)) fail(`missing delete confirmation or credential status token: ${token}`);
 }
-for (const token of ["const nextProfiles = await api.listProfiles();", "passwordInputWrap profileCredentialInputWrap"]) {
-  if (!app.includes(token)) fail(`missing profile credential refresh/visibility token: ${token}`);
+for (const token of ["const nextProfiles = await api.listProfiles();", "passwordInputWrap profileCredentialInputWrap", 'type="password"']) {
+  if (!app.includes(token)) fail(`missing profile credential status or masked input token: ${token}`);
 }
-for (const token of ["disabled={!password}", "disabled={credentialLoading || (!canLoadStoredCredential && !credentialInput.trim())"]) {
-  if (app.includes(token)) fail(`credential visibility button must stay visible and enabled: ${token}`);
+for (const token of ["credentialVisible", "passwordVisible", "CredentialVisibilityIcon", "showApiKey", "hideApiKey", "if (result.apiKey)"]) {
+  if (app.includes(token)) fail(`secret visibility/readback token must be removed: ${token}`);
 }
 for (const token of [
   'library: "Local config"',
@@ -1428,7 +1429,7 @@ for (const token of [
   "duplicateProfile",
   "importProfiles",
   "setProfileApiKey",
-  "getProfileApiKey",
+  "getProfileCredentialStatus",
   "deleteProfileApiKey",
   "previewProfileApply",
   "applyProfile",
@@ -1501,7 +1502,7 @@ for (const token of ["AppUpdateStatus", "AppUpdateState", "pending-configuration
 for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "RemoteCodexMaintenanceResult", "check-version", "password_login", "verify_alias_login"]) {
   if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
-for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileApiKeyResult", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
+for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileCredentialStatus", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
   if (!models.includes(token)) fail(`missing Profile/API model token: ${token}`);
 }
 for (const token of ["HostResourceSnapshot", "GpuSnapshot", "GpuProcessSnapshot", "HostResourceBatchResult", "CpuSnapshot", "MemorySnapshot", "elapsedSeconds"]) {
@@ -1672,11 +1673,11 @@ for (const token of ["sshHostsTable", "table-layout: auto", "flex-wrap: nowrap",
 for (const token of ["profilesStack", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileTable", "profileRowActions", "profileApplyPanel", "profileApplyTable", "profileApplyOperationModal", "profileHostSelectModal", "profileHostSelectList", "profileHostSelectStatus", "profileModelCombobox", "profileModelOptions", "profileModelOption", "profileFastModeSegment", "profileFastModeOption"]) {
   if (!styles.includes(token)) fail(`missing compact Profiles style token: ${token}`);
 }
-for (const token of ["simpleDeleteModal", "credentialVisibilityButton", "credentialEyeIcon", ".sshHostModal.ProfileEditModal .fieldGroup", ".sshHostModal:not(.ProfileEditModal) .fieldGroup input", "::-ms-reveal", ".passwordInputWrap .credentialVisibilityButton"]) {
+for (const token of ["simpleDeleteModal", ".sshHostModal.ProfileEditModal .fieldGroup", ".sshHostModal:not(.ProfileEditModal) .fieldGroup input", "::-ms-reveal", ".passwordInputWrap"]) {
   if (!styles.includes(token)) fail(`missing delete confirmation or credential editor style token: ${token}`);
 }
-for (const token of [".credentialEyeIcon::before", ".credentialEyeIcon::after"]) {
-  if (styles.includes(token)) fail(`credential visibility icon must be real SVG, not CSS-drawn pseudo icon: ${token}`);
+for (const token of ["credentialVisibilityButton", "credentialEyeIcon"]) {
+  if (styles.includes(token)) fail(`secret visibility style must be removed: ${token}`);
 }
 for (const token of ["min-width: 0", ".skillsTable td:nth-child(5)", ".skillRowActions", "flex-wrap: wrap"]) {
   if (!styles.includes(token)) fail(`missing responsive Skills table style token: ${token}`);

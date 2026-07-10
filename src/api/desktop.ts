@@ -36,7 +36,7 @@ import type {
 import type { AppSettings, CloseButtonBehavior, SettingsSaveResult } from "../settings";
 import { normalizeSettings, saveDesktopSettingsCache } from "../settings";
 import type { CodexHubApi } from "./contracts";
-import { assertTauriRuntime, requiredInvoke } from "./invoke";
+import { assertTauriRuntime, requireHostAlias, requiredInvoke } from "./invoke";
 import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
 
 export const desktopApi: CodexHubApi = {
@@ -74,7 +74,8 @@ export const desktopApi: CodexHubApi = {
   generateEd25519Key: () => requiredInvoke("generate_ed25519_key"),
   listSshConfigHosts: () => requiredInvoke("list_ssh_config_hosts"),
   upsertSshConfigHost: (draft: SshHostDraft) => requiredInvoke("upsert_ssh_config_host", { draft }),
-  deleteSshConfigHost: (alias: string): Promise<SshConfigDeleteResult> => requiredInvoke("delete_ssh_config_host", { alias }),
+  deleteSshConfigHost: (alias: string): Promise<SshConfigDeleteResult> =>
+    requiredInvoke("delete_ssh_config_host", { alias: requireHostAlias("delete_ssh_config_host", alias) }),
   listHosts: () => requiredInvoke("list_hosts"),
   refreshDiscoveredHosts: () => requiredInvoke("refresh_discovered_hosts"),
   refreshLatestCodexVersion: (force = false, timeoutMs = 30000) =>
@@ -85,7 +86,7 @@ export const desktopApi: CodexHubApi = {
   deleteHost: (id: string) => requiredInvoke("delete_host", { id }),
   testSshConnection: (id: string) => requiredInvoke("test_ssh_connection", { id }),
   sshCheck: (hostAlias: string, timeoutMs = 10000) =>
-    requiredInvoke("ssh_check", { hostAlias, timeoutMs }),
+    requiredInvoke("ssh_check", { hostAlias: requireHostAlias("ssh_check", hostAlias), timeoutMs }),
   connectSshHost: async (
     draft: SshHostDraft,
     password: string,
@@ -93,6 +94,7 @@ export const desktopApi: CodexHubApi = {
     onProgress?: (event: SshBootstrapProgressEvent) => void,
     timeoutMs = 10000
   ): Promise<SshBootstrapResult> => {
+    const alias = requireHostAlias("bootstrap_ssh_host", draft.alias);
     let unlisten: UnlistenFn | null = null;
     assertTauriRuntime("bootstrap_ssh_host");
     if (onProgress) {
@@ -103,7 +105,7 @@ export const desktopApi: CodexHubApi = {
 
     try {
       return await requiredInvoke("bootstrap_ssh_host", {
-        draft,
+        draft: { ...draft, alias },
         password,
         timeoutMs,
         requestId
@@ -113,13 +115,27 @@ export const desktopApi: CodexHubApi = {
     }
   },
   bootstrapSshHost: (draft: SshHostDraft, password: string, timeoutMs = 10000) =>
-    requiredInvoke("bootstrap_ssh_host", { draft, password, timeoutMs }),
+    requiredInvoke("bootstrap_ssh_host", {
+      draft: { ...draft, alias: requireHostAlias("bootstrap_ssh_host", draft.alias) },
+      password,
+      timeoutMs
+    }),
   bootstrapExistingSshHost: (hostAlias: string, password: string, timeoutMs = 10000) =>
-    requiredInvoke("bootstrap_existing_ssh_host", { hostAlias, password, timeoutMs }),
+    requiredInvoke("bootstrap_existing_ssh_host", {
+      hostAlias: requireHostAlias("bootstrap_existing_ssh_host", hostAlias),
+      password,
+      timeoutMs
+    }),
   remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>
-    requiredInvoke<RemoteProbeResult>("remote_probe_codex", { hostAlias, timeoutMs }),
+    requiredInvoke<RemoteProbeResult>("remote_probe_codex", {
+      hostAlias: requireHostAlias("remote_probe_codex", hostAlias),
+      timeoutMs
+    }),
   sampleHostResources: (hostAliases: string[], timeoutMs = 8000) =>
-    requiredInvoke<HostResourceBatchResult>("sample_host_resources", { hostAliases, timeoutMs }),
+    requiredInvoke<HostResourceBatchResult>("sample_host_resources", {
+      hostAliases: hostAliases.map((alias) => requireHostAlias("sample_host_resources", alias)),
+      timeoutMs
+    }),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,
@@ -127,6 +143,7 @@ export const desktopApi: CodexHubApi = {
     requestId?: string,
     onProgress?: (event: RemoteCodexProgressEvent) => void
   ): Promise<RemoteCodexMaintenanceResult> => {
+    const alias = requireHostAlias("remote_manage_codex", hostAlias);
     let unlisten: UnlistenFn | null = null;
     assertTauriRuntime("remote_manage_codex");
     if (requestId && onProgress) {
@@ -137,7 +154,7 @@ export const desktopApi: CodexHubApi = {
 
     try {
       return await requiredInvoke("remote_manage_codex", {
-        hostAlias,
+        hostAlias: alias,
         action,
         timeoutMs,
         requestId
@@ -160,7 +177,7 @@ export const desktopApi: CodexHubApi = {
     })),
   setProfileApiKey: (profileId: string, apiKey: string) =>
     requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile),
-  getProfileApiKey: (profileId: string) => requiredInvoke("get_profile_api_key", { profileId }),
+  getProfileCredentialStatus: (profileId: string) => requiredInvoke("get_profile_credential_status", { profileId }),
   deleteProfileApiKey: (profileId: string) =>
     requiredInvoke<Profile>("delete_profile_api_key", { profileId }).then(normalizeProfile),
   previewProfileApply: (profileId: string, hostIds: string[]) =>
@@ -187,16 +204,33 @@ export const desktopApi: CodexHubApi = {
   getSkillTargets: (skillId: string, timeoutMs = 30000): Promise<SkillTargetsResult> =>
     requiredInvoke("get_skill_targets", { skillId, timeoutMs }),
   installSkillTargets: (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
-    requiredInvoke("install_skill_targets", { skillId, targets, timeoutMs }),
+    requiredInvoke("install_skill_targets", { skillId, targets: validateSkillTargets("install_skill_targets", targets), timeoutMs }),
   uninstallSkillTargets: (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
-    requiredInvoke("uninstall_skill_targets", { skillId, targets, timeoutMs }),
+    requiredInvoke("uninstall_skill_targets", { skillId, targets: validateSkillTargets("uninstall_skill_targets", targets), timeoutMs }),
   deleteLibrarySkill: (skillId: string, uninstallFirst: boolean, timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
     requiredInvoke("delete_library_skill", { skillId, uninstallFirst, timeoutMs }),
   downloadInstalledSkill: (request: InstalledSkillRequest, timeoutMs = 120000) =>
-    requiredInvoke("download_installed_skill", { request, timeoutMs }),
+    requiredInvoke("download_installed_skill", { request: validateInstalledSkillRequest("download_installed_skill", request), timeoutMs }),
   uninstallInstalledSkill: (request: InstalledSkillRequest, timeoutMs = 120000) =>
-    requiredInvoke("uninstall_installed_skill", { request, timeoutMs }),
+    requiredInvoke("uninstall_installed_skill", { request: validateInstalledSkillRequest("uninstall_installed_skill", request), timeoutMs }),
   updateLibrarySkillAbout: (skillId: string, about: string) =>
     requiredInvoke<SkillPack[]>("update_library_skill_about", { skillId, about }),
   listTasks: () => requiredInvoke<TaskRun[]>("list_tasks")
 };
+
+function validateSkillTargets(command: "install_skill_targets" | "uninstall_skill_targets", targets: SkillTargetRequest[]) {
+  return targets.map((target) =>
+    target.targetType === "host"
+      ? { ...target, hostAlias: requireHostAlias(command, target.hostAlias) }
+      : target
+  );
+}
+
+function validateInstalledSkillRequest(
+  command: "download_installed_skill" | "uninstall_installed_skill",
+  request: InstalledSkillRequest
+) {
+  return request.targetType === "host"
+    ? { ...request, hostAlias: requireHostAlias(command, request.hostAlias) }
+    : request;
+}

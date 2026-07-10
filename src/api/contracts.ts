@@ -15,7 +15,7 @@ import type {
   LocalCodexStatus,
   NetworkProxyStatus,
   Profile,
-  ProfileApiKeyResult,
+  ProfileCredentialStatus,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
   ProfileDraft,
@@ -97,7 +97,7 @@ export type CodexHubApi = {
   duplicateProfile: (id: string) => Promise<Profile>;
   importProfiles: (bundle: ProfileImportExport) => Promise<ProfileImportExport>;
   setProfileApiKey: (profileId: string, apiKey: string) => Promise<Profile>;
-  getProfileApiKey: (profileId: string) => Promise<ProfileApiKeyResult>;
+  getProfileCredentialStatus: (profileId: string) => Promise<ProfileCredentialStatus>;
   deleteProfileApiKey: (profileId: string) => Promise<Profile>;
   previewProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyPreview>;
   applyProfile: (profileId: string, hostIds: string[]) => Promise<ProfileApplyBatchResult>;

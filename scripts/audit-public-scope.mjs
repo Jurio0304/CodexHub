@@ -126,7 +126,7 @@ if (localMachine && localMachine.length >= 3) {
 }
 
 const isUpdaterFeedReleaseUrl = (file, line) =>
-  /^dist-release\/v[^/]+\/windows-updater\/latest\.json$/i.test(file) &&
+  /^dist-release\/v[^/]+\/(?:windows|macos|linux)-updater\/latest\.json$/i.test(file) &&
   /https:\/\/github\.com\/[^/\s"]+\/[^/\s"]+\/releases\/download\//i.test(line);
 
 for (const file of uniqueFiles) {

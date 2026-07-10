@@ -2587,6 +2587,7 @@ mod tests {
     #[test]
     fn ssh_alias_validation_rejects_wildcards_options_and_shell_tokens() {
         assert!(validate_ssh_alias("lab-box_01").is_ok());
+        assert!(validate_ssh_alias("   ").is_err());
         assert!(validate_ssh_alias("-oProxyCommand=bad").is_err());
         assert!(validate_ssh_alias("*.example.com").is_err());
         assert!(validate_ssh_alias("lab;rm").is_err());

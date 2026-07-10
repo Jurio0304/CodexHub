@@ -14,7 +14,7 @@ import type {
   LocalCodexStatus,
   NetworkProxyStatus,
   Profile,
-  ProfileApiKeyResult,
+  ProfileCredentialStatus,
   ProfileApplyBatchResult,
   ProfileApplyPreview,
   ProfileDraft,
@@ -64,7 +64,7 @@ import {
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 let mockProfiles = clone(fallbackProfiles);
-let mockProfileApiKeys = new Map<string, string>();
+let mockProfileCredentialIds = new Set<string>();
 let mockSkillPacks = clone(fallbackSkillPacks);
 let mockTasks = clone(fallbackTasks);
 let mockSkillInventoryStatus: SkillInventoryStatus = {
@@ -1249,7 +1249,7 @@ export const mockApi: CodexHubApi = {
     const profile = mockProfiles.find((item) => item.id === id);
     const deleted = Boolean(profile);
     mockProfiles = mockProfiles.filter((item) => item.id !== id);
-    mockProfileApiKeys.delete(id);
+    mockProfileCredentialIds.delete(id);
     const message = deleted ? `Deleted profile ${profile?.name ?? id}.` : `Profile ${id} was not found.`;
     const task = mockTaskRun(id, profile?.name ?? id, "Delete profile", message, deleted, `delete_profile ${id}`);
     mockTasks = [task, ...mockTasks];
@@ -1291,15 +1291,14 @@ export const mockApi: CodexHubApi = {
       credentialStored: Boolean(apiKey),
       updatedAt: nowStamp()
     });
-    if (apiKey) mockProfileApiKeys.set(profileId, apiKey);
+    if (apiKey) mockProfileCredentialIds.add(profileId);
     mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
     return clone(profile);
   },
-  getProfileApiKey: async (profileId: string) => {
+  getProfileCredentialStatus: async (profileId: string): Promise<ProfileCredentialStatus> => {
     const current = mockProfiles.find((item) => item.id === profileId);
     if (!current) throw new Error(`Profile ${profileId} was not found.`);
-    const apiKey = mockProfileApiKeys.get(profileId) ?? null;
-    return { profileId, exists: Boolean(apiKey), apiKey };
+    return { profileId, exists: mockProfileCredentialIds.has(profileId) };
   },
   deleteProfileApiKey: async (profileId: string) => {
     const current = mockProfiles.find((item) => item.id === profileId);
@@ -1309,7 +1308,7 @@ export const mockApi: CodexHubApi = {
       credentialStored: false,
       updatedAt: nowStamp()
     });
-    mockProfileApiKeys.delete(profileId);
+    mockProfileCredentialIds.delete(profileId);
     mockProfiles = mockProfiles.map((item) => (item.id === profileId ? profile : item));
     return clone(profile);
   },
@@ -1332,7 +1331,7 @@ export const mockApi: CodexHubApi = {
       })
     );
     for (const profile of imported) {
-      mockProfileApiKeys.set(profile.id, mockProfileApiKeys.get(profile.id) ?? ["sk", "cc-switch-local-mock"].join("-"));
+      mockProfileCredentialIds.add(profile.id);
     }
     const importedKeys = new Set(imported.map(ccSwitchProfileKey));
     mockProfiles = [

@@ -262,10 +262,9 @@ struct ProfileImportExport {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProfileApiKeyResult {
+struct ProfileCredentialStatus {
     profile_id: String,
     exists: bool,
-    api_key: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1574,10 +1573,10 @@ struct LocalCodexNativePackage {
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            hosts: Mutex::new(mock_hosts()),
-            profiles: Mutex::new(mock_profiles()),
-            skill_packs: Mutex::new(mock_skill_packs()),
-            tasks: Mutex::new(mock_tasks()),
+            hosts: Mutex::new(empty_hosts()),
+            profiles: Mutex::new(empty_profiles()),
+            skill_packs: Mutex::new(empty_skill_packs()),
+            tasks: Mutex::new(empty_tasks()),
         }
     }
 }
@@ -2724,42 +2723,7 @@ fn update_host(
         return Ok(updated);
     }
 
-    let host = Host {
-        id,
-        name: patch.name.unwrap_or_else(|| "Mock Host".into()),
-        host_alias: patch.address.clone().unwrap_or_else(|| "127.0.0.1".into()),
-        source: "manual".into(),
-        address: patch.address.unwrap_or_else(|| "127.0.0.1".into()),
-        port: patch.port.unwrap_or(22),
-        username: patch.username.unwrap_or_else(|| "codex".into()),
-        auth_method: patch.auth_method.unwrap_or(AuthMethod::SshKey),
-        status: patch.status.unwrap_or(HostStatus::Unknown),
-        os: "Unknown".into(),
-        arch: "Unknown".into(),
-        shell: "Unknown".into(),
-        path: None,
-        path_has_local_bin: None,
-        codex_command_available: None,
-        codex_installed: false,
-        codex_version: "pending".into(),
-        config_exists: None,
-        api_config_name: None,
-        api_config_source: None,
-        api_key_env_var: None,
-        api_key_env_present: None,
-        skills_exists: None,
-        skills_count: None,
-        profile_id: patch.profile_id,
-        skill_pack_ids: Vec::new(),
-        tags: patch.tags.unwrap_or_default(),
-        last_seen: "just added".into(),
-        latency_ms: None,
-    };
-    hosts.insert(0, host.clone());
-    let next_hosts = hosts.clone();
-    drop(hosts);
-    save_hosts(&app, &state, &next_hosts)?;
-    Ok(host)
+    Err(format!("Host {id} was not found."))
 }
 
 #[tauri::command]
@@ -2777,45 +2741,31 @@ fn delete_host(app: AppHandle, state: State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-fn test_ssh_connection(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<ConnectionTest, String> {
-    let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
-
-    if let Some(host) = hosts.iter_mut().find(|host| host.id == id) {
-        let ok = true;
-        host.status = if ok {
-            HostStatus::Online
-        } else {
-            HostStatus::Offline
-        };
-        host.latency_ms = if ok { Some(24) } else { None };
-        if ok {
-            host.last_seen = "just now".into();
-        }
-
-        let result = ConnectionTest {
-            ok,
-            latency_ms: host.latency_ms,
-            message: if ok {
-                format!("Mock SSH handshake to {} completed.", host.name)
-            } else {
-                format!("Mock SSH handshake to {} timed out.", host.name)
-            },
-        };
-        let next_hosts = hosts.clone();
-        drop(hosts);
-        save_hosts(&app, &state, &next_hosts)?;
-        return Ok(result);
-    }
-
-    Ok(ConnectionTest {
-        ok: false,
-        latency_ms: None,
-        message: "Host not found.".into(),
+async fn test_ssh_connection(app: AppHandle, id: String) -> Result<ConnectionTest, String> {
+    run_blocking_command("test_ssh_connection", move || {
+        let state = app.state::<AppState>();
+        let host_alias = test_connection_host_alias(&state, &id)?;
+        let result = run_ssh_check(&state, host_alias, Some(10_000));
+        save_current_hosts(&app, &state)?;
+        Ok(ConnectionTest {
+            ok: result.ok,
+            latency_ms: result.latency_ms,
+            message: result.message,
+        })
     })
+    .await?
+}
+
+fn test_connection_host_alias(state: &AppState, id: &str) -> Result<String, String> {
+    let host_alias = state
+        .hosts
+        .lock()
+        .expect("hosts mutex poisoned")
+        .iter()
+        .find(|host| host.id == id)
+        .map(|host| host.host_alias.clone())
+        .ok_or_else(|| format!("Host {id} was not found."))?;
+    ssh::validate_ssh_alias(&host_alias)
 }
 
 #[tauri::command]
@@ -3061,33 +3011,20 @@ fn set_profile_api_key(
 }
 
 #[tauri::command]
-fn get_profile_api_key(
+fn get_profile_credential_status(
     app: AppHandle,
     state: State<'_, AppState>,
     profile_id: String,
-) -> Result<ProfileApiKeyResult, String> {
-    let mut profiles = load_profiles(&app, &state)?;
-    let profile = profiles
+) -> Result<ProfileCredentialStatus, String> {
+    let profiles = load_profiles(&app, &state)?;
+    profiles
         .iter()
         .find(|profile| profile.id == profile_id)
-        .cloned()
         .ok_or_else(|| format!("Profile {profile_id} was not found."))?;
-    let mut api_key = load_profile_api_key_local(&profile_id)?;
-    if api_key.is_none() && profile.source == "cc-switch" {
-        api_key = migrate_cc_switch_api_key_for_profile(&app, &state, &profile)?;
-        if api_key.is_some() {
-            for item in &mut profiles {
-                if item.id == profile_id {
-                    item.credential_stored = true;
-                }
-            }
-            save_profiles(&app, &state, &profiles)?;
-        }
-    }
-    Ok(ProfileApiKeyResult {
+    let exists = load_profile_api_key_local(&profile_id)?.is_some();
+    Ok(ProfileCredentialStatus {
         profile_id,
-        exists: api_key.is_some(),
-        api_key,
+        exists,
     })
 }
 
@@ -7523,6 +7460,19 @@ mod tests {
     }
 
     #[test]
+    fn test_connection_rejects_missing_or_empty_alias_before_ssh() {
+        let state = AppState::default();
+        assert!(test_connection_host_alias(&state, "missing").is_err());
+
+        state
+            .hosts
+            .lock()
+            .expect("hosts mutex poisoned")
+            .push(test_host("   "));
+        assert!(test_connection_host_alias(&state, "host-   ").is_err());
+    }
+
+    #[test]
     fn stable_updater_status_is_pending_without_build_time_config() {
         let status = app_update_status_for_channel("stable", "0.2.0".into(), None, None);
         assert!(matches!(status.state, AppUpdateState::PendingConfiguration));
@@ -8777,7 +8727,7 @@ pub fn run() {
             duplicate_profile,
             import_profiles,
             set_profile_api_key,
-            get_profile_api_key,
+            get_profile_credential_status,
             delete_profile_api_key,
             preview_profile_apply,
             apply_profile,
@@ -12984,18 +12934,18 @@ fn home_dir() -> Option<PathBuf> {
         .or_else(|| env::var_os("HOME").map(PathBuf::from))
 }
 
-fn mock_hosts() -> Vec<Host> {
+fn empty_hosts() -> Vec<Host> {
     Vec::new()
 }
 
-fn mock_profiles() -> Vec<Profile> {
+fn empty_profiles() -> Vec<Profile> {
     Vec::new()
 }
 
-fn mock_skill_packs() -> Vec<SkillPack> {
+fn empty_skill_packs() -> Vec<SkillPack> {
     Vec::new()
 }
 
-fn mock_tasks() -> Vec<TaskRun> {
+fn empty_tasks() -> Vec<TaskRun> {
     Vec::new()
 }
