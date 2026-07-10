@@ -1,6 +1,6 @@
 # CodexHub Architecture
 
-Date: 2026-07-08
+Date: 2026-07-10
 Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 plus arm64 Linux deb release-build support.
 
 ## Architecture Principle
@@ -18,11 +18,16 @@ The local platform layer owns OS-specific paths and command discovery. Windows k
 
 ```mermaid
 flowchart LR
-  UI["React + TypeScript UI"] --> Tauri["Tauri command bridge"]
-  Tauri --> Rust["Rust backend services"]
-  Rust --> Store["Local store: JSON first, SQLite later"]
-  Rust --> Creds["Windows credential store / ssh-agent references"]
-  Rust --> OpenSSH["Windows OpenSSH ssh/scp/sftp"]
+  UI["React pages"] --> Feedback["Feedback provider / Task drawer / Dialog"]
+  Feedback --> Tauri["CodexHubApi + generated wire DTOs"]
+  Tauri --> Commands["Tauri commands"]
+  Commands --> Services["Domain services"]
+  Services --> Jobs["Durable jobs"]
+  Services --> Storage["Repositories / versioned JSON"]
+  Jobs --> SQLite["SQLite tasks and operation journal"]
+  Services --> Adapters["SSH / filesystem / credential / updater / events"]
+  Adapters --> Creds["OS credential store"]
+  Adapters --> OpenSSH["System OpenSSH ssh/scp/sftp"]
   OpenSSH --> Remote["Remote Linux host"]
   Remote --> Config["~/.codex/config.toml"]
   Remote --> Skills["~/.codex/skills/"]
@@ -39,7 +44,29 @@ flowchart LR
 - Codex App Fallback: manual steps for enabling SSH hosts and reconnecting in Codex App.
 - Settings: local data location, remote paths, OpenSSH binary overrides, theme, and privacy controls.
 
+## Feedback And Accessibility
+
+`AppErrorBoundary -> FeedbackProvider -> App` is the root composition. Success/info Toasts close after five seconds, warnings after eight seconds, and errors remain in a `role="alert"` region until dismissed or opened in Tasks. Durable writes, live SSH, remote probes, installs, updates, applies, syncs, migrations, recoveries, and partial failures always have a persistent task; form validation, copy confirmation, and pure UI actions stay transient.
+
+The global Task drawer prioritizes running and unacknowledged failed/interrupted tasks, then the latest 20 records. The Tasks page pages through the complete SQLite history. Sidebar success dots clear when the user enters the owning page; failure dots are derived from unacknowledged durable tasks and clear only after acknowledgement.
+
+All app modals use shared Radix Dialog/AlertDialog wrappers while retaining existing CSS variables. They trap Tab/Shift+Tab, choose form or Cancel initial focus, close through the same Esc path, prevent accidental backdrop closure, block closure while a write is busy, and restore focus to the real trigger or active navigation item. Live regions are scoped to the changed message, and `prefers-reduced-motion: reduce` disables animations/transitions without hiding static busy text.
+
+Rust wire contracts for structured errors, tasks, storage, Settings, updater status, Hosts, Profiles, Skills, SSH, resource monitoring, and profile-apply results are generated with `ts-rs` into `src/generated/rust-contracts.ts`. UI-normalized view models remain in `src/models.ts`; generated files are never edited manually.
+
 ## Rust Backend Services
+
+The backend migration boundary is `commands -> services -> jobs -> storage/adapters`:
+
+- `commands/` contains thin Tauri entry points only: parse wire arguments, pass `AppState` to one domain use case, and return the existing public command shape. All public command names remain stable.
+- `services/` owns use-case sequencing and compensation. Hosts/SSH, Profiles/credentials, Skills, updater, related Host/Profile writes, and storage migration/restore are separated into use-case and operation modules.
+- `jobs.rs` persists queued/running/final task transitions and redacts every log surface before SQLite writes. SSH bootstrap and remote Codex progress lines are appended while the task is running and merged into the final record. Failure to persist a required transition fails the command; Tauri event delivery remains diagnostic because SQLite is authoritative.
+- `storage/` owns app-scoped paths, versioned JSON, atomic replacement, backup/recovery, multi-file compensation, and the SQLite `TaskStore` repository.
+- `adapters/` isolates event delivery and OS credentials. Existing `ssh.rs`, `resource_monitor.rs`, and `updater.rs` remain compatibility adapters behind services.
+
+`src-tauri/src/lib.rs` contains module wiring and shared imports only; Tauri builder/lifecycle assembly lives in `app_runtime.rs`, wire/domain types in `domain.rs`, and backend characterization tests in `backend_tests.rs`.
+
+`AppState` contains only `Arc<AppServices>`. `AppServices` owns resolved `AppPaths`, repositories, event adapters, and in-memory read caches; JSON/SQLite remain authoritative when data is reloaded.
 
 Tauri command surface:
 
@@ -75,11 +102,18 @@ The complete desktop/mock failure policy is documented in [Desktop Command Bound
 - `install_skill_targets(skill_id, targets, timeout_ms)` / `uninstall_skill_targets(skill_id, targets, timeout_ms)`: install or remove the managed copy on selected local or host targets.
 - `download_installed_skill(request, timeout_ms)` / `uninstall_installed_skill(request, timeout_ms)`: act on a cached installed-skill tag, importing that exact installed directory into the local library or permanently deleting it from the current target after explicit confirmation.
 - `delete_library_skill(skill_id, uninstall_first, timeout_ms)`: remove the CodexHub library record and managed copy, optionally uninstalling known targets first.
-- `list_tasks()`: return the in-memory redacted task log for the current app session.
+- `list_tasks()`: compatibility read of persistent redacted history.
+- `query_tasks(query)`, `get_task(task_id)`, `acknowledge_task(task_id)`: paginated persistent task history and acknowledgement.
+- `record_frontend_error(message)`: persist a sanitized React failure without a stack trace or raw exception text.
+- `get_storage_health()`, `preview_storage_migration(store)`, `apply_storage_migration(plan)`, `preview_storage_restore(store)`, `restore_storage_backup(plan)`: explicit fingerprinted migration and recovery workflow.
 
 ## Local Data Model
 
-Initial persistence can be JSON/TOML to keep the skeleton simple. SQLite becomes useful once the UI has searchable operation history.
+Authoritative low-frequency settings, hosts, profiles, and skill metadata use versioned JSON. Searchable task runs/logs, acknowledgement, schema history, cross-file operation journals, and backup metadata use SQLite. Rebuildable Codex-version and skill-inventory data lives under the app cache directory. API key values remain only in the OS credential store.
+
+Durable JSON v1 is `{ schemaVersion, updatedAt, data }`. Legacy arrays/objects are readable as v0, but writes remain locked until the user previews and confirms a SHA-256 fingerprinted migration. Changed writes create timestamped backups and use same-directory flush/validate/atomic replacement; unchanged writes create no backup. Corrupt data never silently falls back to a backup.
+
+SQLite enables foreign keys, WAL, `synchronous=FULL`, and a busy timeout. Startup marks queued/running tasks as `interrupted`. Future schema upgrades checkpoint WAL, create a validated `VACUUM INTO` snapshot, and migrate transactionally.
 
 ```ts
 type Server = {
@@ -157,7 +191,7 @@ CodexHub v0.4.3 continues to define exactly two release channels: `stable` and `
 - `stable` is the public release channel. It uses `src-tauri/tauri.conf.json`, `productName: CodexHub`, `identifier: app.codexhub.desktop`, and window title `CodexHub`.
 - `dev` is for development, test runs, previews, and manual acceptance. It uses `src-tauri/tauri.dev.conf.json`, `productName: CodexHub Dev`, `identifier: dev.codexhub.desktop`, and window title `CodexHub Dev`.
 
-The backend must keep local runtime state on Tauri's app-scoped path resolver rather than hand-built app data paths. Config files such as `settings.json`, `hosts.json`, `profiles.json`, `skills.json`, `skills-inventory.json`, and `codex-latest.json` use `app.path().app_config_dir()`. Temporary profile-apply files and cloned GitHub skill cache use `app.path().app_cache_dir()`. Tauri resolves both paths under the OS config/cache root plus the bundle identifier, so the different identifiers give `stable` and `dev` separate local app config/cache directories while still allowing both apps to be installed and run side by side.
+The backend resolves Tauri `app_config_dir()` and `app_cache_dir()` exactly once during setup and never falls back to a relative app-data path. `settings.json`, `hosts.json`, `profiles.json`, and `skills.json` use the config directory. `skills-inventory.json`, `codex-latest.json`, temporary profile-apply files, Codex download staging, and cloned GitHub skill caches use the cache directory. Legacy cache files are copied and checksum-verified without deleting the old source. Tauri scopes both roots by bundle identifier, so `stable` and `dev` stay isolated.
 
 In desktop mode, backend `settings.json` is the authoritative settings source. Frontend local storage is only a first-render cache and updates after confirmed backend reads or writes. Explicit Mock mode uses a separate browser-storage key.
 

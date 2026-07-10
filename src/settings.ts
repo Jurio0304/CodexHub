@@ -1,31 +1,21 @@
 import { getPlatform, isWindows } from "./platform";
 import type { RuntimePlatform } from "./platform";
+import type {
+  AppSettingsDto,
+  CloseButtonBehaviorDto,
+  NetworkProxyModeDto,
+  PlatformAppearanceDto,
+  SettingsSaveResultDto,
+  ThemeChoiceDto
+} from "./generated/rust-contracts";
 
-export type ThemeChoice = "system" | "light" | "dark";
+export type ThemeChoice = ThemeChoiceDto;
 export type FontPreset = "english" | "zh-cn";
-export type PlatformAppearance = "auto" | "windows" | "macos";
-export type CloseButtonBehavior = "ask" | "exit" | "minimize-to-tray";
-export type NetworkProxyMode = "auto" | "direct" | "manual";
-
-export type AppSettings = {
-  theme: ThemeChoice;
-  fontPreset: FontPreset;
-  platformAppearance: PlatformAppearance;
-  closeButtonBehavior: CloseButtonBehavior;
-  networkProxyMode: NetworkProxyMode;
-  networkProxyUrl: string;
-  resourceMonitorAutoRefresh: boolean;
-  resourceMonitorHostOrder: string[];
-  resourceMonitorRefreshSeconds: number;
-  sidebarCompletionIndicators: boolean;
-  setupGuideDismissed: boolean;
-};
-
-export type SettingsSaveResult = {
-  settings: AppSettings;
-  changed: boolean;
-  backupPath: string | null;
-};
+export type PlatformAppearance = PlatformAppearanceDto;
+export type CloseButtonBehavior = CloseButtonBehaviorDto;
+export type NetworkProxyMode = NetworkProxyModeDto;
+export type AppSettings = AppSettingsDto;
+export type SettingsSaveResult = SettingsSaveResultDto;
 
 type FontPresetDefinition = {
   label: string;

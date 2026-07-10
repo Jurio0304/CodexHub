@@ -19,10 +19,12 @@ export type InitialAppData = {
   skillPacks: SkillPack[];
   skillInventoryStatus: SkillInventoryStatus;
   tasks: TaskRun[];
+  taskNextCursor: string | null;
+  unacknowledgedTaskIds: string[];
 };
 
 export async function loadInitialAppData(): Promise<InitialAppData> {
-  const [settings, health, appUpdateStatus, hosts, profiles, skillPacks, skillInventoryStatus, tasks] = await Promise.all([
+  const [settings, health, appUpdateStatus, hosts, profiles, skillPacks, skillInventoryStatus, taskPage] = await Promise.all([
     api.getSettings(),
     api.getHealth(),
     api.getAppUpdateStatus(),
@@ -30,7 +32,7 @@ export async function loadInitialAppData(): Promise<InitialAppData> {
     api.listProfiles(),
     api.listSkillPacks(),
     api.getSkillInventoryStatus(),
-    api.listTasks()
+    api.queryTasks({ limit: 200, cursor: null })
   ]);
 
   return {
@@ -41,6 +43,8 @@ export async function loadInitialAppData(): Promise<InitialAppData> {
     profiles,
     skillPacks,
     skillInventoryStatus,
-    tasks
+    tasks: taskPage.items,
+    taskNextCursor: taskPage.nextCursor,
+    unacknowledgedTaskIds: taskPage.unacknowledgedTaskIds
   };
 }

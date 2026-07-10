@@ -44,9 +44,18 @@ import type {
   TaskRun
 } from "../models";
 import type { AppSettings, CloseButtonBehavior, SettingsSaveResult } from "../settings";
+import type {
+  StorageHealth,
+  StorageMigrationPlan,
+  StorageRestorePlan,
+  TaskEvent,
+  TaskPage,
+  TaskQuery
+} from "../generated/rust-contracts";
 
 export type SshBootstrapProgressHandler = (event: SshBootstrapProgressEvent) => void;
 export type RemoteCodexProgressHandler = (event: RemoteCodexProgressEvent) => void;
+export type TaskUpdatedHandler = (event: TaskEvent) => void;
 
 export type CodexHubApi = {
   getHealth: () => Promise<Health>;
@@ -124,4 +133,14 @@ export type CodexHubApi = {
   uninstallInstalledSkill: (request: InstalledSkillRequest, timeoutMs?: number) => Promise<SkillTargetOperationResult>;
   updateLibrarySkillAbout: (skillId: string, about: string) => Promise<SkillPack[]>;
   listTasks: () => Promise<TaskRun[]>;
+  queryTasks: (query?: TaskQuery) => Promise<TaskPage>;
+  getTask: (taskId: string) => Promise<TaskRun | null>;
+  acknowledgeTask: (taskId: string) => Promise<boolean>;
+  recordFrontendError: (message: string) => Promise<TaskRun>;
+  onTaskUpdated: (handler: TaskUpdatedHandler) => Promise<UnlistenFn>;
+  getStorageHealth: () => Promise<StorageHealth[]>;
+  previewStorageMigration: (store: string) => Promise<StorageMigrationPlan>;
+  applyStorageMigration: (plan: StorageMigrationPlan) => Promise<StorageHealth>;
+  previewStorageRestore: (store: string) => Promise<StorageRestorePlan>;
+  restoreStorageBackup: (plan: StorageRestorePlan) => Promise<StorageHealth>;
 };

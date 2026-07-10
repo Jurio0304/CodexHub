@@ -1,67 +1,57 @@
-﻿export type Health = {
-  app: string;
-  mode: string;
-  remoteWrapperRequired: boolean;
-};
+import type {
+  AppUpdateStateDto,
+  AppUpdateStatusDto,
+  ConnectionTestDto,
+  CpuSnapshotDto,
+  DeleteOperationResultDto,
+  GpuProcessSnapshotDto,
+  GpuSnapshotDto,
+  GpuVendorDto,
+  HealthDto,
+  HostResourceBatchResultDto,
+  HostResourceSnapshotDto,
+  HostResourceStatusDto,
+  LatestCodexVersionDto,
+  LocalCodexStatusDto,
+  MemorySnapshotDto,
+  NetworkProxyCandidateDto,
+  NetworkProxyStatusDto,
+  RemoteCodexActionDto,
+  RemoteCodexMaintenanceResultDto,
+  RemoteCodexProgressEventDto,
+  RemoteProbeResultDto,
+  SshBootstrapResultDto,
+  SshCheckResultDto,
+  SshConfigDeleteResultDto,
+  SshConfigHostDto,
+  SshConfigWriteResultDto,
+  SshHostDraftDto,
+  SshKeyGenerationResultDto,
+  SshKeyInfoDto,
+  SshStatusDto,
+  TaskLog,
+  TaskLogLevel,
+  TaskRun,
+  TaskStatus
+} from "./generated/rust-contracts";
+
+export type Health = HealthDto;
 
 export type AppReleaseChannel = "stable" | "dev" | string;
 
-export type AppUpdateState =
-  | "disabled"
-  | "pending-configuration"
-  | "ready"
-  | "checking"
-  | "installing"
-  | "up-to-date"
-  | "available"
-  | "error";
-
-export type AppUpdateStatus = {
-  softwareName: string;
+export type AppUpdateState = AppUpdateStateDto | "checking";
+export type AppUpdateStatus = Omit<AppUpdateStatusDto, "channel" | "state"> & {
   channel: AppReleaseChannel;
-  currentVersion: string;
-  installedAt: string | null;
   state: AppUpdateState;
-  configured: boolean;
-  feedConfigured: boolean;
-  signingConfigured: boolean;
-  latestVersion: string | null;
-  checkedAt: string | null;
-  message: string;
 };
 
-export type NetworkProxyCandidate = {
-  source: string;
-  url: string | null;
-  available: boolean;
-  message: string;
-};
-
-export type NetworkProxyStatus = {
-  mode: "auto" | "direct" | "manual";
-  proxyUrl: string | null;
-  source: string | null;
-  message: string;
-  candidates: NetworkProxyCandidate[];
-};
-
-export type LatestCodexVersion = {
-  version: string | null;
-  checkedAt: string | null;
-  source: "npm" | string;
-  error: string | null;
-};
+export type NetworkProxyCandidate = NetworkProxyCandidateDto;
+export type NetworkProxyStatus = NetworkProxyStatusDto;
+export type LatestCodexVersion = LatestCodexVersionDto;
 
 export type RuntimePlatform = "windows" | "macos" | "linux";
 
-export type LocalCodexStatus = {
-  platform: RuntimePlatform;
-  detected: boolean;
-  path: string | null;
-  version: string | null;
-  searchPaths: string[];
-  installHint: string;
-};
+export type LocalCodexStatus = LocalCodexStatusDto;
 
 export type HostStatus = "online" | "offline" | "unknown" | "testing";
 export type AuthMethod = "ssh-key" | "password" | "agent";
@@ -177,6 +167,7 @@ export type ProfileApplyHostResult = {
 
 export type ProfileApplyPreview = {
   profileId: string;
+  profileName: string;
   renderedToml: string;
   targetFiles: Array<{
     hostId: string;
@@ -187,6 +178,7 @@ export type ProfileApplyPreview = {
     noChangeExpected: boolean;
   }>;
   hostResults: ProfileApplyHostResult[];
+  warnings: string[];
 };
 
 export type ProfileApplyBatchResult = {
@@ -336,60 +328,12 @@ export type InstalledSkillDownloadResult = {
   message: string;
 };
 
-export type TaskStatus = "queued" | "running" | "success" | "failed";
-export type TaskLogLevel = "info" | "warn" | "error";
+// Wire task contracts are generated from Rust; UI-only models remain in this file.
+export type { TaskLog, TaskLogLevel, TaskRun, TaskStatus };
 
-export type TaskLog = {
-  id: string;
-  taskRunId: string;
-  level: TaskLogLevel;
-  timestamp: string;
-  message: string;
-  command?: string;
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number | null;
-  durationMs?: number;
-  timedOut?: boolean;
-};
-
-export type TaskRun = {
-  id: string;
-  hostId: string;
-  hostName: string;
-  action: string;
-  status: TaskStatus;
-  startedAt: string;
-  endedAt: string | null;
-  summary: string;
-  logs: TaskLog[];
-};
-
-export type ConnectionTest = {
-  ok: boolean;
-  latencyMs: number | null;
-  message: string;
-};
-
-export type SshCheckResult = {
-  hostAlias: string;
-  ok: boolean;
-  latencyMs: number | null;
-  message: string;
-  task: TaskRun;
-};
-
-export type SshBootstrapResult = {
-  hostAlias: string;
-  ok: boolean;
-  latencyMs: number | null;
-  message: string;
-  generatedKey: boolean;
-  privateKeyPath: string;
-  publicKeyPath: string;
-  writeResult: SshConfigWriteResult;
-  task: TaskRun;
-};
+export type ConnectionTest = ConnectionTestDto;
+export type SshCheckResult = SshCheckResultDto;
+export type SshBootstrapResult = SshBootstrapResultDto;
 
 export type SshBootstrapStep = "password_login" | "install_public_key" | "set_permissions" | "verify_alias_login";
 export type SshBootstrapStepStatus = "pending" | "running" | "success" | "failed";
@@ -408,177 +352,26 @@ export type SshBootstrapProgressEvent = {
   timedOut: boolean | null;
 };
 
-export type RemoteProbeResult = {
-  hostAlias: string;
-  sshStatus: HostStatus;
-  latencyMs: number | null;
-  os: string;
-  arch: string;
-  shell: string;
-  path: string | null;
-  pathHasLocalBin: boolean;
-  codexCommandAvailable: boolean;
-  codexInstalled: boolean;
-  codexPath: string | null;
-  codexVersion: string;
-  configExists: boolean;
-  apiConfigName: string;
-  apiConfigSource: string;
-  apiKeyEnvVar: string | null;
-  apiKeyEnvPresent: boolean | null;
-  skillsExists: boolean;
-  skillsCount: number;
-  task: TaskRun;
-};
+export type RemoteProbeResult = RemoteProbeResultDto;
 
-export type HostResourceStatus = "ok" | "partial" | "failed";
-export type GpuVendor = "nvidia" | "amd" | "intel" | "unknown";
+export type HostResourceStatus = HostResourceStatusDto;
+export type GpuVendor = GpuVendorDto;
 export type GpuTool = "nvidia-smi" | "rocm-smi" | "lspci" | "none" | string;
+export type CpuSnapshot = CpuSnapshotDto;
+export type MemorySnapshot = MemorySnapshotDto;
+export type GpuProcessSnapshot = GpuProcessSnapshotDto;
+export type GpuSnapshot = GpuSnapshotDto;
+export type HostResourceSnapshot = HostResourceSnapshotDto;
+export type HostResourceBatchResult = HostResourceBatchResultDto;
+export type RemoteCodexAction = RemoteCodexActionDto;
+export type RemoteCodexProgressEvent = RemoteCodexProgressEventDto;
+export type RemoteCodexMaintenanceResult = RemoteCodexMaintenanceResultDto;
 
-export type CpuSnapshot = {
-  usagePercent: number | null;
-  load1: number | null;
-  load5: number | null;
-  load15: number | null;
-  cores: number | null;
-  model: string | null;
-};
-
-export type MemorySnapshot = {
-  totalBytes: number | null;
-  availableBytes: number | null;
-  usedPercent: number | null;
-};
-
-export type GpuProcessSnapshot = {
-  gpuUuid: string | null;
-  pid: number | null;
-  name: string;
-  usedMemoryBytes: number | null;
-  user: string | null;
-  elapsedSeconds: number | null;
-  command: string | null;
-};
-
-export type GpuSnapshot = {
-  vendor: GpuVendor;
-  index: string | null;
-  uuid: string | null;
-  name: string;
-  status: "ok" | "detected" | "unavailable";
-  utilizationPercent: number | null;
-  memoryUsedBytes: number | null;
-  memoryTotalBytes: number | null;
-  temperatureC: number | null;
-  powerWatts: number | null;
-  driverVersion: string | null;
-  processes: GpuProcessSnapshot[];
-};
-
-export type HostResourceSnapshot = {
-  hostAlias: string;
-  status: HostResourceStatus;
-  sampledAt: string;
-  latencyMs: number | null;
-  error: string | null;
-  cpu: CpuSnapshot | null;
-  memory: MemorySnapshot | null;
-  gpuTool: GpuTool;
-  gpus: GpuSnapshot[];
-};
-
-export type HostResourceBatchResult = {
-  checkedAt: string;
-  snapshots: HostResourceSnapshot[];
-};
-
-export type RemoteCodexAction = "check-version" | "install" | "update" | "uninstall";
-
-export type RemoteCodexProgressEvent = {
-  requestId: string;
-  hostAlias: string;
-  action: RemoteCodexAction;
-  step: string;
-  status: "running" | "stdout" | "stderr" | "heartbeat" | "success" | "failed" | string;
-  message: string;
-  detail: string | null;
-  stdout: string | null;
-  stderr: string | null;
-  exitCode: number | null;
-  durationMs: number | null;
-  timedOut: boolean | null;
-};
-
-export type RemoteCodexMaintenanceResult = {
-  hostAlias: string;
-  ok: boolean;
-  action: RemoteCodexAction;
-  beforeVersion: string | null;
-  afterVersion: string | null;
-  codexPath: string | null;
-  codexCommandAvailable: boolean;
-  installMethod: string | null;
-  pathChanged: boolean;
-  shellConfigPath: string | null;
-  backupPath: string | null;
-  message: string;
-  task: TaskRun;
-};
-
-export type SshKeyInfo = {
-  keyType: "ed25519" | "rsa" | string;
-  privatePath: string;
-  publicPath: string;
-  privateExists: boolean;
-  publicExists: boolean;
-  publicKey: string | null;
-};
-
-export type SshStatus = {
-  sshDir: string;
-  configPath: string;
-  sshKeygenAvailable: boolean;
-  preferredIdentityFile: string;
-  ed25519: SshKeyInfo;
-  rsa: SshKeyInfo;
-};
-
-export type SshHostDraft = {
-  alias: string;
-  hostName: string;
-  port: number;
-  user: string;
-  identityFile: string;
-};
-
-export type SshConfigHost = SshHostDraft & {
-  managed: boolean;
-  source: "managed" | "local" | "mock" | string;
-};
-
-export type SshConfigWriteResult = {
-  changed: boolean;
-  action: "added" | "updated" | "deleted" | "unchanged" | string;
-  configPath: string;
-  backupPath: string | null;
-  host: SshConfigHost | null;
-  message: string;
-};
-
-export type SshConfigDeleteResult = SshConfigWriteResult & {
-  task: TaskRun;
-};
-
-export type DeleteOperationResult = {
-  ok: boolean;
-  deleted: boolean;
-  message: string;
-  task: TaskRun;
-};
-
-export type SshKeyGenerationResult = {
-  privatePath: string;
-  publicPath: string;
-  status: SshStatus;
-  message: string;
-};
+export type SshKeyInfo = SshKeyInfoDto;
+export type SshStatus = SshStatusDto;
+export type SshHostDraft = SshHostDraftDto;
+export type SshConfigHost = SshConfigHostDto;
+export type SshConfigWriteResult = SshConfigWriteResultDto;
+export type SshConfigDeleteResult = SshConfigDeleteResultDto;
+export type DeleteOperationResult = DeleteOperationResultDto;
+export type SshKeyGenerationResult = SshKeyGenerationResultDto;

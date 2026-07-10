@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use ts_rs::TS;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -9,8 +10,9 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename = "RuntimePlatformDto")]
 pub enum RuntimePlatform {
     Windows,
     MacOS,
@@ -145,7 +147,10 @@ pub fn expand_home_path_with_home(input: &str, home: &Path) -> Result<PathBuf, S
     if value == "~" {
         return Ok(home.to_path_buf());
     }
-    if let Some(rest) = value.strip_prefix("~/").or_else(|| value.strip_prefix("~\\")) {
+    if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
         return Ok(home_join_relative(home, rest));
     }
     if let Some(rest) = value.strip_prefix("$HOME/") {
@@ -206,7 +211,10 @@ pub fn command_path(command: &str) -> Option<PathBuf> {
 }
 
 pub fn run_version_command(program: &Path) -> Option<String> {
-    let output = version_command(program).stdin(Stdio::null()).output().ok()?;
+    let output = version_command(program)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -276,7 +284,10 @@ mod tests {
     fn macos_paths_follow_codexhub_contract() {
         let home = Path::new("/Users/codexhub");
 
-        assert_eq!(get_ssh_dir_for_home(home), PathBuf::from("/Users/codexhub/.ssh"));
+        assert_eq!(
+            get_ssh_dir_for_home(home),
+            PathBuf::from("/Users/codexhub/.ssh")
+        );
         assert_eq!(
             get_default_ssh_key_path_for_home(home),
             PathBuf::from("/Users/codexhub/.ssh/id_ed25519")

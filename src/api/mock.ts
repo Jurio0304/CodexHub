@@ -1,18 +1,11 @@
 import type {
-  AppUpdateStatus,
   CcSwitchDetection,
-  ConnectionTest,
-  DeleteOperationResult,
-  Health,
   Host,
   HostDraft,
   HostPatch,
   HostResourceBatchResult,
   InstalledSkillDownloadResult,
   InstalledSkillRequest,
-  LatestCodexVersion,
-  LocalCodexStatus,
-  NetworkProxyStatus,
   Profile,
   ProfileApiKeyResult,
   ProfileApplyBatchResult,
@@ -35,17 +28,14 @@ import type {
   SshBootstrapResult,
   SshCheckResult,
   SshConfigDeleteResult,
-  SshConfigHost,
-  SshConfigWriteResult,
   SshHostDraft,
-  SshKeyGenerationResult,
-  SshStatus,
   TaskRun
 } from "../models";
 import { getCodexSkillsPath, getPlatform } from "../platform";
 import type { AppSettings, CloseButtonBehavior } from "../settings";
 import { loadMockSettings, normalizeSettings, saveMockSettings } from "../settings";
 import type { CodexHubApi } from "./contracts";
+import type { TaskEvent } from "../generated/rust-contracts";
 import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
 import {
   fallbackAppUpdateStatus,
@@ -67,6 +57,8 @@ let mockProfiles = clone(fallbackProfiles);
 let mockProfileCredentialIds = new Set<string>();
 let mockSkillPacks = clone(fallbackSkillPacks);
 let mockTasks = clone(fallbackTasks);
+const mockAcknowledgedTaskIds = new Set<string>();
+const mockTaskHandlers = new Set<(event: TaskEvent) => void>();
 let mockSkillInventoryStatus: SkillInventoryStatus = {
   firstHostScanCompleted: false,
   localSkillRoot: getCodexSkillsPath({ platform: getPlatform() }),
@@ -82,21 +74,22 @@ function localSkillPath(skillId: string) {
 
 function mockTaskRun(hostId: string, hostName: string, action: string, summary: string, ok = true, command?: string): TaskRun {
   const taskId = `mock-task-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const timestamp = new Date().toISOString();
   return {
     id: taskId,
     hostId,
     hostName,
     action,
     status: ok ? "success" : "failed",
-    startedAt: "now",
-    endedAt: "now",
+    startedAt: timestamp,
+    endedAt: timestamp,
     summary,
     logs: [
       {
         id: `${taskId}-log-1`,
         taskRunId: taskId,
         level: ok ? "info" : "error",
-        timestamp: "now",
+        timestamp,
         message: summary,
         command,
         stdout: ok ? "ok" : "",
@@ -107,6 +100,17 @@ function mockTaskRun(hostId: string, hostName: string, action: string, summary: 
       }
     ]
   };
+}
+
+function recordMockTask(task: TaskRun) {
+  mockTasks = [task, ...mockTasks.filter((item) => item.id !== task.id)];
+  const event: TaskEvent = {
+    taskId: task.id,
+    status: task.status,
+    summary: task.summary,
+    updatedAt: new Date().toISOString()
+  };
+  for (const handler of mockTaskHandlers) handler(clone(event));
 }
 
 function nowStamp() {
@@ -227,15 +231,18 @@ function mockPreviewProfileApply(profileId: string, hostIds: string[]): ProfileA
   if (!profile) {
     return {
       profileId,
+      profileName: profileId,
       renderedToml: "",
       targetFiles: [],
-      hostResults: []
+      hostResults: [],
+      warnings: []
     };
   }
   const targetHosts = fallbackHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
   const renderedToml = renderProfileToml(profile);
   return {
     profileId: profile.id,
+    profileName: profile.name,
     renderedToml,
     targetFiles: targetHosts.map((host) => ({
       hostId: host.id,
@@ -253,7 +260,8 @@ function mockPreviewProfileApply(profileId: string, hostIds: string[]): ProfileA
       targetPath: "~/.codex/config.toml",
       backupPath: host.configExists === false || host.profileId === profile.id ? null : "~/.codex/config.toml.codexhub.bak.mock",
       message: host.profileId === profile.id ? "Preview expects no changes." : "Preview expects backup then replace."
-    }))
+    })),
+    warnings: []
   };
 }
 
@@ -397,7 +405,7 @@ function mockSshCheck(hostAlias: string): SshCheckResult {
         command: `ssh ${host.hostAlias} echo ok`,
         stdout: ok ? "ok" : "",
         stderr: ok ? "" : "mock timeout",
-        exitCode: ok ? 0 : null,
+        exitCode: ok ? 0 : undefined,
         durationMs: ok ? 24 : 10000,
         timedOut: !ok
       }
@@ -811,35 +819,6 @@ function mockDownloadGithubSkill(repoUrl: string): SkillImportResult {
   return { imported: [skill], skipped: [], message: `Mock downloaded ${name}.` };
 }
 
-function mockSkillTask(hostAlias: string, action: string, summary: string, ok = true): TaskRun {
-  const host = fallbackHostForAlias(hostAlias);
-  return {
-    id: `mock-skill-${Date.now()}`,
-    hostId: host.id,
-    hostName: host.name,
-    action,
-    status: ok ? "success" : "failed",
-    startedAt: "now",
-    endedAt: "now",
-    summary,
-    logs: [
-      {
-        id: `mock-skill-log-${Date.now()}`,
-        taskRunId: "mock-skill",
-        level: ok ? "info" : "error",
-        timestamp: "now",
-        message: summary,
-        command: `ssh ${hostAlias} codexhub-skill ${action}`,
-        stdout: ok ? "ok" : "",
-        stderr: ok ? "" : "mock error",
-        exitCode: ok ? 0 : 1,
-        durationMs: 40,
-        timedOut: false
-      }
-    ]
-  };
-}
-
 function mockDetectInstalledSkills(includeHosts: boolean): SkillDetectionResult {
   const detected = mockSkillPacks[0] ?? mockImportSkill(localSkillPath("example-skill")).imported[0];
   mockSkillPacks = mockSkillPacks.map((skill) =>
@@ -1152,7 +1131,7 @@ export const mockApi: CodexHubApi = {
       true,
       `delete_ssh_config_host ${alias}`
     );
-    mockTasks = [task, ...mockTasks];
+    recordMockTask(task);
     return {
       changed: true,
       action: "deleted",
@@ -1252,7 +1231,7 @@ export const mockApi: CodexHubApi = {
     mockProfileCredentialIds.delete(id);
     const message = deleted ? `Deleted profile ${profile?.name ?? id}.` : `Profile ${id} was not found.`;
     const task = mockTaskRun(id, profile?.name ?? id, "Delete profile", message, deleted, `delete_profile ${id}`);
-    mockTasks = [task, ...mockTasks];
+    recordMockTask(task);
     return { ok: deleted, deleted, message, task };
   },
   duplicateProfile: async (id: string) => {
@@ -1366,6 +1345,60 @@ export const mockApi: CodexHubApi = {
   downloadInstalledSkill: async (request: InstalledSkillRequest) => mockDownloadInstalledSkill(request),
   uninstallInstalledSkill: async (request: InstalledSkillRequest) => mockUninstallInstalledSkill(request),
   updateLibrarySkillAbout: async (skillId: string, about: string) => mockUpdateLibrarySkillAbout(skillId, about),
-  listTasks: async () => clone(mockTasks)
+  listTasks: async () => clone(mockTasks),
+  queryTasks: async (query) => {
+    const limit = Math.max(1, Math.min(200, query?.limit ?? 50));
+    const cursorIndex = query?.cursor ? mockTasks.findIndex((task) => task.id === query.cursor) : -1;
+    const start = query?.cursor ? (cursorIndex >= 0 ? cursorIndex + 1 : mockTasks.length) : 0;
+    const pageItems = mockTasks.slice(start, start + limit);
+    const items = clone(pageItems);
+    return {
+      items,
+      nextCursor:
+        start + pageItems.length < mockTasks.length && pageItems.length > 0
+          ? pageItems[pageItems.length - 1].id
+          : null,
+      unacknowledgedTaskIds: mockTasks
+        .filter((task) => (task.status === "failed" || task.status === "interrupted") && !mockAcknowledgedTaskIds.has(task.id))
+        .map((task) => task.id)
+    };
+  },
+  getTask: async (taskId: string) => clone(mockTasks.find((task) => task.id === taskId) ?? null),
+  acknowledgeTask: async (taskId: string) => {
+    if (!mockTasks.some((task) => task.id === taskId)) return false;
+    mockAcknowledgedTaskIds.add(taskId);
+    return true;
+  },
+  recordFrontendError: async (message: string) => {
+    const task = mockTaskRun("local-ui", "CodexHub UI", "Frontend error", message, false);
+    recordMockTask(task);
+    return clone(task);
+  },
+  onTaskUpdated: async (handler) => {
+    mockTaskHandlers.add(handler);
+    return () => mockTaskHandlers.delete(handler);
+  },
+  getStorageHealth: async () => ["settings", "hosts", "profiles", "skills"].map((store) => ({
+    store,
+    path: `mock://${store}.json`,
+    state: "missing" as const,
+    schemaVersion: null,
+    currentSchemaVersion: 1,
+    sourceSha256: null,
+    latestBackupPath: null,
+    message: "Explicit Mock mode does not use desktop storage."
+  })),
+  previewStorageMigration: async (store: string) => {
+    throw new Error(`Mock storage ${store} does not require migration.`);
+  },
+  applyStorageMigration: async () => {
+    throw new Error("Storage migration requires the Tauri desktop backend.");
+  },
+  previewStorageRestore: async (store: string) => {
+    throw new Error(`Mock storage ${store} has no recovery backup.`);
+  },
+  restoreStorageBackup: async () => {
+    throw new Error("Storage recovery requires the Tauri desktop backend.");
+  }
 };
 

@@ -1,38 +1,21 @@
-use std::fs;
-use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
-use super::{AppState, Host};
+use super::{storage, AppState, Host};
 
-fn hosts_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_config_dir()
-        .unwrap_or_else(|_| PathBuf::from(".codexhub"))
-        .join("hosts.json")
-}
-
-pub(crate) fn load_hosts(app: &AppHandle, state: &AppState) -> Result<Vec<Host>, String> {
-    let path = hosts_path(app);
-    let hosts = if path.exists() {
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-        serde_json::from_str::<Vec<Host>>(&content)
-            .map_err(|error| format!("Failed to parse {}: {error}", path.display()))?
-    } else {
-        state.hosts.lock().expect("hosts mutex poisoned").clone()
-    };
+pub(crate) fn load_hosts(_app: &AppHandle, state: &AppState) -> Result<Vec<Host>, String> {
+    let hosts = storage::load_document(&state.paths, "hosts", "hosts.json", Vec::new())?.data;
     *state.hosts.lock().expect("hosts mutex poisoned") = hosts.clone();
     Ok(hosts)
 }
 
-pub(crate) fn save_hosts(app: &AppHandle, state: &AppState, hosts: &[Host]) -> Result<(), String> {
-    let path = hosts_path(app);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let content = serde_json::to_string_pretty(hosts).map_err(|error| error.to_string())?;
-    fs::write(&path, content)
-        .map_err(|error| format!("Failed to write {}: {error}", path.display()))?;
+pub(crate) fn save_hosts(_app: &AppHandle, state: &AppState, hosts: &[Host]) -> Result<(), String> {
+    storage::save_document(
+        &state.paths,
+        &state.task_store,
+        "hosts",
+        "hosts.json",
+        hosts,
+    )?;
     *state.hosts.lock().expect("hosts mutex poisoned") = hosts.to_vec();
     Ok(())
 }

@@ -30,6 +30,9 @@
     "smoke": "node ./scripts/smoke-test.mjs",
     "smoke:mock": "node ./scripts/mock-smoke-test.mjs",
     "test:api": "node ./scripts/api-boundary-test.mjs",
+    "test:bindings": "cargo test --manifest-path src-tauri/Cargo.toml export_bindings -- --nocapture && node ./scripts/bindings-test.mjs",
+    "test:i18n": "node ./scripts/i18n-boundary-test.mjs",
+    "test:ui": "vitest run --config vitest.config.ts",
     "audit:public": "node ./scripts/audit-public-scope.mjs",
     "release:updater-feed": "node ./scripts/create-windows-updater-feed.mjs",
     "release:linux-updater-feed": "node ./scripts/create-linux-updater-feed.mjs",
@@ -38,21 +41,30 @@
     "release:portable:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-portable.ps1 -Channel dev",
     "validate:release": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-release.ps1",
     "validate:release:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-release.ps1 -Channel dev -SkipTauriBuild -SkipPortable -NoLive",
-    "test": "pnpm test:api && pnpm smoke && pnpm smoke:mock && pnpm typecheck"
+    "test": "pnpm test:api && pnpm test:bindings && pnpm test:i18n && pnpm test:ui && pnpm smoke && pnpm smoke:mock && pnpm typecheck"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-opener": "^2.0.0",
+    "@radix-ui/react-alert-dialog": "1.1.19",
+    "@radix-ui/react-dialog": "1.1.19",
+    "@radix-ui/react-toast": "1.2.19",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "axe-core": "4.12.1",
+    "jsdom": "29.1.1",
     "typescript": "^5.5.4",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vitest": "2.1.9"
   }
 }

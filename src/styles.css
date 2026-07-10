@@ -2214,6 +2214,12 @@ tr:last-child td {
   overflow-x: hidden;
 }
 
+.taskHistoryMore {
+  display: flex;
+  justify-content: center;
+  padding-top: 14px;
+}
+
 .tasksTable {
   min-width: 0;
   table-layout: fixed;
@@ -4458,6 +4464,251 @@ button:disabled {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+.feedbackToastViewport {
+  position: fixed;
+  top: 48px;
+  right: 18px;
+  z-index: 1200;
+  display: grid;
+  width: min(390px, calc(100vw - 32px));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  outline: none;
+}
+
+.feedbackToast,
+.persistentFeedback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  padding: 12px 14px;
+}
+
+.feedbackToast[data-tone="success"] { border-left-color: var(--success); }
+.feedbackToast[data-tone="warning"] { border-left-color: var(--warning); }
+.persistentFeedback[data-tone="error"] { border-left-color: var(--danger); }
+
+.feedbackToast[data-state="open"] {
+  animation: feedback-enter 160ms ease-out;
+}
+
+.feedbackToast[data-state="closed"] {
+  animation: feedback-exit 120ms ease-in;
+}
+
+.feedbackToast [data-radix-toast-announce-exclude],
+.persistentFeedbackActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.feedbackToast > div,
+.persistentFeedback > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.feedbackToast span,
+.persistentFeedback span {
+  overflow-wrap: anywhere;
+}
+
+.persistentFeedbackRegion {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 1190;
+  display: grid;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(55vh, 520px);
+  gap: 10px;
+  overflow: auto;
+}
+
+.sshHostMessage {
+  margin: 0 24px 4px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  padding: 9px 12px;
+  overflow-wrap: anywhere;
+}
+
+.sshHostMessage[data-tone="success"] { color: var(--success); }
+.sshHostMessage[data-tone="error"] { color: var(--danger); }
+
+.errorBoundary {
+  display: grid;
+  place-content: center;
+  min-height: 100vh;
+  gap: 12px;
+  background: var(--app-bg);
+  color: var(--text);
+  padding: 32px;
+  text-align: center;
+}
+
+.errorBoundary p {
+  max-width: 720px;
+  color: var(--text-secondary);
+}
+
+.taskDrawerTrigger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--text);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.taskDrawerTrigger strong {
+  min-width: 20px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.taskDrawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1250;
+  background: rgb(15 23 42 / 24%);
+}
+
+.taskDrawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 1260;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(440px, 92vw);
+  height: 100vh;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+}
+
+.taskDrawer[data-state="open"] { animation: task-drawer-enter 180ms ease-out; }
+.taskDrawer[data-state="closed"] { animation: task-drawer-exit 140ms ease-in; }
+
+.taskDrawerHeader,
+.taskDrawerFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+  padding: 18px;
+}
+
+.taskDrawerHeader h2 { margin: 0; }
+.taskDrawerHeader p { margin: 4px 0 0; color: var(--text-secondary); }
+.taskDrawerFooter { justify-content: flex-end; border-top: 1px solid var(--border); border-bottom: 0; }
+.taskDrawerList { display: grid; align-content: start; gap: 8px; overflow: auto; padding: 12px; }
+.taskDrawerEmpty { color: var(--text-secondary); padding: 16px; text-align: center; }
+
+.taskDrawerItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  padding: 11px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskDrawerItem[data-attention="true"] { border-left: 3px solid var(--danger); }
+.taskDrawerItem > span { display: grid; min-width: 0; gap: 3px; }
+.taskDrawerItem > span:last-child { justify-items: end; }
+.taskDrawerItem small { color: var(--text-secondary); overflow-wrap: anywhere; }
+.taskDrawerItem i { color: var(--accent); font-style: normal; font-size: 12px; }
+
+.storageHealthBanner {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 16px;
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+  padding: 14px;
+}
+
+.storageHealthList { display: grid; gap: 8px; }
+.storageHealthList article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.storageHealthList article[data-state="corrupt"] { color: var(--danger); }
+.storageHealthList article > div { display: grid; min-width: 0; gap: 3px; }
+.storageHealthList code,
+.storagePlanDetails code { color: var(--text-secondary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.storagePlanDetails { display: grid; gap: 10px; padding: 18px 24px; }
+.storagePlanDetails > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; }
+
+@media (max-width: 720px) {
+  .storageHealthList article { align-items: stretch; flex-direction: column; }
+  .storagePlanDetails > div { grid-template-columns: 1fr; }
+}
+
+@keyframes task-drawer-enter {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes task-drawer-exit {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(100%, 0, 0); }
+}
+
+@keyframes feedback-enter {
+  from { opacity: 0; transform: translate3d(18px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes feedback-exit {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
   }
 }
 

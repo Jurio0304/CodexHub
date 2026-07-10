@@ -3,7 +3,7 @@ import type { CSSProperties, FormEvent, MouseEventHandler, PointerEvent as React
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { loadInitialAppData } from "./app/bootstrap";
-import { api, apiMode, fallbackAppUpdateStatus, fallbackHealth } from "./api";
+import { api, apiMode, fallbackAppUpdateStatus, fallbackHealth, parseApiError } from "./api";
 import type {
   AppUpdateStatus,
   DeleteOperationResult,
@@ -48,6 +48,7 @@ import type {
   TaskRun,
   TaskStatus
 } from "./models";
+import type { ApiErrorCode, StorageHealth, StorageMigrationPlan, StorageRestorePlan } from "./generated/rust-contracts";
 import { getPlatform, isWindows } from "./platform";
 import type { RuntimePlatform } from "./platform";
 import {
@@ -60,6 +61,11 @@ import {
   resolvePlatformAppearance
 } from "./settings";
 import type { AppSettings, CloseButtonBehavior, FontPreset, NetworkProxyMode, PlatformAppearance, ThemeChoice } from "./settings";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
+import { AlertModalFrame } from "./ui/AlertModalFrame";
+import { useFeedback } from "./ui/feedback";
+import { TaskDrawer } from "./ui/TaskDrawer";
+import { ModalFrame } from "./ui/ModalFrame";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "monitor" | "tasks" | "settings";
 type NavIconId = SectionId;
@@ -225,7 +231,7 @@ const uiCopy = {
         body: "Adjust the shell theme, inspect local SSH key status, and copy public keys."
       }
     } satisfies Record<SectionId, { title: string; eyebrow: string; body: string }>,
-      common: {
+    common: {
       addServer: "Add Server",
       backendMode: "Backend mode",
       mockMode: "Mock mode — no desktop/SSH writes",
@@ -238,7 +244,27 @@ const uiCopy = {
       notRequired: "not required",
       loading: "loading",
       ready: "ready",
-      unassigned: "Unassigned"
+      unassigned: "Unassigned",
+      locale: "en-US",
+      keyValueSeparator: ": "
+    },
+    feedback: {
+      persistentRegion: "Persistent errors",
+      retry: "Retry",
+      details: "Details",
+      viewTask: "View task",
+      dismiss: "Dismiss",
+      notifications: "Notifications",
+      errorTitles: {
+        "backend-unavailable": "Desktop backend unavailable",
+        "invalid-arguments": "Check the requested values",
+        "storage-unavailable": "Persistent storage unavailable",
+        "storage-corrupt": "Local data needs recovery",
+        "migration-required": "Local data migration required",
+        "operation-failed": "Operation failed",
+        "partial-failure": "Operation completed partially",
+        unexpected: "Unexpected error"
+      }
     },
     windowControls: {
       close: "Close window",
@@ -295,6 +321,7 @@ const uiCopy = {
       gpuProcesses: "GPU processes",
       noGpuProcesses: "No GPU processes",
       processCount: "Processes",
+      processCountShort: (count: number) => `${count} proc`,
       processMemory: "Process memory",
       runtime: "Runtime",
       usage: "Usage",
@@ -353,6 +380,28 @@ const uiCopy = {
       webPreview: "web preview",
       formIntro: "Enter the remote password once. CodexHub logs in, installs your local public key, sets permissions, then tests ssh HostAlias. Passwords are never stored.",
       writing: "Connecting...",
+      closeWhileConnectingTitle: "Hide connection progress?",
+      closeWhileConnectingBody: "The SSH operation will continue in the background. You can review its durable task record later.",
+      closeWhileConnectingConfirm: "Hide",
+      keyCreated: "Created the local .ssh/id_ed25519 key.",
+      keyMissing: "No local id_ed25519 key was detected. Create one before connecting.",
+      connectingProgress: "Connecting. Waiting for all four steps to finish...",
+      connectionFailed: "Connection failed",
+      connectionSuccess: "Connection succeeded",
+      generateKey: "Create",
+      identityDetected: "id_ed25519 detected",
+      identityMissing: "id_ed25519 not detected",
+      progressTitle: "Connection progress",
+      progressSubtitle: "Live bootstrap log",
+      failureDetails: "Failure details",
+      noFailureDetails: "No detailed log was returned.",
+      waitingToStart: "Waiting to start",
+      bootstrapSteps: {
+        password_login: "1. Log in with password",
+        install_public_key: "2. Install local public key",
+        set_permissions: "3. Set remote permissions",
+        verify_alias_login: "4. Test SSH Host alias"
+      },
       savedHost: (alias: string) => `Saved Host ${alias}.`,
       editingHost: (alias: string) => `Editing managed Host ${alias}. Submit with the same alias to update it in place.`,
       deleteConfirm: (alias: string) => `Delete Host ${alias} from SSH config?`,
@@ -630,6 +679,12 @@ const uiCopy = {
     tasks: {
       runs: "Runs",
       taskHistory: "Task history",
+      drawerOpen: "Tasks",
+      drawerTitle: "Task activity",
+      drawerDescription: "Running work, unacknowledged failures, and the 20 most recent tasks.",
+      drawerClose: "Close task drawer",
+      drawerViewAll: "View all tasks",
+      drawerAttentionCount: (count: number) => `${count} task${count === 1 ? "" : "s"} need attention`,
       body: "Mock TaskRun rows demonstrate the local task model and future worker queue.",
       action: "Action",
       host: "Host",
@@ -638,6 +693,8 @@ const uiCopy = {
       summary: "Summary",
       details: "Details",
       logs: "Logs",
+      loadMore: "Load older tasks",
+      loadingMore: "Loading...",
       taskLog: "TaskLog",
       noTask: "No task",
       noLogs: "No logs yet.",
@@ -648,6 +705,7 @@ const uiCopy = {
       duration: "Duration",
       timedOut: "Timed out",
       noOutput: "(no output)",
+      minutesAgo: (minutes: number) => `${minutes}m ago`,
       actionLabels: {
         "Apply profile": "Apply profile",
         "Test SSH connection": "Test SSH connection",
@@ -668,6 +726,24 @@ const uiCopy = {
         "Check app update": "Check app update",
         "Install app update": "Install app update"
       }
+    },
+    storage: {
+      title: "Local data needs attention",
+      migrationRequired: "This store uses a readable legacy schema. Writes stay locked until you preview and confirm migration.",
+      corrupt: "This store is damaged. CodexHub will not silently use a backup; preview a validated recovery first.",
+      recoveryRequired: "A previous storage operation was interrupted. Review the durable task record before retrying or recovering.",
+      previewMigration: "Preview migration",
+      previewRestore: "Preview recovery",
+      planTitle: "Confirm local data operation",
+      path: "Data path",
+      fingerprint: "Source fingerprint",
+      backupLocation: "Backup location",
+      applyMigration: "Back up and migrate",
+      restoreBackup: "Back up current data and restore",
+      cancel: "Cancel",
+      working: "Working...",
+      migrationDone: "Local data migration completed.",
+      restoreDone: "Local data recovery completed."
     },
     settings: {
       appearance: "Appearance",
@@ -771,7 +847,8 @@ const uiCopy = {
         queued: "queued",
         running: "running",
         success: "success",
-        failed: "failed"
+        failed: "failed",
+        interrupted: "interrupted"
       },
       log: {
         info: "info",
@@ -827,7 +904,7 @@ const uiCopy = {
         body: "调整界面主题，查看本地 SSH 密钥状态，并复制公钥。"
       }
     } satisfies Record<SectionId, { title: string; eyebrow: string; body: string }>,
-      common: {
+    common: {
       addServer: "添加服务器",
       backendMode: "后端模式",
       mockMode: "模拟模式——不会执行桌面或 SSH 写入",
@@ -840,7 +917,27 @@ const uiCopy = {
       notRequired: "不需要",
       loading: "加载中",
       ready: "就绪",
-      unassigned: "未分配"
+      unassigned: "未分配",
+      locale: "zh-CN",
+      keyValueSeparator: "："
+    },
+    feedback: {
+      persistentRegion: "持久错误",
+      retry: "重试",
+      details: "详情",
+      viewTask: "查看任务",
+      dismiss: "关闭",
+      notifications: "通知",
+      errorTitles: {
+        "backend-unavailable": "桌面后端不可用",
+        "invalid-arguments": "请检查操作参数",
+        "storage-unavailable": "持久存储不可用",
+        "storage-corrupt": "本地数据需要恢复",
+        "migration-required": "本地数据需要迁移",
+        "operation-failed": "操作失败",
+        "partial-failure": "操作部分完成",
+        unexpected: "发生意外错误"
+      }
     },
     windowControls: {
       close: "关闭窗口",
@@ -897,6 +994,7 @@ const uiCopy = {
       gpuProcesses: "GPU 进程",
       noGpuProcesses: "无 GPU 进程",
       processCount: "进程数",
+      processCountShort: (count: number) => `${count} 进程`,
       processMemory: "进程显存",
       runtime: "运行时",
       usage: "占用量",
@@ -955,6 +1053,28 @@ const uiCopy = {
       webPreview: "网页预览",
       formIntro: "输入一次远端密码。CodexHub 会登录远端、安装本地公钥、设置权限，并用 ssh Host 别名测试；密码不会保存。",
       writing: "正在连接...",
+      closeWhileConnectingTitle: "隐藏连接进度？",
+      closeWhileConnectingBody: "SSH 操作会继续在后台运行，稍后可从持久任务记录查看结果。",
+      closeWhileConnectingConfirm: "隐藏",
+      keyCreated: "已新建本地 .ssh/id_ed25519。",
+      keyMissing: "未检测到本地 id_ed25519，请先新建密钥。",
+      connectingProgress: "正在连接，请等待四个步骤完成...",
+      connectionFailed: "连接失败",
+      connectionSuccess: "成功连接",
+      generateKey: "新建",
+      identityDetected: "已检测到 id_ed25519",
+      identityMissing: "未检测到 id_ed25519",
+      progressTitle: "连接进程",
+      progressSubtitle: "实时引导日志",
+      failureDetails: "详细失败日志",
+      noFailureDetails: "未返回详细日志",
+      waitingToStart: "等待开始",
+      bootstrapSteps: {
+        password_login: "1. 密码登录远端",
+        install_public_key: "2. 安装本地公钥",
+        set_permissions: "3. 设置远端权限",
+        verify_alias_login: "4. SSH Host 别名测试"
+      },
       savedHost: (alias: string) => `已保存 Host ${alias}。`,
       editingHost: (alias: string) => `正在编辑受管理的 Host ${alias}。用相同别名提交会原地更新。`,
       deleteConfirm: (alias: string) => `确定要从 SSH config 删除 Host ${alias} 吗？`,
@@ -1232,6 +1352,12 @@ const uiCopy = {
     tasks: {
       runs: "运行",
       taskHistory: "任务历史",
+      drawerOpen: "任务",
+      drawerTitle: "任务动态",
+      drawerDescription: "展示运行中任务、未确认失败和最近 20 条任务。",
+      drawerClose: "关闭任务抽屉",
+      drawerViewAll: "查看全部任务",
+      drawerAttentionCount: (count: number) => `${count} 个任务需要处理`,
       body: "TaskRun 行用于展示本地任务模型和工作队列。",
       action: "操作",
       host: "主机",
@@ -1240,6 +1366,8 @@ const uiCopy = {
       summary: "摘要",
       details: "详情",
       logs: "日志",
+      loadMore: "加载更早任务",
+      loadingMore: "加载中...",
       taskLog: "任务日志",
       noTask: "无任务",
       noLogs: "暂无日志。",
@@ -1250,6 +1378,7 @@ const uiCopy = {
       duration: "耗时",
       timedOut: "超时",
       noOutput: "（无输出）",
+      minutesAgo: (minutes: number) => `${minutes} 分钟前`,
       actionLabels: {
         "Apply profile": "应用配置",
         "Test SSH connection": "测试 SSH 连接",
@@ -1270,6 +1399,24 @@ const uiCopy = {
         "Check app update": "检查程序版本",
         "Install app update": "安装程序更新"
       }
+    },
+    storage: {
+      title: "本地数据需要处理",
+      migrationRequired: "该存储仍使用可读取的旧版 schema。完成预览和确认迁移前，相关写操作保持锁定。",
+      corrupt: "该存储已损坏。CodexHub 不会静默使用备份；请先预览通过校验的恢复方案。",
+      recoveryRequired: "上一次存储操作被中断。重试或恢复前，请先检查持久任务记录。",
+      previewMigration: "预览迁移",
+      previewRestore: "预览恢复",
+      planTitle: "确认本地数据操作",
+      path: "数据路径",
+      fingerprint: "源文件指纹",
+      backupLocation: "备份位置",
+      applyMigration: "备份并迁移",
+      restoreBackup: "先备份当前数据再恢复",
+      cancel: "取消",
+      working: "处理中...",
+      migrationDone: "本地数据迁移完成。",
+      restoreDone: "本地数据恢复完成。"
     },
     settings: {
       appearance: "外观",
@@ -1373,7 +1520,8 @@ const uiCopy = {
         queued: "排队中",
         running: "运行中",
         success: "成功",
-        failed: "失败"
+        failed: "失败",
+        interrupted: "已中断"
       },
       log: {
         info: "信息",
@@ -1490,7 +1638,7 @@ function AppTitleBar({
       .then((windowTitle) => {
         if (!cancelled && windowTitle.trim()) setTitle(windowTitle);
       })
-      .catch(() => undefined);
+      .catch(() => console.debug("Desktop window title is unavailable in this preview."));
     return () => {
       cancelled = true;
     };
@@ -1503,7 +1651,9 @@ function AppTitleBar({
       void runAction("maximize");
       return;
     }
-    void getCurrentWindow().startDragging().catch(() => undefined);
+    void getCurrentWindow().startDragging().catch(() => {
+      console.debug("Desktop window dragging is unavailable in this preview.");
+    });
   };
 
   const runAction = async (action: TitleBarAction) => {
@@ -1517,7 +1667,7 @@ function AppTitleBar({
       if (action === "minimize") await currentWindow.minimize();
       if (action === "maximize") await currentWindow.toggleMaximize();
     } catch {
-      // Web/mock previews do not expose desktop window controls.
+      console.debug("Desktop window controls are unavailable in this preview.");
     }
   };
 
@@ -1544,20 +1694,28 @@ function AppTitleBar({
   );
 }
 
-function ModalFrame({
-  children,
-  className = "",
-  titleId
-}: {
-  children: ReactNode;
-  className?: string;
-  titleId: string;
-}) {
-  return (
-    <section className={`modalFrame ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      {children}
-    </section>
-  );
+function sectionForTask(task: TaskRun): SectionId | null {
+  const action = task.action.toLowerCase();
+  if (action.includes("skill")) return "skills";
+  if (action.includes("profile") || action.includes("api config")) return "profiles";
+  if (action.includes("resource")) return "monitor";
+  if (action.includes("setting") || action.includes("storage") || action.includes("app update")) return "settings";
+  if (action.includes("frontend")) return "tasks";
+  return "hosts";
+}
+
+function useActionErrorReporter(copy: UICopy) {
+  const { notify } = useFeedback();
+  return useCallback((error: unknown) => {
+    const structured = parseApiError(error);
+    const code: ApiErrorCode = structured?.code ?? "operation-failed";
+    notify({
+      title: copy.feedback.errorTitles[code],
+      message: formatError(error),
+      taskId: structured?.taskId ?? undefined,
+      tone: "error"
+    });
+  }, [copy.feedback.errorTitles, notify]);
 }
 
 function ModalCloseButton({
@@ -1625,6 +1783,120 @@ function ModalActions({
   dataHasHosts?: boolean;
 }) {
   return <div className={`modalActions ${className}`.trim()} data-has-hosts={dataHasHosts ?? undefined}>{children}</div>;
+}
+
+type StorageActionPlan =
+  | { kind: "migration"; plan: StorageMigrationPlan }
+  | { kind: "restore"; plan: StorageRestorePlan };
+
+function StorageHealthCenter({
+  copy,
+  health,
+  onChanged
+}: {
+  copy: UICopy;
+  health: StorageHealth[];
+  onChanged: () => Promise<StorageHealth[]>;
+}) {
+  const { notify } = useFeedback();
+  const [plan, setPlan] = useState<StorageActionPlan | null>(null);
+  const [busyStore, setBusyStore] = useState<string | null>(null);
+  const attention = health.filter((item) => item.state === "migration-required" || item.state === "corrupt" || item.state === "recovery-required");
+  if (attention.length === 0 && !plan) return null;
+
+  const preview = async (item: StorageHealth) => {
+    setBusyStore(item.store);
+    try {
+      if (item.state === "corrupt") {
+        setPlan({ kind: "restore", plan: await api.previewStorageRestore(item.store) });
+      } else {
+        setPlan({ kind: "migration", plan: await api.previewStorageMigration(item.store) });
+      }
+    } catch (error) {
+      notify({ message: formatError(error), taskId: taskIdForError(error), tone: "error" });
+    } finally {
+      setBusyStore(null);
+    }
+  };
+
+  const apply = async () => {
+    if (!plan) return;
+    setBusyStore(plan.plan.store);
+    try {
+      if (plan.kind === "migration") {
+        await api.applyStorageMigration(plan.plan);
+        notify({ message: copy.storage.migrationDone, tone: "success" });
+      } else {
+        await api.restoreStorageBackup(plan.plan);
+        notify({ message: copy.storage.restoreDone, tone: "success" });
+      }
+      setPlan(null);
+      await onChanged();
+    } catch (error) {
+      notify({ message: formatError(error), taskId: taskIdForError(error), tone: "error" });
+    } finally {
+      setBusyStore(null);
+    }
+  };
+
+  const planPath = plan?.kind === "migration" ? plan.plan.path : plan?.plan.targetPath;
+  const planFingerprint = plan?.kind === "migration" ? plan.plan.sourceSha256 : plan?.plan.backupSha256;
+  const planBackup = plan?.kind === "migration" ? plan.plan.backupDirectory : plan?.plan.backupPath;
+
+  return (
+    <>
+      {attention.length > 0 ? (
+        <section className="storageHealthBanner" role={attention.some((item) => item.state === "corrupt" || item.state === "recovery-required") ? "alert" : "status"}>
+          <TitleWithIcon icon="warning" level={2}>{copy.storage.title}</TitleWithIcon>
+          <div className="storageHealthList">
+            {attention.map((item) => (
+              <article key={item.store} data-state={item.state}>
+                <div>
+                  <strong>{item.store}</strong>
+                  <span>{item.state === "corrupt"
+                    ? copy.storage.corrupt
+                    : item.state === "recovery-required" ? copy.storage.recoveryRequired : copy.storage.migrationRequired}</span>
+                  <code>{item.path}</code>
+                </div>
+                {item.state !== "recovery-required" ? (
+                  <button className="secondaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => void preview(item)}>
+                    {busyStore === item.store
+                      ? copy.storage.working
+                      : item.state === "corrupt" ? copy.storage.previewRestore : copy.storage.previewMigration}
+                  </button>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {plan ? (
+        <div className="modalBackdrop" role="presentation">
+          <ModalFrame className="taskLogModal storagePlanModal" titleId="storage-plan-title">
+            <ModalHeader
+              title={copy.storage.planTitle}
+              titleId="storage-plan-title"
+              icon="warning"
+              closeAriaLabel={copy.storage.cancel}
+              closeDisabled={Boolean(busyStore)}
+              onClose={() => setPlan(null)}
+            />
+            <div className="storagePlanDetails">
+              <div><span>{copy.storage.path}</span><code>{planPath}</code></div>
+              <div><span>{copy.storage.fingerprint}</span><code>{planFingerprint}</code></div>
+              <div><span>{copy.storage.backupLocation}</span><code>{planBackup}</code></div>
+            </div>
+            <ModalActions>
+              <button className="secondaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => setPlan(null)}>{copy.storage.cancel}</button>
+              <button className="primaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => void apply()}>
+                {busyStore ? copy.storage.working : plan.kind === "migration" ? copy.storage.applyMigration : copy.storage.restoreBackup}
+              </button>
+            </ModalActions>
+          </ModalFrame>
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 function PlatformIcon({ id }: { id: PlatformIconId }) {
@@ -1810,6 +2082,7 @@ function WindowsIcon({ id }: { id: PlatformIconId }) {
 }
 
 function App() {
+  const { notify, configure: configureFeedback } = useFeedback();
   const [activeSection, setActiveSection] = useState<SectionId>("dashboard");
   const [settings, setSettings] = useState<AppSettings>(() =>
     apiMode === "mock" ? loadMockSettings() : loadDesktopSettingsCache()
@@ -1829,6 +2102,11 @@ function App() {
     hostInventories: []
   });
   const [tasks, setTasks] = useState<TaskRun[]>([]);
+  const [taskNextCursor, setTaskNextCursor] = useState<string | null>(null);
+  const [taskLoadingMore, setTaskLoadingMore] = useState(false);
+  const [unacknowledgedTaskIds, setUnacknowledgedTaskIds] = useState<Set<string>>(() => new Set());
+  const [requestedTaskId, setRequestedTaskId] = useState<string | null>(null);
+  const [storageHealth, setStorageHealth] = useState<StorageHealth[]>([]);
   const [sshStatus, setSshStatus] = useState<SshStatus | null>(null);
   const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
   const [latestCodexVersion, setLatestCodexVersion] = useState<LatestCodexVersion | null>(null);
@@ -1855,7 +2133,12 @@ function App() {
   const [closeButtonPromptBusy, setCloseButtonPromptBusy] = useState(false);
   const [networkProxyManualOpen, setNetworkProxyManualOpen] = useState(false);
   const [sectionCompletionSignals, setSectionCompletionSignals] = useState<SectionCompletionSignals>({});
-  const [notice, setNotice] = useState<string>(uiCopy.en.notices.default);
+  const setNotice = useCallback((message: string) => {
+    notify({ message, tone: "info" });
+  }, [notify]);
+  const setErrorNotice = useCallback((message: string, taskId?: string) => {
+    notify({ message, taskId, tone: "error" });
+  }, [notify]);
   const sidebarCompletionIndicatorsRef = useRef(settings.sidebarCompletionIndicators);
   const appUpdateStatusRef = useRef(fallbackAppUpdateStatus);
   const appUpdateBusyRef = useRef(false);
@@ -1875,6 +2158,15 @@ function App() {
   const canInstallSidebarStableUpdate =
     previewSidebarStableUpdateButton ||
     (appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy);
+  const taskFailureSections = useMemo(() => {
+    const sections = new Set<SectionId>();
+    for (const task of tasks) {
+      if (!unacknowledgedTaskIds.has(task.id)) continue;
+      const section = sectionForTask(task);
+      if (section) sections.add(section);
+    }
+    return sections;
+  }, [tasks, unacknowledgedTaskIds]);
 
   useEffect(() => {
     sidebarCompletionIndicatorsRef.current = settings.sidebarCompletionIndicators;
@@ -1922,10 +2214,6 @@ function App() {
       throw error;
     }
   }, [markSectionCompletionSignal]);
-
-  const handleContentInteraction = useCallback(() => {
-    clearSectionCompletionSignal(activeSection);
-  }, [activeSection, clearSectionCompletionSignal]);
 
   const refreshSshState = async () => {
     const [nextSshStatus, allSshConfigHosts, nextHosts] = await Promise.all([
@@ -1981,13 +2269,13 @@ function App() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setResourceError(message);
-      if (manual) setNotice(copy.monitor.refreshFailed);
+      if (manual) setErrorNotice(`${copy.monitor.refreshFailed} ${message}`, taskIdForError(error));
       return null;
     } finally {
       resourceBusyRef.current = false;
       setResourceBusy(false);
     }
-  }, [copy.monitor, hosts]);
+  }, [copy.monitor, hosts, setErrorNotice]);
 
   useEffect(() => {
     if (loading || activeSection !== "monitor" || !settings.resourceMonitorAutoRefresh) return;
@@ -2038,10 +2326,85 @@ function App() {
   };
 
   const refreshTasks = useCallback(async () => {
-    const nextTasks = normalizeTaskRunsForUi(await api.listTasks());
-    setTasks(nextTasks);
+    const page = await api.queryTasks({ limit: 200, cursor: null });
+    const nextTasks = normalizeTaskRunsForUi(page.items);
+    setTasks((current) => {
+      const refreshedIds = new Set(nextTasks.map((task) => task.id));
+      return [...nextTasks, ...current.filter((task) => !refreshedIds.has(task.id))];
+    });
+    setTaskNextCursor(page.nextCursor);
+    setUnacknowledgedTaskIds(new Set(page.unacknowledgedTaskIds));
     return nextTasks;
   }, []);
+
+  const loadMoreTasks = useCallback(async () => {
+    if (!taskNextCursor || taskLoadingMore) return;
+    setTaskLoadingMore(true);
+    try {
+      const page = await api.queryTasks({ limit: 200, cursor: taskNextCursor });
+      const olderTasks = normalizeTaskRunsForUi(page.items);
+      setTasks((current) => {
+        const currentIds = new Set(current.map((task) => task.id));
+        return [...current, ...olderTasks.filter((task) => !currentIds.has(task.id))];
+      });
+      setTaskNextCursor(page.nextCursor);
+      setUnacknowledgedTaskIds(new Set(page.unacknowledgedTaskIds));
+    } catch (error) {
+      setErrorNotice(formatError(error), taskIdForError(error));
+    } finally {
+      setTaskLoadingMore(false);
+    }
+  }, [setErrorNotice, taskLoadingMore, taskNextCursor]);
+
+  const openTaskDetail = useCallback((taskId: string) => {
+    setActiveSection("tasks");
+    setRequestedTaskId(taskId);
+    if (!unacknowledgedTaskIds.has(taskId)) return;
+    setUnacknowledgedTaskIds((current) => {
+      const next = new Set(current);
+      next.delete(taskId);
+      return next;
+    });
+    void api.acknowledgeTask(taskId).then(() => refreshTasks()).catch((error) => {
+      setUnacknowledgedTaskIds((current) => new Set(current).add(taskId));
+      setErrorNotice(formatError(error), taskId);
+    });
+  }, [refreshTasks, setErrorNotice, unacknowledgedTaskIds]);
+
+  useEffect(() => {
+    configureFeedback({
+      labels: copy.feedback,
+      onOpenTask: openTaskDetail
+    });
+  }, [configureFeedback, copy.feedback, openTaskDetail]);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    void api.onTaskUpdated(() => {
+      if (!active) return;
+      void refreshTasks().catch((error) => setErrorNotice(formatError(error), taskIdForError(error)));
+    }).then((dispose) => {
+      if (active) unlisten = dispose;
+      else dispose();
+    }).catch((error) => {
+      if (active) setErrorNotice(formatError(error), taskIdForError(error));
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [refreshTasks, setErrorNotice]);
+
+  const refreshStorageHealth = useCallback(async () => {
+    const health = await api.getStorageHealth();
+    setStorageHealth(health);
+    return health;
+  }, []);
+
+  useEffect(() => {
+    void refreshStorageHealth().catch((error) => setErrorNotice(formatError(error), taskIdForError(error)));
+  }, [refreshStorageHealth, setErrorNotice]);
 
   const runStableUpdateCheck = useCallback(async (mode: "manual" | "daily" = "manual") => {
     const currentStatus = appUpdateStatusRef.current;
@@ -2061,29 +2424,32 @@ function App() {
       if (showFeedback) setNotice(nextStatus.message);
       const nextTasks = await refreshTasks();
       if (nextStatus.state === "error") {
-        const recordedTask = latestAppUpdateTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus);
+        const recordedTask = latestAppUpdateTask(nextTasks);
         if (showFeedback) {
+          setErrorNotice(nextStatus.message, recordedTask?.id);
           setAppUpdateFailureTask(recordedTask);
-        }
-        if (!nextTasks.some((task) => task.id === recordedTask.id)) {
-          setTasks((current) => [recordedTask, ...current]);
         }
       }
       return nextStatus;
     } catch (error) {
       const message = formatError(error);
-      const task = createLocalAppUpdateTask(message, currentStatus);
+      let nextTasks: TaskRun[] = [];
+      try {
+        nextTasks = await refreshTasks();
+      } catch (taskError) {
+        setErrorNotice(formatError(taskError), taskIdForError(taskError));
+      }
+      const task = latestAppUpdateTask(nextTasks);
       const errorStatus = {
         ...currentStatus,
         state: "error" as const,
         message
       };
       if (showFeedback) {
-        setNotice(message);
+        setErrorNotice(message, task?.id);
         setAppUpdateFailureTask(task);
       }
       setAppUpdateStatus(errorStatus);
-      setTasks((current) => [task, ...current]);
       return errorStatus;
     } finally {
       setAppUpdateChecking(false);
@@ -2108,25 +2474,28 @@ function App() {
         setNotice(nextStatus.message);
         const nextTasks = await refreshTasks();
         if (nextStatus.state === "error") {
-          const recordedTask = latestAppInstallTask(nextTasks) ?? createLocalAppUpdateTask(nextStatus.message, nextStatus, "Install app update");
+          const recordedTask = latestAppInstallTask(nextTasks);
+          setErrorNotice(nextStatus.message, recordedTask?.id);
           setAppUpdateFailureTask(recordedTask);
-          if (!nextTasks.some((task) => task.id === recordedTask.id)) {
-            setTasks((current) => [recordedTask, ...current]);
-          }
         }
         return nextStatus;
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Stable update install failed.";
-        const task = createLocalAppUpdateTask(message, appUpdateStatusRef.current, "Install app update");
+        const message = formatError(error);
+        let nextTasks: TaskRun[] = [];
+        try {
+          nextTasks = await refreshTasks();
+        } catch (taskError) {
+          setErrorNotice(formatError(taskError), taskIdForError(taskError));
+        }
+        const task = latestAppInstallTask(nextTasks);
         const errorStatus = {
           ...appUpdateStatusRef.current,
           state: "error" as const,
           message
         };
         setAppUpdateStatus(errorStatus);
-        setNotice(message);
+        setErrorNotice(message, task?.id);
         setAppUpdateFailureTask(task);
-        setTasks((current) => [task, ...current]);
         return errorStatus;
       } finally {
         setAppUpdateInstalling(false);
@@ -2146,7 +2515,7 @@ function App() {
     let mounted = true;
 
     loadInitialAppData()
-      .then(({ settings: nextSettings, health: nextHealth, appUpdateStatus: nextAppUpdateStatus, hosts: nextHosts, profiles: nextProfiles, skillPacks: nextSkillPacks, skillInventoryStatus: nextSkillInventoryStatus, tasks: nextTasks }) => {
+      .then(({ settings: nextSettings, health: nextHealth, appUpdateStatus: nextAppUpdateStatus, hosts: nextHosts, profiles: nextProfiles, skillPacks: nextSkillPacks, skillInventoryStatus: nextSkillInventoryStatus, tasks: nextTasks, taskNextCursor: nextTaskCursor, unacknowledgedTaskIds: nextUnacknowledgedTaskIds }) => {
         if (!mounted) return;
         setSettings(nextSettings);
         setHealth(nextHealth);
@@ -2156,6 +2525,8 @@ function App() {
         setSkillPacks(nextSkillPacks);
         setSkillInventoryStatus(nextSkillInventoryStatus);
         setTasks(normalizeTaskRunsForUi(nextTasks));
+        setTaskNextCursor(nextTaskCursor);
+        setUnacknowledgedTaskIds(new Set(nextUnacknowledgedTaskIds));
         setSetupGuideStep("preferences");
         setSetupGuideOpen(!nextSettings.setupGuideDismissed);
         if (nextSettings.setupGuideDismissed || nextHosts.length > 0) {
@@ -2248,10 +2619,6 @@ function App() {
       unlisten?.();
     };
   }, []);
-
-  useEffect(() => {
-    setNotice(copy.notices.default);
-  }, [copy.notices.default]);
 
   const selectedCopy = copy.sections[activeSection];
   const onlineCount = hosts.filter((host) => host.status === "online").length;
@@ -2347,7 +2714,7 @@ function App() {
         setNotice(result.message);
         return result;
       } catch (error) {
-        setNotice(formatError(error));
+        setErrorNotice(formatError(error), taskIdForError(error));
         throw error;
       } finally {
         setSshBusy(false);
@@ -2361,7 +2728,7 @@ function App() {
       setNotice(copy.notices.publicKeyCopied);
       return true;
     } catch {
-      setNotice(copy.notices.copyFailed);
+      notify({ message: copy.notices.copyFailed, tone: "warning" });
       return false;
     }
   };
@@ -2451,43 +2818,6 @@ function App() {
       ]);
       setNotice(copy.hosts.testedAll);
       return { ok: results.every((result) => result.ok) };
-    });
-  };
-
-  const handleBootstrapExistingHost = async (idOrAlias: string, password: string) => {
-    const section = activeSection;
-    return runSectionOperation(section, async () => {
-      const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
-      const hostAlias = target?.hostAlias ?? idOrAlias;
-      setHostBusy((current) => ({ ...current, [hostAlias]: "bootstrap" }));
-      setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
-
-      try {
-        const result = await api.bootstrapExistingSshHost(hostAlias, password);
-        await refreshSshState();
-        setHosts((current) =>
-          current.map((host) =>
-            host.hostAlias === result.hostAlias
-              ? {
-                  ...host,
-                  status: result.ok ? "online" : "offline",
-                  latencyMs: result.latencyMs,
-                  lastSeen: result.ok ? copy.common.justNow : host.lastSeen
-                }
-              : host
-          )
-        );
-        setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-        setNotice(`${target?.name ?? hostAlias}: ${result.message}`);
-        if (!result.ok) throw new Error(result.message);
-        return result;
-      } finally {
-        setHostBusy((current) => {
-          const next = { ...current };
-          delete next[hostAlias];
-          return next;
-        });
-      }
     });
   };
 
@@ -3002,7 +3332,7 @@ function App() {
     } catch (error) {
       const detail = formatError(error);
       setSettingsSaveError(detail);
-      setNotice(`${copy.settings.settingsSaveFailed} ${detail}`);
+      setErrorNotice(`${copy.settings.settingsSaveFailed} ${detail}`, taskIdForError(error));
       return false;
     } finally {
       settingsSaveBusyRef.current = false;
@@ -3022,7 +3352,7 @@ function App() {
       applyAppSettings(nextSettings);
     } catch (error) {
       setCloseButtonPromptOpen(true);
-      setNotice(formatError(error));
+      setErrorNotice(formatError(error), taskIdForError(error));
     } finally {
       setCloseButtonPromptBusy(false);
     }
@@ -3042,7 +3372,7 @@ function App() {
       }
       await currentWindow.close();
     } catch {
-      // Browser previews cannot control a desktop window.
+      console.debug("Desktop close behavior is unavailable in this preview.");
     }
   }, [settings.closeButtonBehavior]);
 
@@ -3059,7 +3389,7 @@ function App() {
     setSetupGuideBusy(true);
     try {
       await ensureSetupGuideEd25519Key().catch((error) => {
-        setNotice(formatError(error));
+        setErrorNotice(formatError(error), taskIdForError(error));
       });
       if (await persistSettings({ ...settings, setupGuideDismissed: true })) {
         setSetupGuideOpen(false);
@@ -3233,7 +3563,18 @@ function App() {
           />
         );
       case "tasks":
-        return <TasksView copy={copy} tasks={tasks} />;
+        return (
+          <TasksView
+            copy={copy}
+            hasMore={Boolean(taskNextCursor)}
+            loadingMore={taskLoadingMore}
+            requestedTaskId={requestedTaskId}
+            tasks={tasks}
+            onLoadMore={loadMoreTasks}
+            onRequestHandled={() => setRequestedTaskId(null)}
+            onTaskViewed={openTaskDetail}
+          />
+        );
       case "settings":
         return (
           <SettingsView
@@ -3244,7 +3585,6 @@ function App() {
             settings={settings}
             settingsSaveError={settingsSaveError}
             settingsSaving={settingsSaving}
-            sshBusy={sshBusy}
             sshStatus={sshStatus}
             onCheckStableUpdate={handleCheckStableUpdate}
             onInstallStableUpdate={handleInstallStableUpdate}
@@ -3295,9 +3635,12 @@ function App() {
 
         <nav className="navList">
           {copy.navItems.map((item) => {
-            const completionTone = sectionCompletionSignals[item.id];
+            const completionTone = taskFailureSections.has(item.id)
+              ? "error"
+              : sectionCompletionSignals[item.id];
             return (
               <button
+                aria-label={completionTone ? `${item.label}: ${copy.status.task[completionTone === "error" ? "failed" : "success"]}` : item.label}
                 className="navItem"
                 data-active={activeSection === item.id}
                 key={item.id}
@@ -3316,6 +3659,23 @@ function App() {
         </nav>
 
         <div className="sidebarFooter">
+          <TaskDrawer
+            copy={{
+              open: copy.tasks.drawerOpen,
+              title: copy.tasks.drawerTitle,
+              description: copy.tasks.drawerDescription,
+              close: copy.tasks.drawerClose,
+              viewAll: copy.tasks.drawerViewAll,
+              empty: copy.emptyLists.tasks,
+              details: copy.tasks.details,
+              attentionCount: copy.tasks.drawerAttentionCount
+            }}
+            statusLabel={(task) => copy.status.task[task.status]}
+            tasks={tasks}
+            unacknowledgedTaskIds={unacknowledgedTaskIds}
+            onOpenTask={openTaskDetail}
+            onViewAll={() => setActiveSection("tasks")}
+          />
           <span className="statusDot" data-status={health.mode === "tauri" ? "online" : "unknown"} />
           <div>
             <strong>{apiMode === "mock" ? copy.common.mockMode : copy.common.backendMode}</strong>
@@ -3333,14 +3693,8 @@ function App() {
         </div>
       </aside>
 
-      <main
-        className="contentShell"
-        onInputCapture={handleContentInteraction}
-        onKeyDownCapture={handleContentInteraction}
-        onPointerDownCapture={handleContentInteraction}
-        onScrollCapture={handleContentInteraction}
-        onWheelCapture={handleContentInteraction}
-      >
+      <main className="contentShell">
+        <StorageHealthCenter copy={copy} health={storageHealth} onChanged={refreshStorageHealth} />
         {activeSection !== "monitor" ? (
           <header className="topBar">
             <div>
@@ -3722,8 +4076,7 @@ function CodexUninstallConfirmModal({
   onConfirm: () => void;
 }) {
   return (
-    <div className="modalBackdrop" role="presentation">
-      <ModalFrame className="taskLogModal simpleDeleteModal" titleId="codex-uninstall-confirm-title">
+      <AlertModalFrame className="taskLogModal simpleDeleteModal" titleId="codex-uninstall-confirm-title" onCancel={onCancel}>
         <ModalHeader
           className="taskLogModalHeader"
           titleId="codex-uninstall-confirm-title"
@@ -3732,15 +4085,14 @@ function CodexUninstallConfirmModal({
           icon="delete"
         />
         <ModalActions>
-          <button className="secondaryButton" type="button" onClick={onCancel}>
+          <button className="secondaryButton" data-alert-cancel type="button" onClick={onCancel}>
             {copy.hosts.cancel}
           </button>
           <button className="primaryButton dangerButton" type="button" onClick={onConfirm}>
             {copy.hosts.confirmUninstallCodex}
           </button>
         </ModalActions>
-      </ModalFrame>
-    </div>
+      </AlertModalFrame>
   );
 }
 
@@ -4173,6 +4525,7 @@ function MonitorView({
         <div className="panelHeader monitorHeader monitorHeroHeader">
           <div>
             <TitleWithIcon icon="monitor" level={1}>{copy.sections.monitor.title}</TitleWithIcon>
+            <small className="monitorCheckedAt">{`${copy.monitor.lastUpdated}: ${formatMonitorTimestamp(checkedAt, copy)}`}</small>
           </div>
           <CommandBar ariaLabel={copy.sections.monitor.title} className="topActions monitorActions">
             <button className="primaryButton monitorRefreshButton" disabled={busy || hosts.length === 0} type="button" onClick={() => void onRefresh()}>
@@ -4691,6 +5044,7 @@ function HostsView({
   onTestHost: (id: string) => void;
   onUpdateOutdatedCodexHosts: (aliases: string[]) => Promise<unknown>;
 }) {
+  const reportActionError = useActionErrorReporter(copy);
   const identityFile = sshStatus?.ed25519.privateExists ? sshStatus.ed25519.privatePath : "";
   const hostByAlias = useMemo(
     () => new Map(hosts.map((host) => [host.hostAlias.toLowerCase(), host])),
@@ -4776,7 +5130,7 @@ function HostsView({
             <TitleWithIcon icon="hosts" level={2}>{copy.hosts.detectedSshHosts}</TitleWithIcon>
           </div>
           <CommandBar ariaLabel={copy.hosts.detectedSshHosts} className="topActions">
-            <button className="secondaryButton" disabled={detectHostsBusy || anyHostBusy} type="button" onClick={() => void handleDetectLocalHosts().catch(() => undefined)}>
+            <button className="secondaryButton" disabled={detectHostsBusy || anyHostBusy} type="button" onClick={() => void handleDetectLocalHosts().catch(reportActionError)}>
               {detectHostsBusy ? copy.setupGuide.detecting : copy.hosts.detect}
             </button>
             <button className="secondaryButton" disabled={sshConfigHosts.length === 0 || anyHostBusy} type="button" onClick={() => void onTestAllSshHosts()}>
@@ -4870,7 +5224,7 @@ function HostsView({
           copy={copy}
           title={`${copy.hosts.delete}: ${deleteHostAlias}`}
           onClose={() => setDeleteHostAlias(null)}
-          onDelete={() => void handleDelete().catch(() => undefined)}
+          onDelete={() => void handleDelete().catch(reportActionError)}
         />
       ) : null}
     </div>
@@ -4902,9 +5256,11 @@ function SshHostModal({
   const [password, setPassword] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [message, setMessage] = useState<string>(copy.hosts.formIntro);
+  const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"info" | "success" | "error">("info");
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
-  const [steps, setSteps] = useState(createInitialBootstrapSteps());
+  const [steps, setSteps] = useState(() => createInitialBootstrapSteps(copy));
   const hasIdentityFile = Boolean(defaultIdentityFile);
   const canGenerateKey = Boolean(sshStatus?.sshKeygenAvailable && !sshStatus.ed25519.privateExists && !sshStatus.ed25519.publicExists);
   const canConnect = Boolean(draft.alias.trim() && draft.hostName.trim() && draft.port > 0 && draft.user.trim() && password && hasIdentityFile && !connecting);
@@ -4916,10 +5272,12 @@ function SshHostModal({
     setPassword("");
     setPasswordVisible(false);
     setConnecting(false);
-    setMessage(copy.hosts.formIntro);
+    setMessage("");
+    setMessageTone("info");
+    setConfirmCloseOpen(false);
     setShowProgress(false);
-    setSteps(createInitialBootstrapSteps());
-  }, [copy.hosts.formIntro, defaultIdentityFile, initialDraft, open]);
+    setSteps(createInitialBootstrapSteps(copy));
+  }, [copy, defaultIdentityFile, initialDraft, open]);
 
   useEffect(() => {
     setDraft((current) => ({ ...current, identityFile: current.identityFile || defaultIdentityFile }));
@@ -4932,45 +5290,55 @@ function SshHostModal({
   };
 
   const closeModal = () => {
-    if (connecting && !window.confirm("连接仍在进行，确定要关闭窗口吗？")) return;
+    if (connecting) {
+      setConfirmCloseOpen(true);
+      return;
+    }
     onClose();
   };
 
   const handleGenerateKey = async () => {
     try {
       await onGenerateEd25519Key();
-      setMessage("已新建本地 .ssh\\id_ed25519。");
+      setMessage(copy.hosts.keyCreated);
+      setMessageTone("success");
     } catch (error) {
       setMessage(formatError(error));
+      setMessageTone("error");
     }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!hasIdentityFile) {
-      setMessage("未检测到本地 id_ed25519，请先点击新建。");
+      setMessage(copy.hosts.keyMissing);
+      setMessageTone("error");
       return;
     }
     const requestId = `bootstrap-${Date.now()}-${draft.alias || draft.hostName}`;
     setConnecting(true);
     setShowProgress(true);
-    setSteps(createInitialBootstrapSteps());
-    setMessage("正在连接，请等待四个步骤完成...");
+    setSteps(createInitialBootstrapSteps(copy));
+    setMessage(copy.hosts.connectingProgress);
+    setMessageTone("info");
     try {
       const result = await onConnect({ ...draft, identityFile: defaultIdentityFile }, password, requestId, (progress) => {
         setSteps((current) => updateBootstrapStep(current, progress));
       });
       if (!result.ok) {
-        const detail = result.message || "连接失败";
+        const detail = result.message || copy.hosts.connectionFailed;
         setMessage(detail);
-        setSteps((current) => markBootstrapFailureIfNeeded(current, detail));
+        setMessageTone("error");
+        setSteps((current) => markBootstrapFailureIfNeeded(current, detail, copy));
         return;
       }
-      setMessage("成功连接");
+      setMessage(copy.hosts.connectionSuccess);
+      setMessageTone("success");
     } catch (error) {
       const detail = formatError(error);
       setMessage(detail);
-      setSteps((current) => markBootstrapFailureIfNeeded(current, detail));
+      setMessageTone("error");
+      setSteps((current) => markBootstrapFailureIfNeeded(current, detail, copy));
     } finally {
       setConnecting(false);
     }
@@ -4988,6 +5356,8 @@ function SshHostModal({
           closeAriaLabel={copy.setupGuide.close}
           onClose={closeModal}
         />
+
+        {message ? <p className="sshHostMessage" data-tone={messageTone} role={messageTone === "error" ? "alert" : "status"}>{message}</p> : null}
 
         <form className="modalForm" onSubmit={handleSubmit}>
           <label className="fieldGroup">
@@ -5032,21 +5402,32 @@ function SshHostModal({
           </label>
           <div className="fieldGroup identityRow" data-has-action={!hasIdentityFile}>
             <span>IDFile</span>
-            <input readOnly value={hasIdentityFile ? "id_ed25519 detected" : "id_ed25519 not detected"} />
+            <input readOnly value={hasIdentityFile ? copy.hosts.identityDetected : copy.hosts.identityMissing} />
             {!hasIdentityFile ? (
               <button className="secondaryButton" disabled={!canGenerateKey || sshBusy || connecting} type="button" onClick={() => void handleGenerateKey()}>
-                {sshBusy ? copy.settings.generating : "新建"}
+                {sshBusy ? copy.settings.generating : copy.hosts.generateKey}
               </button>
             ) : null}
           </div>
 
           <ModalActions>
-            <button className="primaryButton" disabled={!canConnect} type="submit">{connecting ? "连接中..." : "连接"}</button>
+            <button className="primaryButton" disabled={!canConnect} type="submit">{connecting ? copy.hosts.writing : copy.hosts.writeSshConfig}</button>
           </ModalActions>
         </form>
 
-        {showProgress ? <BootstrapProgressLog steps={steps} /> : null}
+        {showProgress ? <BootstrapProgressLog copy={copy} steps={steps} /> : null}
       </ModalFrame>
+      <ConfirmDialog
+        copy={{
+          title: copy.hosts.closeWhileConnectingTitle,
+          body: copy.hosts.closeWhileConnectingBody,
+          cancel: copy.hosts.cancel,
+          confirm: copy.hosts.closeWhileConnectingConfirm
+        }}
+        open={confirmCloseOpen}
+        onCancel={() => setConfirmCloseOpen(false)}
+        onConfirm={onClose}
+      />
     </div>
   );
 }
@@ -5061,12 +5442,12 @@ type BootstrapStepState = {
   stderr: string;
 };
 
-function createInitialBootstrapSteps(): BootstrapStepState[] {
+function createInitialBootstrapSteps(copy: UICopy): BootstrapStepState[] {
   return [
-    { step: "password_login", label: "1. 密码登录远端", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" },
-    { step: "install_public_key", label: "2. 安装本地公钥", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" },
-    { step: "set_permissions", label: "3. 设置远端权限", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" },
-    { step: "verify_alias_login", label: "4. ssh Host 别名测试", status: "pending", message: "等待开始", detail: "", stdout: "", stderr: "" }
+    { step: "password_login", label: copy.hosts.bootstrapSteps.password_login, status: "pending", message: copy.hosts.waitingToStart, detail: "", stdout: "", stderr: "" },
+    { step: "install_public_key", label: copy.hosts.bootstrapSteps.install_public_key, status: "pending", message: copy.hosts.waitingToStart, detail: "", stdout: "", stderr: "" },
+    { step: "set_permissions", label: copy.hosts.bootstrapSteps.set_permissions, status: "pending", message: copy.hosts.waitingToStart, detail: "", stdout: "", stderr: "" },
+    { step: "verify_alias_login", label: copy.hosts.bootstrapSteps.verify_alias_login, status: "pending", message: copy.hosts.waitingToStart, detail: "", stdout: "", stderr: "" }
   ];
 }
 
@@ -5085,18 +5466,18 @@ function updateBootstrapStep(steps: BootstrapStepState[], progress: SshBootstrap
   );
 }
 
-function markBootstrapFailureIfNeeded(steps: BootstrapStepState[], detail: string): BootstrapStepState[] {
+function markBootstrapFailureIfNeeded(steps: BootstrapStepState[], detail: string, copy: UICopy): BootstrapStepState[] {
   if (steps.some((step) => step.status === "failed")) return steps;
   const firstRunning = steps.find((step) => step.status === "running")?.step ?? "password_login";
-  return steps.map((step) => (step.step === firstRunning ? { ...step, status: "failed", message: "连接失败", detail } : step));
+  return steps.map((step) => (step.step === firstRunning ? { ...step, status: "failed", message: copy.hosts.connectionFailed, detail } : step));
 }
 
-function BootstrapProgressLog({ steps }: { steps: BootstrapStepState[] }) {
+function BootstrapProgressLog({ copy, steps }: { copy: UICopy; steps: BootstrapStepState[] }) {
   return (
     <section className="bootstrapLogCard">
       <div className="bootstrapLogHeader">
-        <strong>连接进程</strong>
-        <span>实时引导日志</span>
+        <strong>{copy.hosts.progressTitle}</strong>
+        <span>{copy.hosts.progressSubtitle}</span>
       </div>
       <div className="bootstrapStepList">
         {steps.map((step) => (
@@ -5110,8 +5491,8 @@ function BootstrapProgressLog({ steps }: { steps: BootstrapStepState[] }) {
             </div>
             {step.status === "failed" ? (
               <div className="bootstrapFailureDetail">
-                <strong>详细失败日志</strong>
-                <pre>{step.stderr || step.detail || step.stdout || "未返回详细日志"}</pre>
+                <strong>{copy.hosts.failureDetails}</strong>
+                <pre>{step.stderr || step.detail || step.stdout || copy.hosts.noFailureDetails}</pre>
               </div>
             ) : null}
           </article>
@@ -5247,6 +5628,7 @@ function ProfilesView({
   onSetProfileApiKey: (profileId: string, apiKey: string) => Promise<Profile>;
   onUpdateProfile: (id: string, patch: ProfilePatch) => Promise<Profile>;
 }) {
+  const reportActionError = useActionErrorReporter(copy);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(profiles[0]?.id ?? null);
   const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) ?? profiles[0] ?? null;
@@ -5668,7 +6050,7 @@ function ProfilesView({
           copy={copy}
           title={`${copy.profiles.delete}: ${deleteProfile.name}`}
           onClose={() => setDeleteProfileId(null)}
-          onDelete={() => void handleDelete(deleteProfile).catch(() => undefined)}
+          onDelete={() => void handleDelete(deleteProfile).catch(reportActionError)}
         />
       ) : null}
     </div>
@@ -5695,7 +6077,6 @@ function ProfileHostSelectModal({
   onClose: () => void;
 }) {
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
   const applyingHostIdSet = useMemo(() => new Set(applyingHostIds), [applyingHostIds]);
   const eligibleHosts = useMemo(
     () => profile ? hosts.filter((host) => !profileMatchesConfirmedHostApiConfig(profile, host) && !applyingHostIdSet.has(host.id)) : [],
@@ -5711,7 +6092,6 @@ function ProfileHostSelectModal({
   useEffect(() => {
     if (!open || !profile) return;
     setSelectedHostIds([]);
-    setMessage(null);
   }, [open, profile?.id]);
 
   if (!open || !profile) return null;
@@ -5720,12 +6100,10 @@ function ProfileHostSelectModal({
     if (profileMatchesConfirmedHostApiConfig(profile, host) || applyingHostIdSet.has(host.id)) return;
     const hostId = host.id;
     setSelectedHostIds((current) => (current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]));
-    setMessage(null);
   };
 
   const handleApply = () => {
     if (selectedEligibleHostIds.length === 0) return;
-    setMessage(null);
     void onApply(profile, selectedEligibleHostIds);
     onClose();
   };
@@ -5761,12 +6139,9 @@ function ProfileHostSelectModal({
           })}
         </div>
 
-        {message ? <p className="profileHostSelectMessage" role="status">{message}</p> : null}
-
         <ModalActions className="profileHostSelectActions">
           <button className="secondaryButton" disabled={eligibleHosts.length === 0} type="button" onClick={() => {
             setSelectedHostIds(eligibleHostIds);
-            setMessage(null);
           }}>
             {copy.profiles.selectAll}
           </button>
@@ -6272,6 +6647,7 @@ function SkillsView({
   onUpdateLibrarySkillAbout: (skillId: string, about: string) => Promise<SkillPack | null>;
   onViewTasks: () => void;
 }) {
+  const reportActionError = useActionErrorReporter(copy);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [firstScanOpen, setFirstScanOpen] = useState(false);
   const [previewSkill, setPreviewSkill] = useState<SkillPack | null>(null);
@@ -6284,7 +6660,7 @@ function SkillsView({
   const [downloadInstalledSkill, setDownloadInstalledSkill] = useState<InstalledSkillPreview | null>(null);
   const [uninstallInstalledSkill, setUninstallInstalledSkill] = useState<InstalledSkillPreview | null>(null);
   const [installedSkillOperation, setInstalledSkillOperation] = useState<InstalledSkillOperationModalState | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: "success" | "warning" | "error" } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const installedSkillRows = useMemo(
     () => buildInstalledSkillRows(copy, hosts, inventoryStatus),
@@ -6343,7 +6719,7 @@ function SkillsView({
             }
           : current
       );
-      setMessage(result.message || copy.skills.downloaded);
+      setMessage({ text: result.message || copy.skills.downloaded, tone: "success" });
     } catch (error) {
       const detail = formatError(error);
       setInstalledSkillOperation((current) =>
@@ -6384,7 +6760,7 @@ function SkillsView({
             }
           : current
       );
-      setMessage(message);
+      setMessage({ text: message, tone: result.ok ? "success" : "error" });
     } catch (error) {
       const detail = formatError(error);
       setInstalledSkillOperation((current) =>
@@ -6407,7 +6783,7 @@ function SkillsView({
       return result;
     } catch (error) {
       const detail = formatError(error);
-      setMessage(detail);
+      setMessage({ text: detail, tone: "error" });
       throw error;
     } finally {
       setBusy(null);
@@ -6416,27 +6792,27 @@ function SkillsView({
 
   const handleDetect = async (includeHosts: boolean) => {
     await runBusy("detect", () => onDetectInstalledSkills(includeHosts));
-    setMessage(copy.skills.detected);
+    setMessage({ text: copy.skills.detected, tone: "success" });
   };
 
   const handleDetectClick = () => {
-    void handleDetect(true).catch(() => undefined);
+    void handleDetect(true).catch(reportActionError);
   };
 
   const handleImport = async () => {
     const result = await runBusy("import", onImportSkillDirectory);
-    if (result) setMessage(result.message);
+    if (result) setMessage({ text: result.message, tone: "success" });
   };
 
   const handleRefresh = async () => {
     await runBusy("refresh", onRefreshSkillLibrary);
-    setMessage(copy.skills.refreshed);
+    setMessage({ text: copy.skills.refreshed, tone: "success" });
   };
 
   const handleDownload = async (repoUrl: string) => {
     await runBusy("download", () => onDownloadGithubSkill(repoUrl));
     setDownloadOpen(false);
-    setMessage(copy.skills.downloaded);
+    setMessage({ text: copy.skills.downloaded, tone: "success" });
   };
 
   const openTargets = async (skill: SkillPack, mode: "install" | "uninstall") => {
@@ -6448,7 +6824,8 @@ function SkillsView({
       const result = await runBusy(`targets-${skill.id}`, () => onGetSkillTargets(skill.id));
       setTargetResult(result);
       setSelectedTargetKeys([]);
-    } catch {
+    } catch (error) {
+      reportActionError(error);
       setTargetMode(null);
       setTargetSkill(null);
     }
@@ -6468,8 +6845,8 @@ function SkillsView({
     setTargetSkill(null);
     setTargetResult(null);
     setSelectedTargetKeys([]);
-    setMessage(
-      result.message === "install-success"
+    setMessage({
+      text: result.message === "install-success"
         ? copy.skills.installSuccess
         : result.message === "install-partial-failure"
           ? copy.skills.installPartialFailure
@@ -6477,8 +6854,9 @@ function SkillsView({
             ? copy.skills.uninstallSuccess
             : result.message === "uninstall-partial-failure"
               ? copy.skills.uninstallPartialFailure
-          : result.message
-    );
+          : result.message,
+      tone: result.ok ? "success" : "error"
+    });
   };
 
   const selectAllTargets = () => {
@@ -6493,7 +6871,7 @@ function SkillsView({
     if (!deleteSkill) return;
     const result = await runBusy(`delete-${deleteSkill.id}`, () => onDeleteLibrarySkill(deleteSkill.id, uninstallFirst));
     setDeleteSkill(null);
-    setMessage(result.message);
+    setMessage({ text: result.message, tone: result.ok ? "success" : "error" });
   };
 
   const toggleTarget = (target: SkillTarget) => {
@@ -6512,10 +6890,10 @@ function SkillsView({
             <button className="secondaryButton" disabled={busy === "detect"} type="button" onClick={handleDetectClick}>
               {busy === "detect" ? copy.skills.detecting : copy.skills.detect}
             </button>
-            <button className="secondaryButton" disabled={busy === "refresh"} type="button" onClick={() => void handleRefresh().catch(() => undefined)}>
+            <button className="secondaryButton" disabled={busy === "refresh"} type="button" onClick={() => void handleRefresh().catch(reportActionError)}>
               {busy === "refresh" ? copy.skills.refreshing : copy.skills.refresh}
             </button>
-            <button className="secondaryButton" disabled={busy === "import"} type="button" onClick={() => void handleImport().catch(() => undefined)}>
+            <button className="secondaryButton" disabled={busy === "import"} type="button" onClick={() => void handleImport().catch(reportActionError)}>
               {copy.skills.importDirectory}
             </button>
             <button className="primaryButton" disabled={busy === "download"} type="button" onClick={() => setDownloadOpen(true)}>
@@ -6589,7 +6967,7 @@ function SkillsView({
             </table>
           </div>
         )}
-        {message ? <p className="skillMessage">{message}</p> : null}
+        {message ? <p className="skillMessage" data-tone={message.tone} role={message.tone === "error" ? "alert" : "status"}>{message.text}</p> : null}
       </section>
 
       <section className="panel spanWide">
@@ -6646,7 +7024,7 @@ function SkillsView({
           busy={busy === "detect"}
           copy={copy}
           onClose={() => setFirstScanOpen(false)}
-          onConfirm={() => void handleDetect(true).then(() => setFirstScanOpen(false)).catch(() => undefined)}
+          onConfirm={() => void handleDetect(true).then(() => setFirstScanOpen(false)).catch(reportActionError)}
         />
       ) : null}
       {downloadOpen ? (
@@ -6654,7 +7032,7 @@ function SkillsView({
           busy={busy === "download"}
           copy={copy}
           onClose={() => setDownloadOpen(false)}
-          onDownload={(repoUrl) => void handleDownload(repoUrl).catch(() => undefined)}
+          onDownload={(repoUrl) => void handleDownload(repoUrl).catch(reportActionError)}
         />
       ) : null}
       {previewSkill ? (
@@ -6697,7 +7075,7 @@ function SkillsView({
           title={copy.skills.downloadInstalledTitle}
           body={copy.skills.downloadInstalledBody(downloadInstalledSkill.skillName)}
           onClose={() => setDownloadInstalledSkill(null)}
-          onConfirm={() => void submitInstalledDownload().catch(() => undefined)}
+          onConfirm={() => void submitInstalledDownload().catch(reportActionError)}
         />
       ) : null}
       {uninstallInstalledSkill ? (
@@ -6709,7 +7087,7 @@ function SkillsView({
           title={copy.skills.uninstallInstalledTitle}
           body={copy.skills.uninstallInstalledBody(uninstallInstalledSkill.skillName, uninstallInstalledSkill.targetLabel)}
           onClose={() => setUninstallInstalledSkill(null)}
-          onConfirm={() => void submitInstalledUninstall().catch(() => undefined)}
+          onConfirm={() => void submitInstalledUninstall().catch(reportActionError)}
         />
       ) : null}
       {installedSkillOperation ? (
@@ -6738,7 +7116,7 @@ function SkillsView({
             setSelectedTargetKeys([]);
           }}
           onSelectAll={selectAllTargets}
-          onSubmit={() => void submitTargets().catch(() => undefined)}
+          onSubmit={() => void submitTargets().catch(reportActionError)}
           onToggle={toggleTarget}
         />
       ) : null}
@@ -6748,7 +7126,7 @@ function SkillsView({
           copy={copy}
           skill={deleteSkill}
           onClose={() => setDeleteSkill(null)}
-          onDelete={(uninstallFirst) => void submitDelete(uninstallFirst).catch(() => undefined)}
+          onDelete={(uninstallFirst) => void submitDelete(uninstallFirst).catch(reportActionError)}
         />
       ) : null}
     </div>
@@ -7305,8 +7683,7 @@ function SkillInstalledConfirmModal({
   onConfirm: () => void;
 }) {
   return (
-    <div className="modalBackdrop" role="presentation">
-      <ModalFrame className="taskLogModal skillModal" titleId="installed-skill-confirm-title">
+      <AlertModalFrame busy={busy} className="taskLogModal skillModal" titleId="installed-skill-confirm-title" onCancel={onClose}>
         <ModalHeader
           className="taskLogModalHeader"
           titleId="installed-skill-confirm-title"
@@ -7318,15 +7695,14 @@ function SkillInstalledConfirmModal({
           onClose={onClose}
         />
         <ModalActions>
-          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+          <button className="secondaryButton" data-alert-cancel disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
           <button className={danger ? "primaryButton dangerButton" : "primaryButton"} disabled={busy} type="button" onClick={onConfirm}>
             {confirmLabel}
           </button>
         </ModalActions>
-      </ModalFrame>
-    </div>
+      </AlertModalFrame>
   );
 }
 
@@ -7440,8 +7816,7 @@ function SkillTargetsModal({
   const selectableCount = targets.filter((target) => (mode === "install" ? target.canInstall : target.canUninstall)).length;
 
   return (
-    <div className="modalBackdrop" role="presentation">
-      <ModalFrame className="taskLogModal skillModal" titleId="skill-targets-title">
+      <AlertModalFrame busy={busy} className="taskLogModal skillModal" titleId="skill-targets-title" onCancel={onClose}>
         <ModalHeader
           className="taskLogModalHeader"
           titleId="skill-targets-title"
@@ -7481,6 +7856,9 @@ function SkillTargetsModal({
           )}
         </div>
         <ModalActions>
+          <button className="secondaryButton" data-alert-cancel disabled={busy} type="button" onClick={onClose}>
+            {copy.hosts.cancel}
+          </button>
           <button className="secondaryButton" disabled={busy || selectableCount === 0} type="button" onClick={onSelectAll}>
             {copy.skills.selectAll}
           </button>
@@ -7488,8 +7866,7 @@ function SkillTargetsModal({
             {actionLabel}
           </button>
         </ModalActions>
-      </ModalFrame>
-    </div>
+      </AlertModalFrame>
   );
 }
 
@@ -7509,8 +7886,7 @@ function SimpleDeleteConfirmModal({
   onDelete: () => void;
 }) {
   return (
-    <div className="modalBackdrop" role="presentation">
-      <ModalFrame className="taskLogModal simpleDeleteModal" titleId="simple-delete-title">
+      <AlertModalFrame busy={busy} className="taskLogModal simpleDeleteModal" titleId="simple-delete-title" onCancel={onClose}>
         <ModalHeader
           className="taskLogModalHeader"
           titleId="simple-delete-title"
@@ -7522,15 +7898,14 @@ function SimpleDeleteConfirmModal({
           onClose={onClose}
         />
         <ModalActions>
-          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+          <button className="secondaryButton" data-alert-cancel disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
           <button className="primaryButton dangerButton" disabled={busy} type="button" onClick={onDelete}>
             {copy.hosts.delete}
           </button>
         </ModalActions>
-      </ModalFrame>
-    </div>
+      </AlertModalFrame>
   );
 }
 
@@ -7548,8 +7923,7 @@ function SkillDeleteModal({
   onDelete: (uninstallFirst: boolean) => void;
 }) {
   return (
-    <div className="modalBackdrop" role="presentation">
-      <ModalFrame className="taskLogModal skillModal" titleId="skill-delete-title">
+      <AlertModalFrame busy={busy} className="taskLogModal skillModal" titleId="skill-delete-title" onCancel={onClose}>
         <ModalHeader
           className="taskLogModalHeader"
           titleId="skill-delete-title"
@@ -7561,7 +7935,7 @@ function SkillDeleteModal({
           onClose={onClose}
         />
         <ModalActions className="skillDeleteActions">
-          <button className="secondaryButton" disabled={busy} type="button" onClick={onClose}>
+          <button className="secondaryButton" data-alert-cancel disabled={busy} type="button" onClick={onClose}>
             {copy.hosts.cancel}
           </button>
           <button className="secondaryButton dangerButton" disabled={busy} type="button" onClick={() => onDelete(false)}>
@@ -7571,12 +7945,29 @@ function SkillDeleteModal({
             {copy.skills.uninstallAndDelete}
           </button>
         </ModalActions>
-      </ModalFrame>
-    </div>
+      </AlertModalFrame>
   );
 }
 
-function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
+function TasksView({
+  copy,
+  hasMore,
+  loadingMore,
+  requestedTaskId,
+  tasks,
+  onLoadMore,
+  onRequestHandled,
+  onTaskViewed
+}: {
+  copy: UICopy;
+  hasMore: boolean;
+  loadingMore: boolean;
+  requestedTaskId: string | null;
+  tasks: TaskRun[];
+  onLoadMore: () => Promise<void>;
+  onRequestHandled: () => void;
+  onTaskViewed: (taskId: string) => void;
+}) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const selectedTask = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) ?? null : null;
@@ -7589,6 +7980,12 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
   useEffect(() => {
     if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) setSelectedTaskId(null);
   }, [selectedTaskId, tasks]);
+
+  useEffect(() => {
+    if (!requestedTaskId) return;
+    if (tasks.some((task) => task.id === requestedTaskId)) setSelectedTaskId(requestedTaskId);
+    onRequestHandled();
+  }, [onRequestHandled, requestedTaskId, tasks]);
 
   return (
     <div className="tasksGrid">
@@ -7622,7 +8019,10 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
                     <td>{formatTaskTimestamp(task, copy, nowTick)}</td>
                     <td>{task.summary}</td>
                     <td className="taskDetailsCol">
-                      <button className="miniButton" type="button" onClick={() => setSelectedTaskId(task.id)}>{copy.tasks.logs}</button>
+                      <button className="miniButton" type="button" onClick={() => {
+                        setSelectedTaskId(task.id);
+                        onTaskViewed(task.id);
+                      }}>{copy.tasks.logs}</button>
                     </td>
                   </tr>
                 ))}
@@ -7630,6 +8030,13 @@ function TasksView({ copy, tasks }: { copy: UICopy; tasks: TaskRun[] }) {
             </table>
           </div>
         )}
+        {hasMore ? (
+          <div className="taskHistoryMore">
+            <button className="secondaryButton" disabled={loadingMore} type="button" onClick={() => void onLoadMore()}>
+              {loadingMore ? copy.tasks.loadingMore : copy.tasks.loadMore}
+            </button>
+          </div>
+        ) : null}
       </section>
       {selectedTask ? <TaskLogModal copy={copy} now={nowTick} task={selectedTask} onClose={() => setSelectedTaskId(null)} /> : null}
     </div>
@@ -7732,7 +8139,6 @@ function SettingsView({
   settings,
   settingsSaveError,
   settingsSaving,
-  sshBusy,
   sshStatus,
   onCheckStableUpdate,
   onInstallStableUpdate,
@@ -7754,7 +8160,6 @@ function SettingsView({
   settings: AppSettings;
   settingsSaveError: string | null;
   settingsSaving: boolean;
-  sshBusy: boolean;
   sshStatus: SshStatus | null;
   onCheckStableUpdate: () => Promise<unknown>;
   onInstallStableUpdate: () => Promise<unknown>;
@@ -7798,7 +8203,7 @@ function SettingsView({
   return (
     <div className="settingsGrid">
       {settingsSaveError || settingsSaving ? (
-        <section className="panel spanWide" aria-live="polite">
+        <section className="panel spanWide" role={settingsSaveError ? "alert" : "status"} aria-live={settingsSaveError ? undefined : "polite"}>
           <div className="panelHeader compact">
             <div>
               <TitleWithIcon icon={settingsSaveError ? "warning" : "settings"} level={2}>
@@ -8091,41 +8496,6 @@ function latestAppInstallTask(tasks: TaskRun[]) {
   return tasks.find((task) => task.action === "Install app update") ?? null;
 }
 
-function createLocalAppUpdateTask(message: string, status: AppUpdateStatus, action = "Check app update"): TaskRun {
-  const now = new Date().toISOString();
-  const taskId = `task-app-update-check-local-${Date.now()}`;
-  return {
-    id: taskId,
-    hostId: "local-app",
-    hostName: status.softwareName || "CodexHub",
-    action,
-    status: "failed",
-    startedAt: now,
-    endedAt: now,
-    summary: message,
-    logs: [
-      {
-        id: `${taskId}-log-1`,
-        taskRunId: taskId,
-        level: "error",
-        timestamp: now,
-        message,
-        command: action === "Install app update" ? "install_stable_update" : "check_stable_update",
-        stdout: [
-          `softwareName: ${status.softwareName || "CodexHub"}`,
-          `channel: ${status.channel}`,
-          `currentVersion: ${status.currentVersion}`,
-          `latestVersion: ${status.latestVersion ?? "not checked"}`,
-          `state: error`
-        ].join("\n"),
-        stderr: message,
-        exitCode: 1,
-        timedOut: false
-      }
-    ]
-  };
-}
-
 function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus }) {
   const tone: BadgeTone = status === "success" ? "green" : status === "failed" ? "red" : status === "running" ? "yellow" : "gray";
   return <Badge tone={tone}>{copy.status.task[status]}</Badge>;
@@ -8141,11 +8511,11 @@ function formatTaskTimestamp(task: TaskRun, copy: UICopy, now = Date.now()) {
   if (!timestamp) return task.startedAt || "-";
   const date = new Date(timestamp);
   const deltaMs = Math.max(0, now - timestamp);
-  const zh = copy.navItems[0].label === "主页";
-  if (deltaMs < 60_000) return zh ? "刚刚" : "just now";
+  const zh = copy.common.locale === "zh-CN";
+  if (deltaMs < 60_000) return copy.common.justNow;
   if (deltaMs < 60 * 60_000) {
     const minutes = Math.max(1, Math.floor(deltaMs / 60_000));
-    return zh ? `${minutes} 分钟前` : `${minutes}m ago`;
+    return copy.tasks.minutesAgo(minutes);
   }
   const sameYear = new Date(now).getFullYear() === date.getFullYear();
   return new Intl.DateTimeFormat(zh ? "zh-CN" : "en-US", {
@@ -8439,11 +8809,6 @@ function formatBoolean(value: boolean, copy: UICopy) {
   return value ? copy.hosts.yes : copy.hosts.no;
 }
 
-function formatNullableBoolean(value: boolean | null, copy: UICopy) {
-  if (value === null) return copy.hosts.unknown;
-  return formatBoolean(value, copy);
-}
-
 function formatLatency(value: number | null | undefined, copy: UICopy) {
   return typeof value === "number" ? `${value} ms` : copy.hosts.unknown;
 }
@@ -8508,13 +8873,6 @@ function formatCompactPercent(value: number | null | undefined, copy: UICopy) {
   return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
 }
 
-function formatLoad(cpu: HostResourceSnapshot["cpu"] | null | undefined, copy: UICopy) {
-  if (!cpu || typeof cpu.load1 !== "number") return copy.hosts.unknown;
-  return [cpu.load1, cpu.load5, cpu.load15]
-    .map((value) => (typeof value === "number" ? value.toFixed(2) : "-"))
-    .join(" / ");
-}
-
 function formatCpuLoadSummary(cpu: HostResourceSnapshot["cpu"] | null | undefined, copy: UICopy) {
   const load = typeof cpu?.load1 === "number" ? cpu.load1.toFixed(1) : copy.hosts.unknown;
   const cores = typeof cpu?.cores === "number" ? String(cpu.cores) : copy.hosts.unknown;
@@ -8522,7 +8880,7 @@ function formatCpuLoadSummary(cpu: HostResourceSnapshot["cpu"] | null | undefine
 }
 
 function formatMonitorMetricDetail(label: string, value: string, copy: UICopy) {
-  return `${label}${isZhCopy(copy) ? "：" : ": "}${value}`;
+  return `${label}${copy.common.keyValueSeparator}${value}`;
 }
 
 function formatBytes(value: number | null | undefined, copy: UICopy) {
@@ -8538,7 +8896,7 @@ function formatBytes(value: number | null | undefined, copy: UICopy) {
 }
 
 function isZhCopy(copy: UICopy) {
-  return copy.navItems[0].label !== "Home";
+  return copy.common.locale === "zh-CN";
 }
 
 function formatMonitorTimestamp(value: string | null, copy: UICopy) {
@@ -8593,7 +8951,7 @@ function formatDuration(value: number | null | undefined, copy: UICopy) {
 }
 
 function formatProcessCount(value: number, copy: UICopy) {
-  return isZhCopy(copy) ? `${value} 进程` : `${value} proc`;
+  return copy.monitor.processCountShort(value);
 }
 
 const MONITOR_UNKNOWN_GPU_USER = "unknown";
@@ -8766,21 +9124,6 @@ function orderMonitorHosts(hosts: Host[], hostOrder: string[]) {
   return ordered;
 }
 
-function formatGpuDetails(gpu: HostResourceSnapshot["gpus"][number], tool: string, copy: UICopy) {
-  if (gpu.status === "detected") {
-    return [copy.monitor.detectedOnly, tool ? `${copy.monitor.gpuTool}: ${tool}` : null].filter(Boolean).join(" · ");
-  }
-  const parts = [
-    tool ? `${copy.monitor.gpuTool}: ${tool}` : null,
-    `${copy.monitor.gpu}: ${formatPercent(gpu.utilizationPercent, copy)}`,
-    `${copy.monitor.vram}: ${formatBytes(gpu.memoryUsedBytes, copy)} / ${formatBytes(gpu.memoryTotalBytes, copy)}`,
-    `${copy.monitor.temp}: ${typeof gpu.temperatureC === "number" ? `${gpu.temperatureC.toFixed(1)} C` : copy.hosts.unknown}`,
-    `${copy.monitor.power}: ${typeof gpu.powerWatts === "number" ? `${gpu.powerWatts.toFixed(1)} W` : copy.hosts.unknown}`
-  ].filter(Boolean);
-  if (gpu.driverVersion) parts.push(`${copy.monitor.driver}: ${gpu.driverVersion}`);
-  return parts.join(" · ");
-}
-
 function emptySshHostDraft(identityFile: string): SshHostDraft {
   return {
     alias: "",
@@ -8795,6 +9138,10 @@ function formatError(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Operation failed.";
+}
+
+function taskIdForError(error: unknown) {
+  return parseApiError(error)?.taskId ?? undefined;
 }
 
 export default App;

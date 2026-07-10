@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Clone, Serialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "AppUpdateStateDto")]
 pub(crate) enum AppUpdateState {
     Disabled,
     PendingConfiguration,
@@ -12,8 +14,9 @@ pub(crate) enum AppUpdateState {
     Error,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AppUpdateStatusDto")]
 pub(crate) struct AppUpdateStatus {
     pub(crate) software_name: String,
     pub(crate) channel: String,

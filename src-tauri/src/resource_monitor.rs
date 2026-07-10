@@ -3,23 +3,43 @@ use chrono::{DateTime, Local};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::thread;
+use ts_rs::TS;
 
 const DEFAULT_RESOURCE_TIMEOUT_MS: u64 = 30_000;
 const RESOURCE_SAMPLE_CONCURRENCY: usize = 3;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "HostResourceBatchResultDto")]
 pub(crate) struct HostResourceBatchResult {
     checked_at: String,
     snapshots: Vec<HostResourceSnapshot>,
 }
 
-#[derive(Clone, Serialize)]
+impl HostResourceBatchResult {
+    pub(crate) fn outcome_counts(&self) -> (usize, usize, usize) {
+        let failed = self
+            .snapshots
+            .iter()
+            .filter(|snapshot| matches!(snapshot.status, HostResourceStatus::Failed))
+            .count();
+        let partial = self
+            .snapshots
+            .iter()
+            .filter(|snapshot| matches!(snapshot.status, HostResourceStatus::Partial))
+            .count();
+        (self.snapshots.len(), partial, failed)
+    }
+}
+
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct HostResourceSnapshot {
+#[ts(rename = "HostResourceSnapshotDto")]
+pub(crate) struct HostResourceSnapshot {
     host_alias: String,
     status: HostResourceStatus,
     sampled_at: String,
+    #[ts(type = "number | null")]
     latency_ms: Option<u64>,
     error: Option<String>,
     cpu: Option<CpuSnapshot>,
@@ -28,17 +48,19 @@ struct HostResourceSnapshot {
     gpus: Vec<GpuSnapshot>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
-enum HostResourceStatus {
+#[ts(rename = "HostResourceStatusDto")]
+pub(crate) enum HostResourceStatus {
     Ok,
     Partial,
     Failed,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct CpuSnapshot {
+#[ts(rename = "CpuSnapshotDto")]
+pub(crate) struct CpuSnapshot {
     usage_percent: Option<f64>,
     load1: Option<f64>,
     load5: Option<f64>,
@@ -47,24 +69,30 @@ struct CpuSnapshot {
     model: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct MemorySnapshot {
+#[ts(rename = "MemorySnapshotDto")]
+pub(crate) struct MemorySnapshot {
+    #[ts(type = "number | null")]
     total_bytes: Option<u64>,
+    #[ts(type = "number | null")]
     available_bytes: Option<u64>,
     used_percent: Option<f64>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct GpuSnapshot {
+#[ts(rename = "GpuSnapshotDto")]
+pub(crate) struct GpuSnapshot {
     vendor: GpuVendor,
     index: Option<String>,
     uuid: Option<String>,
     name: String,
     status: GpuStatus,
     utilization_percent: Option<f64>,
+    #[ts(type = "number | null")]
     memory_used_bytes: Option<u64>,
+    #[ts(type = "number | null")]
     memory_total_bytes: Option<u64>,
     temperature_c: Option<f64>,
     power_watts: Option<f64>,
@@ -72,30 +100,35 @@ struct GpuSnapshot {
     processes: Vec<GpuProcessSnapshot>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct GpuProcessSnapshot {
+#[ts(rename = "GpuProcessSnapshotDto")]
+pub(crate) struct GpuProcessSnapshot {
     gpu_uuid: Option<String>,
     pid: Option<u32>,
     name: String,
+    #[ts(type = "number | null")]
     used_memory_bytes: Option<u64>,
     user: Option<String>,
+    #[ts(type = "number | null")]
     elapsed_seconds: Option<u64>,
     command: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
-enum GpuVendor {
+#[ts(rename = "GpuVendorDto")]
+pub(crate) enum GpuVendor {
     Nvidia,
     Amd,
     Intel,
     Unknown,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "lowercase")]
-enum GpuStatus {
+#[ts(rename = "GpuStatusDto")]
+pub(crate) enum GpuStatus {
     Ok,
     Detected,
     Unavailable,

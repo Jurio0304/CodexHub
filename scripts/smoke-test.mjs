@@ -9,6 +9,8 @@ const requiredFiles = [
   "docs/research.md",
   "docs/architecture.md",
   "docs/desktop-command-boundaries.md",
+  "docs/feedback-error-handling.md",
+  "docs/storage-migrations.md",
   "docs/mvp-scope.md",
   "docs/known-limitations.md",
   "docs/linux-support.md",
@@ -23,6 +25,11 @@ const requiredFiles = [
   "index.html",
   "src/main.tsx",
   "src/App.tsx",
+  "src/ui/ModalFrame.tsx",
+  "src/ui/AlertModalFrame.tsx",
+  "src/ui/AppErrorBoundary.tsx",
+  "src/ui/TaskDrawer.tsx",
+  "src/ui/feedback.tsx",
   "src/api.ts",
   "src/api/contracts.ts",
   "src/api/desktop.ts",
@@ -57,6 +64,30 @@ const requiredFiles = [
   "src-tauri/icons/icon.ico",
   "src-tauri/src/main.rs",
   "src-tauri/src/lib.rs",
+  "src-tauri/src/app_runtime.rs",
+  "src-tauri/src/backend_tests.rs",
+  "src-tauri/src/contracts.rs",
+  "src-tauri/src/domain.rs",
+  "src-tauri/src/jobs.rs",
+  "src-tauri/src/commands/host_ssh.rs",
+  "src-tauri/src/commands/profiles.rs",
+  "src-tauri/src/commands/settings.rs",
+  "src-tauri/src/commands/skills.rs",
+  "src-tauri/src/commands/storage.rs",
+  "src-tauri/src/commands/tasks.rs",
+  "src-tauri/src/commands/updater.rs",
+  "src-tauri/src/adapters/credentials.rs",
+  "src-tauri/src/adapters/events.rs",
+  "src-tauri/src/services/profile_links.rs",
+  "src-tauri/src/services/host_operations.rs",
+  "src-tauri/src/services/host_use_cases.rs",
+  "src-tauri/src/services/profile_catalog.rs",
+  "src-tauri/src/services/profile_operations.rs",
+  "src-tauri/src/services/profile_use_cases.rs",
+  "src-tauri/src/services/skill_operations.rs",
+  "src-tauri/src/services/skill_use_cases.rs",
+  "src-tauri/src/services/storage_operations.rs",
+  "src-tauri/src/services/updater_operations.rs",
   "src-tauri/src/hosts.rs",
   "src-tauri/src/profiles.rs",
   "src-tauri/src/resource_monitor.rs",
@@ -341,17 +372,45 @@ for (const token of ["tauri-plugin-updater", "url = \"2\"", "base64 = \"0.22\""]
 }
 if (!cargoToml.includes("features = [\"tray-icon\"]")) fail("Tauri dependency should enable the tray-icon feature");
 
-const rustLib = read("src-tauri/src/lib.rs");
 const rustBackend = [
   "src-tauri/src/lib.rs",
+  "src-tauri/src/app_runtime.rs",
+  "src-tauri/src/contracts.rs",
+  "src-tauri/src/domain.rs",
+  "src-tauri/src/jobs.rs",
   "src-tauri/src/hosts.rs",
   "src-tauri/src/profiles.rs",
   "src-tauri/src/resource_monitor.rs",
   "src-tauri/src/settings.rs",
   "src-tauri/src/skills.rs",
   "src-tauri/src/tasks.rs",
-  "src-tauri/src/updater.rs"
+  "src-tauri/src/updater.rs",
+  "src-tauri/src/commands/settings.rs",
+  "src-tauri/src/commands/host_ssh.rs",
+  "src-tauri/src/commands/profiles.rs",
+  "src-tauri/src/commands/skills.rs",
+  "src-tauri/src/commands/storage.rs",
+  "src-tauri/src/commands/tasks.rs",
+  "src-tauri/src/commands/updater.rs",
+  "src-tauri/src/adapters/credentials.rs",
+  "src-tauri/src/adapters/events.rs",
+  "src-tauri/src/services/profile_links.rs",
+  "src-tauri/src/services/host_operations.rs",
+  "src-tauri/src/services/host_use_cases.rs",
+  "src-tauri/src/services/profile_catalog.rs",
+  "src-tauri/src/services/profile_operations.rs",
+  "src-tauri/src/services/profile_use_cases.rs",
+  "src-tauri/src/services/skill_operations.rs",
+  "src-tauri/src/services/skill_use_cases.rs",
+  "src-tauri/src/services/storage_operations.rs",
+  "src-tauri/src/services/updater_operations.rs",
+  "src-tauri/src/storage/json_store.rs",
+  "src-tauri/src/storage/task_store.rs",
+  "src-tauri/src/storage/transaction.rs"
 ].map(read).join("\n");
+const rustHostUseCases = read("src-tauri/src/services/host_use_cases.rs");
+const rustSkillOperations = read("src-tauri/src/services/skill_operations.rs");
+const rustProfileOperations = read("src-tauri/src/services/profile_operations.rs");
 const sshRs = read("src-tauri/src/ssh.rs");
 const rustPlatform = read("src-tauri/src/platform.rs");
 const tsPlatform = read("src/platform.ts");
@@ -442,7 +501,7 @@ for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asse
 for (const token of ["mod resource_monitor", "sample_host_resources", "resource_monitor::sample_host_resources", "query-compute-apps", "CH_GPU_PROCESS", "etimes"]) {
   if (!rustBackend.includes(token)) fail(`missing resource monitor backend token: ${token}`);
 }
-for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(&status, &attempts))", "Install app update", "Check app update"]) {
+for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(running, &status, &attempts))", "Install app update", "Check app update"]) {
   if (!rustBackend.includes(token)) fail(`missing stable updater task token: ${token}`);
 }
 for (const token of ["install_stable_update", "download_and_install", "AppUpdateState::Installing", "channel != \"stable\"", "stable_updater_configured(&config)", "updater_error_message"]) {
@@ -459,7 +518,7 @@ for (const removedCommand of [
 ]) {
   if (rustBackend.includes(removedCommand)) fail(`removed public Skills command should not remain: ${removedCommand}`);
 }
-const listHostsMatch = rustLib.match(/fn list_hosts[\s\S]*?\n}\r?\n\r?\n#\[tauri::command\]\r?\nfn refresh_discovered_hosts/);
+const listHostsMatch = rustHostUseCases.match(/fn execute_list_hosts[\s\S]*?\n}\r?\n\r?\npub\(crate\) fn execute_refresh_discovered_hosts/);
 if (!listHostsMatch) fail("could not locate list_hosts function boundary");
 if (listHostsMatch[0].includes("merge_discovered_hosts")) fail("list_hosts must not auto-import local SSH config");
 for (const asyncCommand of [
@@ -490,7 +549,8 @@ for (const token of [
   "SkillTargetOperationResult",
   "RemoteSkillListResult",
   "managed_skills_dir",
-  "skill_inventory_path",
+  'storage::load_cache_document(&state.paths, "skills-inventory.json")',
+  'storage::save_cache_document(&state.paths, "skills-inventory.json", status)',
   "local_skills",
   "update_local_inventory_skill",
   "apply_skill_inventory_to_hosts",
@@ -528,7 +588,7 @@ for (const token of ["Latest scan returned no skills; kept previous cached", "pr
 if (rustBackend.includes('find "$HOME/.codex/skills" -mindepth 1 -maxdepth 1')) {
   fail("remote skill probes must not count only first-level ~/.codex/skills directories");
 }
-const getSkillTargetsMatch = rustLib.match(/fn run_get_skill_targets[\s\S]*?\n}\r?\n\r?\nfn run_install_skill_targets/);
+const getSkillTargetsMatch = rustSkillOperations.match(/fn run_get_skill_targets[\s\S]*?\n}\r?\n\r?\npub\(crate\) fn run_install_skill_targets/);
 if (!getSkillTargetsMatch) fail("could not locate run_get_skill_targets function boundary");
 for (const liveProbeToken of ["run_remote_skill_install_preview", "run_remote_skill_list"]) {
   if (getSkillTargetsMatch[0].includes(liveProbeToken)) {
@@ -797,16 +857,17 @@ for (const token of [
   "cc_switch_auth_key_may_hold_api_key",
   "cc_switch_profile_base_url_key",
   "credential_by_key",
-  "store_profile_api_key_local",
-  "migrate_cc_switch_api_key_for_profile",
+  "apply_batch_with_metadata",
+  "prepare_profiles_import",
+  "find_cc_switch_api_key_for_profile",
   "is_missing_credential_error"
 ]) {
   if (!rustBackend.includes(token)) fail(`missing cc-switch adapter token: ${token}`);
 }
-for (const token of ["profiles: Vec<Profile>", "hosts: Vec<Host>", "sync_profile_host_links", "sync_profile_host_ids", "clear_profile_host_links", "reconcile_hosts_with_profile_links", "RemoteApiConfigMatch"]) {
+for (const token of ["profiles: Vec<Profile>", "hosts: Vec<Host>", "services::profile_links::save", "sync_profile_host_ids", "clear_profile_host_ids", "reconcile_hosts_with_profile_links", "RemoteApiConfigMatch"]) {
   if (!rustBackend.includes(token)) fail(`missing profile apply refreshed-state token: ${token}`);
 }
-const reconcileHostsMatch = rustLib.match(/fn reconcile_hosts_with_profile_links[\s\S]*?\n}\r?\n\r?\nfn record_task/);
+const reconcileHostsMatch = rustProfileOperations.match(/fn reconcile_hosts_with_profile_links[\s\S]*?\n}\r?\n\r?\npub\(crate\) fn record_task/);
 if (!reconcileHostsMatch) fail("missing reconcile_hosts_with_profile_links function body");
 if (reconcileHostsMatch[0].includes("host.config_exists = Some(true)") || reconcileHostsMatch[0].includes("host.api_config_name = Some(profile.name.clone())")) {
   fail("profile host-link reconcile must not promote local links into confirmed remote API config facts");
@@ -851,6 +912,7 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
+const modalFrameSource = read("src/ui/ModalFrame.tsx");
 for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
 }
@@ -874,7 +936,7 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing close-button UI token: ${token}`);
 }
-for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.dailyUpdateCheck", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "latestAppInstallTask", "createLocalAppUpdateTask", "footer={("]) {
+for (const token of ["appUpdateStatus", "appUpdateFailureTask", "appUpdateChecking", "appUpdateInstalling", "copy.settings.appUpdates", "copy.settings.dailyUpdateCheck", "copy.settings.softwareName", "copy.settings.installedAt", "copy.settings.updatedAt", "copy.settings.checkStableUpdate", "copy.settings.installStableUpdate", "copy.settings.checkFailed", "copy.settings.updateCheckFailureHint", "copy.settings.pendingConfiguration", 'className="sshHostsTable versionInfoTable"', "appUpdateStatus.softwareName", "appUpdateStatus.installedAt ?? copy.settings.unknown", "appVersionTone(appUpdateStatus.currentVersion, appUpdateStatus.latestVersion)", "appUpdateLatestVersionLabel(appUpdateStatus, copy)", "appLatestVersionTone(appUpdateStatus)", "title={appUpdateStatus.message}", "appUpdateStatus.checkedAt ?? copy.settings.notChecked", "latestAppUpdateTask", "latestAppInstallTask", "footer={("]) {
   if (!app.includes(token)) fail(`missing stable updater Settings UI token: ${token}`);
 }
 for (const token of ["NetworkProxyManualModal", "networkProxyManualOpen", "handleNetworkProxyChoice", "copy.settings.networkProxy", "copy.settings.networkProxyOptions", "copy.settings.networkProxyManualTitle", "copy.settings.networkProxyPort", "copy.settings.networkProxySave", "onNetworkProxyModeChange", "onNetworkProxyManualRequest", "networkProxyControl"]) {
@@ -900,7 +962,7 @@ if (app.includes('const canCheckStableUpdate = appUpdateStatus.channel === "stab
   fail("Stable update Check button must not be disabled solely because updater feed/signing is pending");
 }
 for (const token of ["type NavIconId = SectionId", "type PlatformIconId", "type TitleBarAction", "function AppTitleBar(", "startDragging()", 'data-action="minimize"', 'data-action="maximize"', 'data-action="close"', "function PlatformIcon(", "function ModalFrame(", "function ModalHeader(", "function ModalActions(", "function NavIcon(", 'className="navIcon"', 'className="navGlyph"', "<NavIcon id={item.id}", "function CommandBar(", "function CommandGroup(", "metricPrimary", "metricSecondary", "appliedProfileCount", "new Set(hosts.map((host) => host.profileId)", "successfulTaskCount", "matrixHeader", "matrixEmptyIcon", "onAddServer", "onTestAllSshHosts"]) {
-  if (!app.includes(token)) fail(`missing dashboard home polish token: ${token}`);
+  if (!`${app}\n${modalFrameSource}`.includes(token)) fail(`missing dashboard home polish token: ${token}`);
 }
 for (const token of [
   "SectionCompletionTone",
@@ -911,9 +973,6 @@ for (const token of [
   "clearSectionCompletionSignal(item.id)",
   "className=\"navCompletionDot\"",
   "data-tone={completionTone}",
-  "onPointerDownCapture={handleContentInteraction}",
-  "onScrollCapture={handleContentInteraction}",
-  "onWheelCapture={handleContentInteraction}",
   "copy.settings.sidebarCompletionIndicators",
   "className=\"pillToggle\"",
   "role=\"switch\"",
@@ -1398,7 +1457,7 @@ const api = [
 for (const token of ["fallbackAppUpdateStatus", "getAppUpdateStatus", "checkStableUpdate", "installStableUpdate", "detectNetworkProxy", "get_app_update_status", "check_stable_update", "install_stable_update", "detect_network_proxy"]) {
   if (!api.includes(token)) fail(`missing stable updater API token: ${token}`);
 }
-if (!api.includes('checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update")')) {
+if (!api.includes('checkStableUpdate: () => requiredInvoke<AppUpdateStatusDto>("check_stable_update")')) {
   fail("Stable update check should expose backend/IPC errors instead of falling back to mock status");
 }
 for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior", "onCloseButtonBehaviorRequested", "close-button-behavior-requested", "requiredInvoke<AppSettings>"]) {
@@ -1495,7 +1554,7 @@ for (const removedToken of [
   if (api.includes(removedToken)) fail(`removed Skills API token should not remain: ${removedToken}`);
 }
 
-const models = read("src/models.ts");
+const models = [read("src/models.ts"), read("src/generated/rust-contracts.ts")].join("\n");
 for (const token of ["AppUpdateStatus", "AppUpdateState", "pending-configuration", "up-to-date", "installing", "feedConfigured", "signingConfigured"]) {
   if (!models.includes(token)) fail(`missing stable updater model token: ${token}`);
 }
@@ -1511,7 +1570,7 @@ for (const token of ["HostResourceSnapshot", "GpuSnapshot", "GpuProcessSnapshot"
 for (const token of ["SshConfigDeleteResult", "DeleteOperationResult", "task: TaskRun"]) {
   if (!models.includes(token)) fail(`missing delete operation model token: ${token}`);
 }
-for (const token of ["LatestCodexVersion", "version: string | null", "checkedAt: string | null", 'source: "npm" | string']) {
+for (const token of ["LatestCodexVersionDto", "version: string | null", "checkedAt: string | null", "source: string"]) {
   if (!models.includes(token)) fail(`missing latest Codex version model token: ${token}`);
 }
 for (const token of ["profiles: Profile[]", "hosts: Host[]"]) {

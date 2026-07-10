@@ -1,29 +1,18 @@
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AppUpdateStatus,
   CcSwitchDetection,
   HostDraft,
   HostPatch,
-  HostResourceBatchResult,
   InstalledSkillRequest,
-  LatestCodexVersion,
-  LocalCodexStatus,
-  NetworkProxyStatus,
-  Profile,
-  ProfileApplyBatchResult,
-  ProfileApplyPreview,
   ProfileDraft,
   ProfileImportExport,
   ProfilePatch,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
   RemoteCodexProgressEvent,
-  RemoteProbeResult,
   SkillDetectionResult,
-  SkillInventoryStatus,
   SkillImportResult,
-  SkillPack,
   SkillTargetOperationResult,
   SkillTargetRequest,
   SkillTargetsResult,
@@ -34,17 +23,54 @@ import type {
   TaskRun
 } from "../models";
 import type { AppSettings, CloseButtonBehavior, SettingsSaveResult } from "../settings";
+import type {
+  AppUpdateStatusDto,
+  CcSwitchDetectionDto,
+  ConnectionTestDto,
+  HealthDto,
+  HostDto,
+  HostResourceBatchResultDto,
+  LatestCodexVersionDto,
+  LocalCodexStatusDto,
+  NetworkProxyStatusDto,
+  ProfileApiKeyResultDto,
+  ProfileApplyBatchResultDto,
+  ProfileDto,
+  ProfileImportExportDto,
+  RemoteCodexMaintenanceResultDto,
+  RemoteProbeResultDto,
+  SkillDetectionResultDto,
+  SkillImportResultDto,
+  SkillInventoryStatusDto,
+  SkillPackDto,
+  SkillTargetOperationResultDto,
+  SkillTargetsResultDto,
+  SshBootstrapResultDto,
+  SshCheckResultDto,
+  SshConfigDeleteResultDto,
+  SshConfigHostDto,
+  SshConfigWriteResultDto,
+  SshKeyGenerationResultDto,
+  SshStatusDto,
+  StorageHealth,
+  StorageMigrationPlan,
+  StorageRestorePlan,
+  ProfileApplyPreviewDto,
+  TaskEvent,
+  TaskPage,
+  TaskQuery
+} from "../generated/rust-contracts";
 import { normalizeSettings, saveDesktopSettingsCache } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import { assertTauriRuntime, requireHostAlias, requiredInvoke } from "./invoke";
-import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
+import { normalizeHost, normalizeProfile, normalizeProfileApplyPreview, normalizeProfileApplyResult } from "./normalize";
 
 export const desktopApi: CodexHubApi = {
-  getHealth: () => requiredInvoke("app_health"),
-  getAppUpdateStatus: () => requiredInvoke("get_app_update_status"),
-  checkStableUpdate: () => requiredInvoke<AppUpdateStatus>("check_stable_update"),
-  installStableUpdate: () => requiredInvoke<AppUpdateStatus>("install_stable_update"),
-  detectNetworkProxy: () => requiredInvoke<NetworkProxyStatus>("detect_network_proxy"),
+  getHealth: () => requiredInvoke<HealthDto>("app_health"),
+  getAppUpdateStatus: () => requiredInvoke<AppUpdateStatusDto>("get_app_update_status"),
+  checkStableUpdate: () => requiredInvoke<AppUpdateStatusDto>("check_stable_update"),
+  installStableUpdate: () => requiredInvoke<AppUpdateStatusDto>("install_stable_update"),
+  detectNetworkProxy: () => requiredInvoke<NetworkProxyStatusDto>("detect_network_proxy"),
   getSettings: () =>
     requiredInvoke<AppSettings>("get_settings").then((settings) => {
       const normalized = normalizeSettings(settings);
@@ -70,23 +96,23 @@ export const desktopApi: CodexHubApi = {
     assertTauriRuntime("choose_close_button_behavior");
     return listen("close-button-behavior-requested", () => handler());
   },
-  getSshStatus: () => requiredInvoke("get_ssh_status"),
-  generateEd25519Key: () => requiredInvoke("generate_ed25519_key"),
-  listSshConfigHosts: () => requiredInvoke("list_ssh_config_hosts"),
-  upsertSshConfigHost: (draft: SshHostDraft) => requiredInvoke("upsert_ssh_config_host", { draft }),
+  getSshStatus: () => requiredInvoke<SshStatusDto>("get_ssh_status"),
+  generateEd25519Key: () => requiredInvoke<SshKeyGenerationResultDto>("generate_ed25519_key"),
+  listSshConfigHosts: () => requiredInvoke<SshConfigHostDto[]>("list_ssh_config_hosts"),
+  upsertSshConfigHost: (draft: SshHostDraft) => requiredInvoke<SshConfigWriteResultDto>("upsert_ssh_config_host", { draft }),
   deleteSshConfigHost: (alias: string): Promise<SshConfigDeleteResult> =>
-    requiredInvoke("delete_ssh_config_host", { alias: requireHostAlias("delete_ssh_config_host", alias) }),
-  listHosts: () => requiredInvoke("list_hosts"),
-  refreshDiscoveredHosts: () => requiredInvoke("refresh_discovered_hosts"),
+    requiredInvoke<SshConfigDeleteResultDto>("delete_ssh_config_host", { alias: requireHostAlias("delete_ssh_config_host", alias) }),
+  listHosts: () => requiredInvoke<HostDto[]>("list_hosts").then((hosts) => hosts.map(normalizeHost)),
+  refreshDiscoveredHosts: () => requiredInvoke<HostDto[]>("refresh_discovered_hosts").then((hosts) => hosts.map(normalizeHost)),
   refreshLatestCodexVersion: (force = false, timeoutMs = 30000) =>
-    requiredInvoke<LatestCodexVersion>("refresh_latest_codex_version", { force, timeoutMs }),
-  getLocalCodexStatus: () => requiredInvoke<LocalCodexStatus>("get_local_codex_status"),
+    requiredInvoke<LatestCodexVersionDto>("refresh_latest_codex_version", { force, timeoutMs }),
+  getLocalCodexStatus: () => requiredInvoke<LocalCodexStatusDto>("get_local_codex_status"),
   addHost: (draft: HostDraft) => requiredInvoke("add_host", { draft }),
   updateHost: (id: string, patch: HostPatch) => requiredInvoke("update_host", { id, patch }),
   deleteHost: (id: string) => requiredInvoke("delete_host", { id }),
-  testSshConnection: (id: string) => requiredInvoke("test_ssh_connection", { id }),
+  testSshConnection: (id: string) => requiredInvoke<ConnectionTestDto>("test_ssh_connection", { id }),
   sshCheck: (hostAlias: string, timeoutMs = 10000) =>
-    requiredInvoke("ssh_check", { hostAlias: requireHostAlias("ssh_check", hostAlias), timeoutMs }),
+    requiredInvoke<SshCheckResultDto>("ssh_check", { hostAlias: requireHostAlias("ssh_check", hostAlias), timeoutMs }),
   connectSshHost: async (
     draft: SshHostDraft,
     password: string,
@@ -104,7 +130,7 @@ export const desktopApi: CodexHubApi = {
     }
 
     try {
-      return await requiredInvoke("bootstrap_ssh_host", {
+      return await requiredInvoke<SshBootstrapResultDto>("bootstrap_ssh_host", {
         draft: { ...draft, alias },
         password,
         timeoutMs,
@@ -115,24 +141,24 @@ export const desktopApi: CodexHubApi = {
     }
   },
   bootstrapSshHost: (draft: SshHostDraft, password: string, timeoutMs = 10000) =>
-    requiredInvoke("bootstrap_ssh_host", {
+    requiredInvoke<SshBootstrapResultDto>("bootstrap_ssh_host", {
       draft: { ...draft, alias: requireHostAlias("bootstrap_ssh_host", draft.alias) },
       password,
       timeoutMs
     }),
   bootstrapExistingSshHost: (hostAlias: string, password: string, timeoutMs = 10000) =>
-    requiredInvoke("bootstrap_existing_ssh_host", {
+    requiredInvoke<SshBootstrapResultDto>("bootstrap_existing_ssh_host", {
       hostAlias: requireHostAlias("bootstrap_existing_ssh_host", hostAlias),
       password,
       timeoutMs
     }),
   remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>
-    requiredInvoke<RemoteProbeResult>("remote_probe_codex", {
+    requiredInvoke<RemoteProbeResultDto>("remote_probe_codex", {
       hostAlias: requireHostAlias("remote_probe_codex", hostAlias),
       timeoutMs
     }),
   sampleHostResources: (hostAliases: string[], timeoutMs = 8000) =>
-    requiredInvoke<HostResourceBatchResult>("sample_host_resources", {
+    requiredInvoke<HostResourceBatchResultDto>("sample_host_resources", {
       hostAliases: hostAliases.map((alias) => requireHostAlias("sample_host_resources", alias)),
       timeoutMs
     }),
@@ -153,7 +179,7 @@ export const desktopApi: CodexHubApi = {
     }
 
     try {
-      return await requiredInvoke("remote_manage_codex", {
+      return await requiredInvoke<RemoteCodexMaintenanceResultDto>("remote_manage_codex", {
         hostAlias: alias,
         action,
         timeoutMs,
@@ -163,59 +189,77 @@ export const desktopApi: CodexHubApi = {
       unlisten?.();
     }
   },
-  listProfiles: () => requiredInvoke<Profile[]>("list_profiles").then((profiles) => profiles.map(normalizeProfile)),
+  listProfiles: () => requiredInvoke<ProfileDto[]>("list_profiles").then((profiles) => profiles.map(normalizeProfile)),
   createProfile: (draft: ProfileDraft) =>
-    requiredInvoke<Profile>("create_profile", { draft }).then(normalizeProfile),
+    requiredInvoke<ProfileDto>("create_profile", { draft }).then(normalizeProfile),
   updateProfile: (id: string, patch: ProfilePatch) =>
-    requiredInvoke<Profile>("update_profile", { id, patch }).then(normalizeProfile),
+    requiredInvoke<ProfileDto>("update_profile", { id, patch }).then(normalizeProfile),
   deleteProfile: (id: string) => requiredInvoke("delete_profile", { id }),
-  duplicateProfile: (id: string) => requiredInvoke<Profile>("duplicate_profile", { id }).then(normalizeProfile),
+  duplicateProfile: (id: string) => requiredInvoke<ProfileDto>("duplicate_profile", { id }).then(normalizeProfile),
   importProfiles: (bundle: ProfileImportExport) =>
-    requiredInvoke<ProfileImportExport>("import_profiles", { bundle }).then((result) => ({
+    requiredInvoke<ProfileImportExportDto>("import_profiles", { bundle }).then((result) => ({
       ...result,
       profiles: result.profiles.map(normalizeProfile)
     })),
   setProfileApiKey: (profileId: string, apiKey: string) =>
-    requiredInvoke<Profile>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile),
-  getProfileApiKey: (profileId: string) => requiredInvoke("get_profile_api_key", { profileId }),
+    requiredInvoke<ProfileDto>("set_profile_api_key", { profileId, apiKey }).then(normalizeProfile),
+  getProfileApiKey: (profileId: string) => requiredInvoke<ProfileApiKeyResultDto>("get_profile_api_key", { profileId }),
   deleteProfileApiKey: (profileId: string) =>
-    requiredInvoke<Profile>("delete_profile_api_key", { profileId }).then(normalizeProfile),
+    requiredInvoke<ProfileDto>("delete_profile_api_key", { profileId }).then(normalizeProfile),
   previewProfileApply: (profileId: string, hostIds: string[]) =>
-    requiredInvoke<ProfileApplyPreview>("preview_profile_apply", { profileId, hostIds }),
+    requiredInvoke<ProfileApplyPreviewDto>("preview_profile_apply", { profileId, hostIds })
+      .then(normalizeProfileApplyPreview),
   applyProfile: (profileId: string, hostIds: string[]) =>
-    requiredInvoke<ProfileApplyBatchResult>("apply_profile", { profileId, hostIds }).then(normalizeProfileApplyResult),
+    requiredInvoke<ProfileApplyBatchResultDto>("apply_profile", { profileId, hostIds }).then(normalizeProfileApplyResult),
   detectCcSwitchProfiles: () =>
-    requiredInvoke<CcSwitchDetection>("detect_cc_switch_profiles").then((detection) => ({
+    requiredInvoke<CcSwitchDetectionDto>("detect_cc_switch_profiles").then((detection) => ({
       ...detection,
       importExport: { ...detection.importExport, profiles: detection.importExport.profiles.map(normalizeProfile) }
     })),
-  importCcSwitchProfiles: (detection: CcSwitchDetection) =>
-    requiredInvoke<ProfileImportExport>("import_cc_switch_profiles", { detection }).then((result) => ({
+  importCcSwitchProfiles: (_detection: CcSwitchDetection) =>
+    requiredInvoke<ProfileImportExportDto>("import_cc_switch_profiles", { replace: false }).then((result) => ({
       ...result,
       profiles: result.profiles.map(normalizeProfile)
     })),
-  listSkillPacks: () => requiredInvoke<SkillPack[]>("list_local_skills"),
-  getSkillInventoryStatus: () => requiredInvoke<SkillInventoryStatus>("get_skill_inventory_status"),
+  listSkillPacks: () => requiredInvoke<SkillPackDto[]>("list_local_skills"),
+  getSkillInventoryStatus: () => requiredInvoke<SkillInventoryStatusDto>("get_skill_inventory_status"),
   detectInstalledSkills: (includeHosts: boolean, timeoutMs = 120000): Promise<SkillDetectionResult> =>
-    requiredInvoke("detect_installed_skills", { includeHosts, timeoutMs }),
-  importLocalSkill: (path: string): Promise<SkillImportResult> => requiredInvoke("import_local_skill", { path }),
+    requiredInvoke<SkillDetectionResultDto>("detect_installed_skills", { includeHosts, timeoutMs }),
+  importLocalSkill: (path: string): Promise<SkillImportResult> => requiredInvoke<SkillImportResultDto>("import_local_skill", { path }),
   downloadGithubSkill: (repoUrl: string, timeoutMs = 120000): Promise<SkillImportResult> =>
-    requiredInvoke("download_github_skill", { repoUrl, timeoutMs }),
+    requiredInvoke<SkillImportResultDto>("download_github_skill", { repoUrl, timeoutMs }),
   getSkillTargets: (skillId: string, timeoutMs = 30000): Promise<SkillTargetsResult> =>
-    requiredInvoke("get_skill_targets", { skillId, timeoutMs }),
+    requiredInvoke<SkillTargetsResultDto>("get_skill_targets", { skillId, timeoutMs }),
   installSkillTargets: (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
-    requiredInvoke("install_skill_targets", { skillId, targets: validateSkillTargets("install_skill_targets", targets), timeoutMs }),
+    requiredInvoke<SkillTargetOperationResultDto>("install_skill_targets", { skillId, targets: validateSkillTargets("install_skill_targets", targets), timeoutMs }),
   uninstallSkillTargets: (skillId: string, targets: SkillTargetRequest[], timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
-    requiredInvoke("uninstall_skill_targets", { skillId, targets: validateSkillTargets("uninstall_skill_targets", targets), timeoutMs }),
+    requiredInvoke<SkillTargetOperationResultDto>("uninstall_skill_targets", { skillId, targets: validateSkillTargets("uninstall_skill_targets", targets), timeoutMs }),
   deleteLibrarySkill: (skillId: string, uninstallFirst: boolean, timeoutMs = 120000): Promise<SkillTargetOperationResult> =>
-    requiredInvoke("delete_library_skill", { skillId, uninstallFirst, timeoutMs }),
+    requiredInvoke<SkillTargetOperationResultDto>("delete_library_skill", { skillId, uninstallFirst, timeoutMs }),
   downloadInstalledSkill: (request: InstalledSkillRequest, timeoutMs = 120000) =>
     requiredInvoke("download_installed_skill", { request: validateInstalledSkillRequest("download_installed_skill", request), timeoutMs }),
   uninstallInstalledSkill: (request: InstalledSkillRequest, timeoutMs = 120000) =>
-    requiredInvoke("uninstall_installed_skill", { request: validateInstalledSkillRequest("uninstall_installed_skill", request), timeoutMs }),
+    requiredInvoke<SkillTargetOperationResultDto>("uninstall_installed_skill", { request: validateInstalledSkillRequest("uninstall_installed_skill", request), timeoutMs }),
   updateLibrarySkillAbout: (skillId: string, about: string) =>
-    requiredInvoke<SkillPack[]>("update_library_skill_about", { skillId, about }),
-  listTasks: () => requiredInvoke<TaskRun[]>("list_tasks")
+    requiredInvoke<SkillPackDto[]>("update_library_skill_about", { skillId, about }),
+  listTasks: () => requiredInvoke<TaskRun[]>("list_tasks"),
+  queryTasks: (query?: TaskQuery) => requiredInvoke<TaskPage>("query_tasks", { query: query ?? null }),
+  getTask: (taskId: string) => requiredInvoke<TaskRun | null>("get_task", { taskId }),
+  acknowledgeTask: (taskId: string) => requiredInvoke<boolean>("acknowledge_task", { taskId }),
+  recordFrontendError: (message: string) => requiredInvoke<TaskRun>("record_frontend_error", { message }),
+  onTaskUpdated: async (handler: (event: TaskEvent) => void): Promise<UnlistenFn> => {
+    assertTauriRuntime("query_tasks");
+    return listen<TaskEvent>("task-updated", (event) => handler(event.payload));
+  },
+  getStorageHealth: () => requiredInvoke<StorageHealth[]>("get_storage_health"),
+  previewStorageMigration: (store: string) =>
+    requiredInvoke<StorageMigrationPlan>("preview_storage_migration", { store }),
+  applyStorageMigration: (plan: StorageMigrationPlan) =>
+    requiredInvoke<StorageHealth>("apply_storage_migration", { plan }),
+  previewStorageRestore: (store: string) =>
+    requiredInvoke<StorageRestorePlan>("preview_storage_restore", { store }),
+  restoreStorageBackup: (plan: StorageRestorePlan) =>
+    requiredInvoke<StorageHealth>("restore_storage_backup", { plan })
 };
 
 function validateSkillTargets(command: "install_skill_targets" | "uninstall_skill_targets", targets: SkillTargetRequest[]) {

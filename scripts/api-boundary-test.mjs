@@ -15,12 +15,20 @@ const settingsSource = read("src/settings.ts");
 const appSource = read("src/App.tsx");
 const rustSettingsSource = read("src-tauri/src/settings.rs");
 const boundaryDoc = read("docs/desktop-command-boundaries.md");
-const rustSource = read("src-tauri/src/lib.rs");
+const rustHandlerSource = read("src-tauri/src/app_runtime.rs");
+const rustSource = [
+  "src-tauri/src/lib.rs",
+  "src-tauri/src/app_runtime.rs",
+  "src-tauri/src/services/host_use_cases.rs",
+  "src-tauri/src/services/profile_use_cases.rs",
+  "src-tauri/src/services/skill_use_cases.rs",
+  "src-tauri/src/services/updater_operations.rs"
+].map(read).join("\n");
 const packageJson = JSON.parse(read("package.json"));
 const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json"));
 
 const policyCommands = [...commandsSource.matchAll(/^  ([a-z][a-z0-9_]+): \{/gm)].map((match) => match[1]);
-const handlerBody = rustSource.match(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/)?.[1] ?? "";
+const handlerBody = rustHandlerSource.match(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/)?.[1] ?? "";
 const rustCommands = handlerBody
   .split(",")
   .map((command) => command.trim())
@@ -33,8 +41,7 @@ const sorted = (items) => [...new Set(items)].sort();
 if (JSON.stringify(sorted(policyCommands)) !== JSON.stringify(sorted(rustCommands))) {
   fail("commandPolicies and Rust generate_handler! are not identical");
 }
-if (policyCommands.length !== 54) fail(`expected 54 command policies, received ${policyCommands.length}`);
-if (!commandsSource.includes('get_profile_api_key: { effect: "read", liveSsh: false, sensitiveInput: false, sensitiveOutput: true }')) {
+if (!/get_profile_api_key:\s*\{[^}]*sensitiveOutput:\s*true/.test(commandsSource)) {
   fail("get_profile_api_key must be declared as sensitive output");
 }
 for (const command of desktopCommands) {
@@ -67,7 +74,7 @@ for (const required of ["desktopSettingsCacheKey", "mockSettingsStorageKey", "le
 for (const required of ["settingsSaveError", "pendingSettings", "retrySettingsSave", "await api.saveSettings"]) {
   if (!appSource.includes(required)) fail(`settings transaction UI is missing: ${required}`);
 }
-for (const required of ["SettingsSaveResult", 'sidecar_path(path, ".bak")', "sync_all()", "ErrorKind::NotFound"]) {
+for (const required of ["SettingsSaveResult", "storage::save_document", "changed: false", "backup_path"]) {
   if (!rustSettingsSource.includes(required)) fail(`Rust settings transaction is missing: ${required}`);
 }
 

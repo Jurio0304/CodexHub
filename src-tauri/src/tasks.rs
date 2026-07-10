@@ -1,16 +1,17 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Clone, Serialize)]
-#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum TaskStatus {
     Queued,
     Running,
     Success,
     Failed,
+    Interrupted,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum TaskLogLevel {
     Info,
@@ -18,7 +19,7 @@ pub(crate) enum TaskLogLevel {
     Error,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TaskLog {
     pub(crate) id: String,
@@ -27,20 +28,26 @@ pub(crate) struct TaskLog {
     pub(crate) timestamp: String,
     pub(crate) message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) stdout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) stderr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
     pub(crate) duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) timed_out: Option<bool>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TaskRun {
     pub(crate) id: String,

@@ -20,6 +20,7 @@ use russh::client;
 use russh::keys::ssh_key;
 use russh::{ChannelMsg, Disconnect, MethodKind, MethodSet};
 use tokio::runtime::Builder;
+use ts_rs::TS;
 
 const MANAGED_START_PREFIX: &str = "# >>> CodexHub managed host:";
 const MANAGED_END_PREFIX: &str = "# <<< CodexHub managed host:";
@@ -31,8 +32,9 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTHORIZED_KEYS_INSTALL_SCRIPT: &str = "umask 077; mkdir -p \"$HOME/.ssh\" && touch \"$HOME/.ssh/authorized_keys\" && IFS= read -r key && if grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" 2>/dev/null; then printf 'authorized_keys already contains key\\n'; else printf '%s\\n' \"$key\" >> \"$HOME/.ssh/authorized_keys\" && printf 'authorized_keys updated\\n'; fi";
 const AUTHORIZED_KEYS_PERMISSIONS_SCRIPT: &str = "chmod 700 \"$HOME/.ssh\" && chmod 600 \"$HOME/.ssh/authorized_keys\" && printf 'permissions set\\n'";
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SshKeyInfoDto")]
 pub struct SshKeyInfo {
     pub key_type: String,
     pub private_path: String,
@@ -42,8 +44,9 @@ pub struct SshKeyInfo {
     pub public_key: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SshStatusDto")]
 pub struct SshStatus {
     pub ssh_dir: String,
     pub config_path: String,
@@ -53,8 +56,9 @@ pub struct SshStatus {
     pub rsa: SshKeyInfo,
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SshHostDraftDto")]
 pub struct SshHostDraft {
     pub alias: String,
     pub host_name: String,
@@ -63,8 +67,9 @@ pub struct SshHostDraft {
     pub identity_file: String,
 }
 
-#[derive(Clone, Serialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SshConfigHostDto")]
 pub struct SshConfigHost {
     pub alias: String,
     pub host_name: String,
@@ -75,8 +80,9 @@ pub struct SshConfigHost {
     pub source: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SshConfigWriteResultDto")]
 pub struct SshConfigWriteResult {
     pub changed: bool,
     pub action: String,
@@ -86,8 +92,9 @@ pub struct SshConfigWriteResult {
     pub message: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SshKeyGenerationResultDto")]
 pub struct SshKeyGenerationResult {
     pub private_path: String,
     pub public_path: String,
@@ -378,9 +385,15 @@ where
         install_output.clone(),
     ));
     if !install_output.success() {
-        let _ = session
+        if let Err(error) = session
             .disconnect(Disconnect::ByApplication, "", "English")
-            .await;
+            .await
+        {
+            eprintln!(
+                "SSH session disconnect failed: {}",
+                redact_sensitive(&error.to_string())
+            );
+        }
         return outputs;
     }
 
@@ -400,9 +413,15 @@ where
         permissions_output.clone(),
     ));
 
-    let _ = session
+    if let Err(error) = session
         .disconnect(Disconnect::ByApplication, "", "English")
-        .await;
+        .await
+    {
+        eprintln!(
+            "SSH session disconnect failed: {}",
+            redact_sensitive(&error.to_string())
+        );
+    }
     outputs
 }
 
@@ -1217,12 +1236,16 @@ where
     if let Some(stdout) = child.stdout.take() {
         spawn_stream_reader(stdout, ProcessStreamKind::Stdout, sender.clone());
     } else {
-        let _ = sender.send(ProcessReaderMessage::Done);
+        sender
+            .send(ProcessReaderMessage::Done)
+            .map_err(|_| format!("{program} stdout channel closed unexpectedly."))?;
     }
     if let Some(stderr) = child.stderr.take() {
         spawn_stream_reader(stderr, ProcessStreamKind::Stderr, sender.clone());
     } else {
-        let _ = sender.send(ProcessReaderMessage::Done);
+        sender
+            .send(ProcessReaderMessage::Done)
+            .map_err(|_| format!("{program} stderr channel closed unexpectedly."))?;
     }
     drop(sender);
 
@@ -1277,7 +1300,9 @@ where
 
         if exit_code.is_none() && start.elapsed() >= timeout {
             timed_out = true;
-            let _ = child.kill();
+            child
+                .kill()
+                .map_err(|error| format!("Failed to stop timed-out {program}: {error}"))?;
             let status = child.wait().map_err(|error| {
                 format!("Failed to collect timed-out {program} output: {error}")
             })?;
@@ -1360,15 +1385,22 @@ fn spawn_stream_reader<R>(
                     }
                 }
                 Err(error) => {
-                    let _ = sender.send(ProcessReaderMessage::Line(
-                        ProcessStreamKind::Stderr,
-                        format!("Failed to read process output: {error}"),
-                    ));
+                    if sender
+                        .send(ProcessReaderMessage::Line(
+                            ProcessStreamKind::Stderr,
+                            format!("Failed to read process output: {error}"),
+                        ))
+                        .is_err()
+                    {
+                        return;
+                    }
                     break;
                 }
             }
         }
-        let _ = sender.send(ProcessReaderMessage::Done);
+        if sender.send(ProcessReaderMessage::Done).is_err() {
+            return;
+        }
     });
 }
 
@@ -1423,7 +1455,9 @@ fn run_process_with_timeout_input_env(
         }
 
         if start.elapsed() >= timeout {
-            let _ = child.kill();
+            child
+                .kill()
+                .map_err(|error| format!("Failed to stop timed-out {program}: {error}"))?;
             let output = child.wait_with_output().map_err(|error| {
                 format!("Failed to collect timed-out {program} output: {error}")
             })?;

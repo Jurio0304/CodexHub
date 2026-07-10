@@ -43,7 +43,7 @@ export const commandPolicies = {
   duplicate_profile: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   import_profiles: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   set_profile_api_key: { effect: "local-write", liveSsh: false, sensitiveInput: true },
-  get_profile_api_key: { effect: "read", liveSsh: false, sensitiveInput: false, sensitiveOutput: true },
+  get_profile_api_key: { effect: "local-write", liveSsh: false, sensitiveInput: false, sensitiveOutput: true },
   delete_profile_api_key: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   preview_profile_apply: { effect: "read", liveSsh: false, sensitiveInput: false },
   apply_profile: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
@@ -62,6 +62,15 @@ export const commandPolicies = {
   download_installed_skill: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
   uninstall_installed_skill: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
   list_tasks: { effect: "read", liveSsh: false, sensitiveInput: false },
+  query_tasks: { effect: "read", liveSsh: false, sensitiveInput: false },
+  get_task: { effect: "read", liveSsh: false, sensitiveInput: false },
+  acknowledge_task: { effect: "local-write", liveSsh: false, sensitiveInput: false },
+  record_frontend_error: { effect: "local-write", liveSsh: false, sensitiveInput: false },
+  get_storage_health: { effect: "read", liveSsh: false, sensitiveInput: false },
+  preview_storage_migration: { effect: "read", liveSsh: false, sensitiveInput: false },
+  apply_storage_migration: { effect: "local-write", liveSsh: false, sensitiveInput: false },
+  preview_storage_restore: { effect: "read", liveSsh: false, sensitiveInput: false },
+  restore_storage_backup: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   list_skill_packs: { effect: "read", liveSsh: false, sensitiveInput: false }
 } as const satisfies Record<string, CommandPolicy>;
 

@@ -1,12 +1,18 @@
+use super::storage;
+use super::{AppPaths, TaskStore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+#[cfg(test)]
 use std::fs::{self, OpenOptions};
+#[cfg(test)]
 use std::io::{ErrorKind, Write};
+#[cfg(test)]
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use ts_rs::TS;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename = "ThemeChoiceDto")]
 pub(crate) enum ThemeChoice {
     System,
     Light,
@@ -26,34 +32,39 @@ pub(crate) enum FontPreset {
     ZhCn,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
+#[ts(rename = "PlatformAppearanceDto")]
 pub(crate) enum PlatformAppearance {
     Auto,
     Windows,
     Macos,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "CloseButtonBehaviorDto")]
 pub(crate) enum CloseButtonBehavior {
     Ask,
     Exit,
     MinimizeToTray,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "kebab-case")]
+#[ts(rename = "NetworkProxyModeDto")]
 pub(crate) enum NetworkProxyMode {
     Auto,
     Direct,
     Manual,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "AppSettingsDto")]
 pub(crate) struct AppSettings {
     pub(crate) theme: ThemeChoice,
+    #[ts(type = "\"english\" | \"zh-cn\"")]
     pub(crate) font_preset: FontPreset,
     #[serde(default = "default_platform_appearance")]
     pub(crate) platform_appearance: PlatformAppearance,
@@ -75,8 +86,9 @@ pub(crate) struct AppSettings {
     pub(crate) setup_guide_dismissed: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "SettingsSaveResultDto")]
 pub(crate) struct SettingsSaveResult {
     pub(crate) settings: AppSettings,
     pub(crate) changed: bool,
@@ -117,17 +129,35 @@ impl AppSettings {
     }
 }
 
-pub(crate) fn read_settings(app: &AppHandle) -> Result<AppSettings, String> {
-    read_settings_at(&settings_path(app)?)
+pub(crate) fn read_settings(paths: &AppPaths) -> Result<AppSettings, String> {
+    storage::load_document(paths, "settings", "settings.json", AppSettings::default())
+        .map(|document| document.data.normalized())
 }
 
 pub(crate) fn write_settings(
-    app: &AppHandle,
+    paths: &AppPaths,
+    task_store: &TaskStore,
     settings: &AppSettings,
 ) -> Result<SettingsSaveResult, String> {
-    write_settings_at(&settings_path(app)?, settings)
+    let normalized = settings.clone().normalized();
+    let existing = read_settings(paths)?;
+    if existing == normalized {
+        return Ok(SettingsSaveResult {
+            settings: normalized,
+            changed: false,
+            backup_path: None,
+        });
+    }
+    let backup_path =
+        storage::save_document(paths, task_store, "settings", "settings.json", &normalized)?;
+    Ok(SettingsSaveResult {
+        settings: normalized,
+        changed: true,
+        backup_path,
+    })
 }
 
+#[cfg(test)]
 fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
@@ -139,6 +169,7 @@ fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
         .map_err(|error| format!("settings.json is invalid and was not overwritten: {error}"))
 }
 
+#[cfg(test)]
 fn write_settings_at(path: &Path, settings: &AppSettings) -> Result<SettingsSaveResult, String> {
     let normalized = settings.clone().normalized();
     if let Some(parent) = path.parent() {
@@ -190,7 +221,9 @@ fn write_settings_at(path: &Path, settings: &AppSettings) -> Result<SettingsSave
     })();
 
     if write_result.is_err() {
-        let _ = fs::remove_file(&temp_path);
+        if let Err(error) = fs::remove_file(&temp_path) {
+            eprintln!("Could not clean the settings test staging file: {error}");
+        }
     }
     let backup_path = write_result?;
     Ok(SettingsSaveResult {
@@ -200,13 +233,7 @@ fn write_settings_at(path: &Path, settings: &AppSettings) -> Result<SettingsSave
     })
 }
 
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_config_dir()
-        .map(|path| path.join("settings.json"))
-        .map_err(|error| format!("Could not resolve the app settings directory: {error}"))
-}
-
+#[cfg(test)]
 fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{}", path.to_string_lossy(), suffix))
 }
