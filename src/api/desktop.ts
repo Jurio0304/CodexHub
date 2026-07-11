@@ -246,6 +246,7 @@ export const desktopApi: CodexHubApi = {
   queryTasks: (query?: TaskQuery) => requiredInvoke<TaskPage>("query_tasks", { query: query ?? null }),
   getTask: (taskId: string) => requiredInvoke<TaskRun | null>("get_task", { taskId }),
   acknowledgeTask: (taskId: string) => requiredInvoke<boolean>("acknowledge_task", { taskId }),
+  clearTaskHistory: () => requiredInvoke<number>("clear_task_history"),
   recordFrontendError: (message: string) => requiredInvoke<TaskRun>("record_frontend_error", { message }),
   onTaskUpdated: async (handler: (event: TaskEvent) => void): Promise<UnlistenFn> => {
     assertTauriRuntime("query_tasks");

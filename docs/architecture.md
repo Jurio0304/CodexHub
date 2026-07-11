@@ -18,7 +18,7 @@ The local platform layer owns OS-specific paths and command discovery. Windows k
 
 ```mermaid
 flowchart LR
-  UI["React pages"] --> Feedback["Feedback provider / Task drawer / Dialog"]
+  UI["React pages"] --> Feedback["Feedback provider / Tasks page / Dialog"]
   Feedback --> Tauri["CodexHubApi + generated wire DTOs"]
   Tauri --> Commands["Tauri commands"]
   Commands --> Services["Domain services"]
@@ -46,9 +46,9 @@ flowchart LR
 
 ## Feedback And Accessibility
 
-`AppErrorBoundary -> FeedbackProvider -> App` is the root composition. Success/info Toasts close after five seconds, warnings after eight seconds, and errors remain in a `role="alert"` region until dismissed or opened in Tasks. Durable writes, live SSH, remote probes, installs, updates, applies, syncs, migrations, recoveries, and partial failures always have a persistent task; form validation, copy confirmation, and pure UI actions stay transient.
+`AppErrorBoundary -> FeedbackProvider -> App` is the root composition. Every notification starts closing within five seconds and uses a one-second transition: it enters with a short upward movement plus blur-to-sharp reveal, then exits with the inverse downward blur. Pointer, keyboard, touch, wheel, or scroll input starts the exit immediately. Information, warning, success, and failure use theme-aware pale blue, yellow, green, and red surfaces with stronger semantic borders and an elevated shadow. Detail actions are centered over the content pane; notifications launched from global dialogs are centered over the full app viewport. Durable writes, live SSH, remote probes, installs, updates, applies, syncs, migrations, recoveries, and partial failures still have a persistent task; form validation, copy confirmation, and pure UI actions stay transient.
 
-The global Task drawer prioritizes running and unacknowledged failed/interrupted tasks, then the latest 20 records. The Tasks page pages through the complete SQLite history. Sidebar success dots clear when the user enters the owning page; failure dots are derived from unacknowledged durable tasks and clear only after acknowledgement.
+The Tasks page reads the authoritative retained SQLite history and displays at most 100 task records. Sidebar success and failure dots use the same transient completion state and clear when the user enters or interacts with the owning page; durable failures remain available in Tasks without pinning a sidebar indicator.
 
 All app modals use shared Radix Dialog/AlertDialog wrappers while retaining existing CSS variables. They trap Tab/Shift+Tab, choose form or Cancel initial focus, close through the same Esc path, prevent accidental backdrop closure, block closure while a write is busy, and restore focus to the real trigger or active navigation item. Live regions are scoped to the changed message, and `prefers-reduced-motion: reduce` disables animations/transitions without hiding static busy text.
 
@@ -61,7 +61,7 @@ The backend migration boundary is `commands -> services -> jobs -> storage/adapt
 - `commands/` contains thin Tauri entry points only: parse wire arguments, pass `AppState` to one domain use case, and return the existing public command shape. All public command names remain stable.
 - `services/` owns use-case sequencing and compensation. Hosts/SSH, Profiles/credentials, Skills, updater, related Host/Profile writes, and storage migration/restore are separated into use-case and operation modules.
 - `jobs.rs` persists queued/running/final task transitions and redacts every log surface before SQLite writes. SSH bootstrap and remote Codex progress lines are appended while the task is running and merged into the final record. Failure to persist a required transition fails the command; Tauri event delivery remains diagnostic because SQLite is authoritative.
-- `storage/` owns app-scoped paths, versioned JSON, atomic replacement, backup/recovery, multi-file compensation, and the SQLite `TaskStore` repository.
+- `storage/` owns app-scoped paths, versioned JSON, atomic replacement, backup/recovery, multi-file compensation, and the SQLite `TaskStore` repository. Task history keeps at most the latest 100 task records. Before automatic retention or manual clearing deletes completed rows, the complete tasks and logs are serialized into a recovery JSON file and moved through the operating system recycle-bin API; task-level tombstones prevent stale async snapshots from restoring recycled records. Running and queued tasks are never recycled.
 - `adapters/` isolates event delivery and OS credentials. Existing `ssh.rs`, `resource_monitor.rs`, and `updater.rs` remain compatibility adapters behind services.
 
 `src-tauri/src/lib.rs` contains module wiring and shared imports only; Tauri builder/lifecycle assembly lives in `app_runtime.rs`, wire/domain types in `domain.rs`, and backend characterization tests in `backend_tests.rs`.
@@ -103,7 +103,7 @@ The complete desktop/mock failure policy is documented in [Desktop Command Bound
 - `download_installed_skill(request, timeout_ms)` / `uninstall_installed_skill(request, timeout_ms)`: act on a cached installed-skill tag, importing that exact installed directory into the local library or permanently deleting it from the current target after explicit confirmation.
 - `delete_library_skill(skill_id, uninstall_first, timeout_ms)`: remove the CodexHub library record and managed copy, optionally uninstalling known targets first.
 - `list_tasks()`: compatibility read of persistent redacted history.
-- `query_tasks(query)`, `get_task(task_id)`, `acknowledge_task(task_id)`: paginated persistent task history and acknowledgement.
+- `query_tasks(query)`, `get_task(task_id)`, `acknowledge_task(task_id)`, `clear_task_history()`: persistent task history, acknowledgement, and page-level clearing of all completed task records into a recoverable JSON archive in the system recycle bin.
 - `record_frontend_error(message)`: persist a sanitized React failure without a stack trace or raw exception text.
 - `get_storage_health()`, `preview_storage_migration(store)`, `apply_storage_migration(plan)`, `preview_storage_restore(store)`, `restore_storage_backup(plan)`: explicit fingerprinted migration and recovery workflow.
 

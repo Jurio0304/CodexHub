@@ -64,7 +64,7 @@ import type { AppSettings, CloseButtonBehavior, FontPreset, NetworkProxyMode, Pl
 import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { AlertModalFrame } from "./ui/AlertModalFrame";
 import { useFeedback } from "./ui/feedback";
-import { TaskDrawer } from "./ui/TaskDrawer";
+import type { FeedbackPlacement, FeedbackTone } from "./ui/feedback";
 import { ModalFrame } from "./ui/ModalFrame";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "monitor" | "tasks" | "settings";
@@ -100,6 +100,13 @@ type SectionCompletionSignals = Partial<Record<SectionId, SectionCompletionTone>
 type SectionOperationOptions<T> = {
   classify?: (result: T) => SectionCompletionTone | null;
 };
+type HostProbeOptions = {
+  includeLatestVersion?: boolean;
+  notifyCompletion?: boolean;
+  refreshCatalog?: boolean;
+};
+type ResourceRefreshTrigger = "initial" | "manual" | "auto";
+const MAX_VISIBLE_TASKS = 100;
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   hostAlias: string;
@@ -183,7 +190,7 @@ const platformEmojiIcons = {
   warning: "⚠️"
 } satisfies Record<PlatformIconId, string>;
 
-const uiCopy = {
+export const uiCopy = {
   en: {
     navItems: [
       { id: "dashboard", label: "Home" },
@@ -249,12 +256,16 @@ const uiCopy = {
       keyValueSeparator: ": "
     },
     feedback: {
-      persistentRegion: "Persistent errors",
       retry: "Retry",
       details: "Details",
       viewTask: "View task",
       dismiss: "Dismiss",
       notifications: "Notifications",
+      genericNotice: "Operation completed.",
+      genericError: "Operation failed. Review the task details or logs for diagnostics.",
+      migrationRequired: "Local data must be migrated before this operation can continue.",
+      storageCorrupt: "Local data requires recovery before this operation can continue.",
+      partialFailure: "The operation completed partially. Review the task details.",
       errorTitles: {
         "backend-unavailable": "Desktop backend unavailable",
         "invalid-arguments": "Check the requested values",
@@ -274,6 +285,7 @@ const uiCopy = {
     notices: {
       default: "Local SSH key and config management is ready in the desktop backend.",
       addHost: "Fill in the SSH config form. CodexHub will create or update one managed Host block with a backup first.",
+      newApiConfig: "Fill in the profile form to create a reusable API configuration.",
       publicKeyCopied: "Public key copied to clipboard.",
       copyFailed: "Could not copy automatically. Select the public key text and copy it manually.",
       addHostBeforeProfile: "Add a host before applying a profile.",
@@ -433,6 +445,8 @@ const uiCopy = {
       detectedLocalHosts: (count: number) => `${count} local SSH Host entr${count === 1 ? "y" : "ies"} detected.`,
       testingAll: "Testing all...",
       testedAll: "All hosts tested.",
+      testedAllResult: (success: number, total: number) => `Tested ${success}/${total} host(s) successfully.`,
+      testedAllFailed: (success: number, total: number) => `Host testing completed with failures: ${success}/${total} succeeded.`,
       updateOutdatedCodex: "Update outdated",
       updatingOutdatedCodex: "Updating...",
       updatedOutdatedCodex: (success: number, total: number) => `Updated ${success}/${total} outdated host(s).`,
@@ -679,12 +693,6 @@ const uiCopy = {
     tasks: {
       runs: "Runs",
       taskHistory: "Task history",
-      drawerOpen: "Tasks",
-      drawerTitle: "Task activity",
-      drawerDescription: "Running work, unacknowledged failures, and the 20 most recent tasks.",
-      drawerClose: "Close task drawer",
-      drawerViewAll: "View all tasks",
-      drawerAttentionCount: (count: number) => `${count} task${count === 1 ? "" : "s"} need attention`,
       body: "Mock TaskRun rows demonstrate the local task model and future worker queue.",
       action: "Action",
       host: "Host",
@@ -693,6 +701,14 @@ const uiCopy = {
       summary: "Summary",
       details: "Details",
       logs: "Logs",
+      clearHistory: "Clear all",
+      clearHistoryTitle: "Clear task history?",
+      clearHistoryBody: "All completed task records and logs will be exported as a JSON archive and moved to the system recycle bin. Running and queued tasks will remain.",
+      clearHistoryMockBody: "All completed Mock task records will be removed from memory. Running and queued tasks will remain.",
+      clearHistoryConfirm: "Move to recycle bin",
+      clearingHistory: "Clearing...",
+      historyCleared: (count: number) => `${count} completed task record${count === 1 ? "" : "s"} moved to the system recycle bin.`,
+      mockHistoryCleared: (count: number) => `${count} completed Mock task record${count === 1 ? "" : "s"} cleared from memory.`,
       loadMore: "Load older tasks",
       loadingMore: "Loading...",
       taskLog: "TaskLog",
@@ -707,6 +723,8 @@ const uiCopy = {
       noOutput: "(no output)",
       minutesAgo: (minutes: number) => `${minutes}m ago`,
       actionLabels: {
+        "Generate Ed25519 key": "Generate Ed25519 key",
+        "Save SSH Host": "Save SSH Host",
         "Apply profile": "Apply profile",
         "Test SSH connection": "Test SSH connection",
         "Bootstrap SSH key": "Bootstrap SSH key",
@@ -724,25 +742,64 @@ const uiCopy = {
         "Delete profile": "Delete profile",
         "Delete skill": "Delete skill",
         "Check app update": "Check app update",
-        "Install app update": "Install app update"
+        "Install app update": "Install app update",
+        "Refresh latest Codex version": "Refresh latest Codex version",
+        "Import cc-switch profiles": "Import cc-switch profiles",
+        "Refresh discovered hosts": "Refresh discovered hosts",
+        "Add host": "Add host",
+        "Update host": "Update host",
+        "Delete host": "Delete host",
+        "Create profile": "Create profile",
+        "Update profile": "Update profile",
+        "Duplicate profile": "Duplicate profile",
+        "Import profiles": "Import profiles",
+        "Store profile credential": "Store profile credential",
+        "Migrate profile credential": "Migrate profile credential",
+        "Delete profile credential": "Delete profile credential",
+        "Import local skill": "Import local skill",
+        "Update skill details": "Update skill details",
+        "Save settings": "Save settings",
+        "Choose close button behavior": "Choose close button behavior",
+        "Migrate local storage": "Migrate local storage",
+        "Restore local storage": "Restore local storage",
+        "Sample host resources": "Sample host resources",
+        "Frontend error": "Frontend error"
+      },
+      unknownAction: "Background task",
+      summaryByStatus: {
+        queued: (action: string) => `${action} queued.`,
+        running: (action: string) => `${action} is running.`,
+        success: (action: string) => `${action} completed.`,
+        failed: (action: string) => `${action} failed. Review the logs for details.`,
+        interrupted: (action: string) => `${action} was interrupted.`
       }
     },
     storage: {
       title: "Local data needs attention",
+      attentionSummary: (count: number) => `${count} local data store${count === 1 ? "" : "s"} require attention before related writes can continue.`,
       migrationRequired: "This store uses a readable legacy schema. Writes stay locked until you preview and confirm migration.",
       corrupt: "This store is damaged. CodexHub will not silently use a backup; preview a validated recovery first.",
       recoveryRequired: "A previous storage operation was interrupted. Review the durable task record before retrying or recovering.",
       previewMigration: "Preview migration",
+      previewMigrations: "Review migrations",
       previewRestore: "Preview recovery",
       planTitle: "Confirm local data operation",
+      storeLabels: {
+        settings: "App settings",
+        hosts: "Hosts",
+        profiles: "Profiles",
+        skills: "Skills"
+      },
       path: "Data path",
       fingerprint: "Source fingerprint",
       backupLocation: "Backup location",
       applyMigration: "Back up and migrate",
+      applyMigrations: "Back up and migrate all",
       restoreBackup: "Back up current data and restore",
       cancel: "Cancel",
       working: "Working...",
       migrationDone: "Local data migration completed.",
+      migrationsDone: (count: number) => `${count} local data store${count === 1 ? "" : "s"} migrated successfully.`,
       restoreDone: "Local data recovery completed."
     },
     settings: {
@@ -922,12 +979,16 @@ const uiCopy = {
       keyValueSeparator: "："
     },
     feedback: {
-      persistentRegion: "持久错误",
       retry: "重试",
       details: "详情",
       viewTask: "查看任务",
       dismiss: "关闭",
       notifications: "通知",
+      genericNotice: "操作已完成。",
+      genericError: "操作失败，请在任务详情或日志中查看诊断信息。",
+      migrationRequired: "本地数据需要先完成迁移，随后才能继续该操作。",
+      storageCorrupt: "本地数据需要先完成恢复，随后才能继续该操作。",
+      partialFailure: "操作部分完成，请查看任务详情。",
       errorTitles: {
         "backend-unavailable": "桌面后端不可用",
         "invalid-arguments": "请检查操作参数",
@@ -947,6 +1008,7 @@ const uiCopy = {
     notices: {
       default: "本地 SSH 密钥和配置管理已在桌面后端就绪。",
       addHost: "请填写 SSH config 表单。CodexHub 会先备份，再创建或更新一个受管理的 Host 块。",
+      newApiConfig: "请填写配置表单，以创建可复用的 API 配置。",
       publicKeyCopied: "公钥已复制到剪贴板。",
       copyFailed: "无法自动复制。请选中公钥文本后手动复制。",
       addHostBeforeProfile: "请先添加主机，再应用配置。",
@@ -1106,6 +1168,8 @@ const uiCopy = {
       detectedLocalHosts: (count: number) => `检测到 ${count} 个本地 SSH Host。`,
       testingAll: "测试中...",
       testedAll: "一键测试完成。",
+      testedAllResult: (success: number, total: number) => `一键测试完成：${success}/${total} 台主机成功。`,
+      testedAllFailed: (success: number, total: number) => `一键测试完成：${success}/${total} 台主机成功，其余主机失败。`,
       updateOutdatedCodex: "一键更新",
       updatingOutdatedCodex: "更新中...",
       updatedOutdatedCodex: (success: number, total: number) => `已更新 ${success}/${total} 台版本落后的主机。`,
@@ -1352,12 +1416,6 @@ const uiCopy = {
     tasks: {
       runs: "运行",
       taskHistory: "任务历史",
-      drawerOpen: "任务",
-      drawerTitle: "任务动态",
-      drawerDescription: "展示运行中任务、未确认失败和最近 20 条任务。",
-      drawerClose: "关闭任务抽屉",
-      drawerViewAll: "查看全部任务",
-      drawerAttentionCount: (count: number) => `${count} 个任务需要处理`,
       body: "TaskRun 行用于展示本地任务模型和工作队列。",
       action: "操作",
       host: "主机",
@@ -1366,6 +1424,14 @@ const uiCopy = {
       summary: "摘要",
       details: "详情",
       logs: "日志",
+      clearHistory: "一键清空",
+      clearHistoryTitle: "清空全部任务记录？",
+      clearHistoryBody: "所有已结束任务及其日志将导出为 JSON 归档并移入系统回收站；正在运行和排队的任务会保留。",
+      clearHistoryMockBody: "所有已结束 Mock 任务记录将从内存中清除；正在运行和排队的任务会保留。",
+      clearHistoryConfirm: "移入系统回收站",
+      clearingHistory: "清空中...",
+      historyCleared: (count: number) => `${count} 条已结束任务记录已移入系统回收站。`,
+      mockHistoryCleared: (count: number) => `已从内存中清除 ${count} 条 Mock 任务记录。`,
       loadMore: "加载更早任务",
       loadingMore: "加载中...",
       taskLog: "任务日志",
@@ -1380,6 +1446,8 @@ const uiCopy = {
       noOutput: "（无输出）",
       minutesAgo: (minutes: number) => `${minutes} 分钟前`,
       actionLabels: {
+        "Generate Ed25519 key": "生成 Ed25519 密钥",
+        "Save SSH Host": "保存 SSH Host",
         "Apply profile": "应用配置",
         "Test SSH connection": "测试 SSH 连接",
         "Bootstrap SSH key": "配置 SSH 密钥",
@@ -1397,25 +1465,64 @@ const uiCopy = {
         "Delete profile": "删除配置",
         "Delete skill": "删除 Skill",
         "Check app update": "检查程序版本",
-        "Install app update": "安装程序更新"
+        "Install app update": "安装程序更新",
+        "Refresh latest Codex version": "刷新 Codex 最新版本",
+        "Import cc-switch profiles": "导入 cc-switch 配置",
+        "Refresh discovered hosts": "刷新已发现主机",
+        "Add host": "添加主机",
+        "Update host": "更新主机",
+        "Delete host": "删除主机",
+        "Create profile": "创建配置",
+        "Update profile": "更新配置",
+        "Duplicate profile": "复制配置",
+        "Import profiles": "导入配置",
+        "Store profile credential": "保存配置凭据",
+        "Migrate profile credential": "迁移配置凭据",
+        "Delete profile credential": "删除配置凭据",
+        "Import local skill": "导入本地 Skill",
+        "Update skill details": "更新 Skill 详情",
+        "Save settings": "保存设置",
+        "Choose close button behavior": "设置关闭按钮行为",
+        "Migrate local storage": "迁移本地数据",
+        "Restore local storage": "恢复本地数据",
+        "Sample host resources": "采样主机资源",
+        "Frontend error": "前端错误"
+      },
+      unknownAction: "后台任务",
+      summaryByStatus: {
+        queued: (action: string) => `${action}已加入队列。`,
+        running: (action: string) => `${action}正在执行。`,
+        success: (action: string) => `${action}已完成。`,
+        failed: (action: string) => `${action}失败，请查看日志详情。`,
+        interrupted: (action: string) => `${action}已中断。`
       }
     },
     storage: {
       title: "本地数据需要处理",
+      attentionSummary: (count: number) => `${count} 个本地数据存储需要处理，完成后相关写操作即可恢复。`,
       migrationRequired: "该存储仍使用可读取的旧版 schema。完成预览和确认迁移前，相关写操作保持锁定。",
       corrupt: "该存储已损坏。CodexHub 不会静默使用备份；请先预览通过校验的恢复方案。",
       recoveryRequired: "上一次存储操作被中断。重试或恢复前，请先检查持久任务记录。",
       previewMigration: "预览迁移",
+      previewMigrations: "查看迁移方案",
       previewRestore: "预览恢复",
       planTitle: "确认本地数据操作",
+      storeLabels: {
+        settings: "应用设置",
+        hosts: "主机数据",
+        profiles: "配置数据",
+        skills: "技能数据"
+      },
       path: "数据路径",
       fingerprint: "源文件指纹",
       backupLocation: "备份位置",
       applyMigration: "备份并迁移",
+      applyMigrations: "备份并迁移全部",
       restoreBackup: "先备份当前数据再恢复",
       cancel: "取消",
       working: "处理中...",
       migrationDone: "本地数据迁移完成。",
+      migrationsDone: (count: number) => `${count} 个本地数据存储已完成迁移。`,
       restoreDone: "本地数据恢复完成。"
     },
     settings: {
@@ -1694,16 +1801,6 @@ function AppTitleBar({
   );
 }
 
-function sectionForTask(task: TaskRun): SectionId | null {
-  const action = task.action.toLowerCase();
-  if (action.includes("skill")) return "skills";
-  if (action.includes("profile") || action.includes("api config")) return "profiles";
-  if (action.includes("resource")) return "monitor";
-  if (action.includes("setting") || action.includes("storage") || action.includes("app update")) return "settings";
-  if (action.includes("frontend")) return "tasks";
-  return "hosts";
-}
-
 function useActionErrorReporter(copy: UICopy) {
   const { notify } = useFeedback();
   return useCallback((error: unknown) => {
@@ -1711,11 +1808,47 @@ function useActionErrorReporter(copy: UICopy) {
     const code: ApiErrorCode = structured?.code ?? "operation-failed";
     notify({
       title: copy.feedback.errorTitles[code],
-      message: formatError(error),
+      message: localizeFeedbackMessage(formatError(error), copy, "error"),
       taskId: structured?.taskId ?? undefined,
       tone: "error"
     });
   }, [copy.feedback.errorTitles, notify]);
+}
+
+function localizeFeedbackMessage(message: string, copy: UICopy, tone: FeedbackTone) {
+  if (copy.common.locale !== "zh-CN") return message;
+  const normalized = message.toLowerCase();
+  if (normalized.includes("storage-migration-required") || normalized.includes("migration-required")) {
+    return copy.feedback.migrationRequired;
+  }
+  if (normalized.includes("storage-corrupt") || normalized.includes("storage-recovery-required")) {
+    return copy.feedback.storageCorrupt;
+  }
+  if (normalized.includes("partial-failure")) return copy.feedback.partialFailure;
+  const cjkCount = message.match(/[\u3400-\u9fff]/gu)?.length ?? 0;
+  const latinWordCount = message.match(/[a-z]{2,}/giu)?.length ?? 0;
+  if (cjkCount >= Math.max(2, latinWordCount)) return message;
+  return tone === "error" ? copy.feedback.genericError : copy.feedback.genericNotice;
+}
+
+function storageWriteBlockerError(item: StorageHealth) {
+  if (item.state === "migration-required") {
+    return `storage-migration-required:${item.store}: Preview and confirm the local data migration before writing.`;
+  }
+  if (item.state === "recovery-required") {
+    return `storage-recovery-required:${item.store}: Resolve the interrupted local data operation before writing.`;
+  }
+  return `storage-corrupt:${item.store}: Preview and confirm recovery before writing.`;
+}
+
+function storageStoreIcon(store: string): PlatformIconId {
+  if (store === "settings" || store === "hosts" || store === "profiles" || store === "skills") return store;
+  return "warning";
+}
+
+function storageStoreLabel(store: string, copy: UICopy) {
+  const labels = copy.storage.storeLabels as Record<string, string>;
+  return labels[store] ?? store;
 }
 
 function ModalCloseButton({
@@ -1786,7 +1919,7 @@ function ModalActions({
 }
 
 type StorageActionPlan =
-  | { kind: "migration"; plan: StorageMigrationPlan }
+  | { kind: "migration"; plans: StorageMigrationPlan[] }
   | { kind: "restore"; plan: StorageRestorePlan };
 
 function StorageHealthCenter({
@@ -1802,18 +1935,27 @@ function StorageHealthCenter({
   const [plan, setPlan] = useState<StorageActionPlan | null>(null);
   const [busyStore, setBusyStore] = useState<string | null>(null);
   const attention = health.filter((item) => item.state === "migration-required" || item.state === "corrupt" || item.state === "recovery-required");
+  const migrations = attention.filter((item) => item.state === "migration-required");
   if (attention.length === 0 && !plan) return null;
 
   const preview = async (item: StorageHealth) => {
     setBusyStore(item.store);
     try {
-      if (item.state === "corrupt") {
-        setPlan({ kind: "restore", plan: await api.previewStorageRestore(item.store) });
-      } else {
-        setPlan({ kind: "migration", plan: await api.previewStorageMigration(item.store) });
-      }
+      setPlan({ kind: "restore", plan: await api.previewStorageRestore(item.store) });
     } catch (error) {
-      notify({ message: formatError(error), taskId: taskIdForError(error), tone: "error" });
+      notify({ message: localizeFeedbackMessage(formatError(error), copy, "error"), taskId: taskIdForError(error), tone: "error" });
+    } finally {
+      setBusyStore(null);
+    }
+  };
+
+  const previewMigrations = async () => {
+    setBusyStore("migration-batch");
+    try {
+      const plans = await Promise.all(migrations.map((item) => api.previewStorageMigration(item.store)));
+      setPlan({ kind: "migration", plans });
+    } catch (error) {
+      notify({ message: localizeFeedbackMessage(formatError(error), copy, "error"), taskId: taskIdForError(error), tone: "error" });
     } finally {
       setBusyStore(null);
     }
@@ -1821,11 +1963,11 @@ function StorageHealthCenter({
 
   const apply = async () => {
     if (!plan) return;
-    setBusyStore(plan.plan.store);
+    setBusyStore(plan.kind === "migration" ? "migration-batch" : plan.plan.store);
     try {
       if (plan.kind === "migration") {
-        await api.applyStorageMigration(plan.plan);
-        notify({ message: copy.storage.migrationDone, tone: "success" });
+        for (const migrationPlan of plan.plans) await api.applyStorageMigration(migrationPlan);
+        notify({ message: copy.storage.migrationsDone(plan.plans.length), tone: "success" });
       } else {
         await api.restoreStorageBackup(plan.plan);
         notify({ message: copy.storage.restoreDone, tone: "success" });
@@ -1833,40 +1975,52 @@ function StorageHealthCenter({
       setPlan(null);
       await onChanged();
     } catch (error) {
-      notify({ message: formatError(error), taskId: taskIdForError(error), tone: "error" });
+      notify({ message: localizeFeedbackMessage(formatError(error), copy, "error"), taskId: taskIdForError(error), tone: "error" });
     } finally {
       setBusyStore(null);
     }
   };
 
-  const planPath = plan?.kind === "migration" ? plan.plan.path : plan?.plan.targetPath;
-  const planFingerprint = plan?.kind === "migration" ? plan.plan.sourceSha256 : plan?.plan.backupSha256;
-  const planBackup = plan?.kind === "migration" ? plan.plan.backupDirectory : plan?.plan.backupPath;
+  const planItems = plan?.kind === "migration"
+    ? plan.plans.map((item) => ({
+        store: item.store,
+        path: item.path,
+        fingerprint: item.sourceSha256,
+        backup: item.backupDirectory,
+        schema: `v${item.fromSchemaVersion} → v${item.toSchemaVersion}`
+      }))
+    : plan ? [{
+        store: plan.plan.store,
+        path: plan.plan.targetPath,
+        fingerprint: plan.plan.backupSha256,
+        backup: plan.plan.backupPath,
+        schema: null
+      }] : [];
 
   return (
     <>
       {attention.length > 0 ? (
         <section className="storageHealthBanner" role={attention.some((item) => item.state === "corrupt" || item.state === "recovery-required") ? "alert" : "status"}>
-          <TitleWithIcon icon="warning" level={2}>{copy.storage.title}</TitleWithIcon>
-          <div className="storageHealthList">
-            {attention.map((item) => (
-              <article key={item.store} data-state={item.state}>
-                <div>
-                  <strong>{item.store}</strong>
-                  <span>{item.state === "corrupt"
-                    ? copy.storage.corrupt
-                    : item.state === "recovery-required" ? copy.storage.recoveryRequired : copy.storage.migrationRequired}</span>
-                  <code>{item.path}</code>
-                </div>
-                {item.state !== "recovery-required" ? (
-                  <button className="secondaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => void preview(item)}>
-                    {busyStore === item.store
-                      ? copy.storage.working
-                      : item.state === "corrupt" ? copy.storage.previewRestore : copy.storage.previewMigration}
-                  </button>
-                ) : null}
-              </article>
-            ))}
+          <div className="storageHealthSummary">
+            <TitleWithIcon icon="warning" level={2}>{copy.storage.title}</TitleWithIcon>
+            <p>{copy.storage.attentionSummary(attention.length)}</p>
+          </div>
+          <div className="storageHealthCompact">
+            <div className="storageHealthStores">
+              {attention.map((item) => <Badge key={item.store} tone={item.state === "migration-required" ? "yellow" : "red"}>{item.store}</Badge>)}
+            </div>
+            <div className="storageHealthActions">
+              {migrations.length > 0 ? (
+                <button className="secondaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => void previewMigrations()}>
+                  {busyStore === "migration-batch" ? copy.storage.working : copy.storage.previewMigrations}
+                </button>
+              ) : null}
+              {attention.filter((item) => item.state === "corrupt").map((item) => (
+                <button className="secondaryButton" disabled={Boolean(busyStore)} key={item.store} type="button" onClick={() => void preview(item)}>
+                  {busyStore === item.store ? copy.storage.working : `${copy.storage.previewRestore}: ${item.store}`}
+                </button>
+              ))}
+            </div>
           </div>
         </section>
       ) : null}
@@ -1881,15 +2035,38 @@ function StorageHealthCenter({
               closeDisabled={Boolean(busyStore)}
               onClose={() => setPlan(null)}
             />
-            <div className="storagePlanDetails">
-              <div><span>{copy.storage.path}</span><code>{planPath}</code></div>
-              <div><span>{copy.storage.fingerprint}</span><code>{planFingerprint}</code></div>
-              <div><span>{copy.storage.backupLocation}</span><code>{planBackup}</code></div>
+            <div className="storagePlanDetails" data-count={planItems.length}>
+              {planItems.map((item) => (
+                <section className="storagePlanCard" key={item.store}>
+                  <header className="storagePlanCardHeader">
+                    <div className="storagePlanCardTitle">
+                      <span className="storagePlanCardIcon" aria-hidden="true"><PlatformIcon id={storageStoreIcon(item.store)} /></span>
+                      <div>
+                        <strong>{storageStoreLabel(item.store, copy)}</strong>
+                        <span>{item.store}</span>
+                      </div>
+                    </div>
+                    {item.schema ? <Badge tone="yellow">{item.schema}</Badge> : null}
+                  </header>
+                  <div className="storagePlanField">
+                    <span>{copy.storage.path}</span>
+                    <code className="storagePlanCode">{item.path}</code>
+                  </div>
+                  <div className="storagePlanField">
+                    <span>{copy.storage.fingerprint}</span>
+                    <code className="storagePlanCode">{item.fingerprint}</code>
+                  </div>
+                  <div className="storagePlanField">
+                    <span>{copy.storage.backupLocation}</span>
+                    <code className="storagePlanCode">{item.backup}</code>
+                  </div>
+                </section>
+              ))}
             </div>
             <ModalActions>
               <button className="secondaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => setPlan(null)}>{copy.storage.cancel}</button>
               <button className="primaryButton" disabled={Boolean(busyStore)} type="button" onClick={() => void apply()}>
-                {busyStore ? copy.storage.working : plan.kind === "migration" ? copy.storage.applyMigration : copy.storage.restoreBackup}
+                {busyStore ? copy.storage.working : plan.kind === "migration" ? copy.storage.applyMigrations : copy.storage.restoreBackup}
               </button>
             </ModalActions>
           </ModalFrame>
@@ -2133,20 +2310,24 @@ function App() {
   const [closeButtonPromptBusy, setCloseButtonPromptBusy] = useState(false);
   const [networkProxyManualOpen, setNetworkProxyManualOpen] = useState(false);
   const [sectionCompletionSignals, setSectionCompletionSignals] = useState<SectionCompletionSignals>({});
-  const setNotice = useCallback((message: string) => {
-    notify({ message, tone: "info" });
-  }, [notify]);
-  const setErrorNotice = useCallback((message: string, taskId?: string) => {
-    notify({ message, taskId, tone: "error" });
-  }, [notify]);
   const sidebarCompletionIndicatorsRef = useRef(settings.sidebarCompletionIndicators);
   const appUpdateStatusRef = useRef(fallbackAppUpdateStatus);
   const appUpdateBusyRef = useRef(false);
   const resourceBusyRef = useRef(false);
+  const resourceMonitorVisitedRef = useRef(false);
   const settingsSaveBusyRef = useRef(false);
 
   const locale: Locale = settings.fontPreset === "zh-cn" ? "zh" : "en";
   const copy = uiCopy[locale];
+  const setNotice = useCallback((message: string) => {
+    notify({ message: localizeFeedbackMessage(message, copy, "success"), tone: "success" });
+  }, [copy, notify]);
+  const setInfoNotice = useCallback((message: string, placement: FeedbackPlacement = "detail") => {
+    notify({ message: localizeFeedbackMessage(message, copy, "info"), placement, tone: "info" });
+  }, [copy, notify]);
+  const setErrorNotice = useCallback((message: string, taskId?: string) => {
+    notify({ message: localizeFeedbackMessage(message, copy, "error"), taskId, tone: "error" });
+  }, [copy, notify]);
   const runtimePlatform = useMemo(() => getPlatform(), []);
   const effectivePlatform = resolvePlatformAppearance(settings.platformAppearance);
   const usesCustomTitleBar = isWindows(runtimePlatform);
@@ -2158,16 +2339,6 @@ function App() {
   const canInstallSidebarStableUpdate =
     previewSidebarStableUpdateButton ||
     (appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy);
-  const taskFailureSections = useMemo(() => {
-    const sections = new Set<SectionId>();
-    for (const task of tasks) {
-      if (!unacknowledgedTaskIds.has(task.id)) continue;
-      const section = sectionForTask(task);
-      if (section) sections.add(section);
-    }
-    return sections;
-  }, [tasks, unacknowledgedTaskIds]);
-
   useEffect(() => {
     sidebarCompletionIndicatorsRef.current = settings.sidebarCompletionIndicators;
     if (!settings.sidebarCompletionIndicators) setSectionCompletionSignals({});
@@ -2215,6 +2386,10 @@ function App() {
     }
   }, [markSectionCompletionSignal]);
 
+  const handleContentInteraction = useCallback(() => {
+    clearSectionCompletionSignal(activeSection);
+  }, [activeSection, clearSectionCompletionSignal]);
+
   const refreshSshState = async () => {
     const [nextSshStatus, allSshConfigHosts, nextHosts] = await Promise.all([
       api.getSshStatus(),
@@ -2245,17 +2420,19 @@ function App() {
     };
   };
 
-  const refreshResourceMonitor = useCallback(async (manual = false): Promise<HostResourceBatchResult | null> => {
+  const refreshResourceMonitor = useCallback(async (trigger: ResourceRefreshTrigger): Promise<HostResourceBatchResult | null> => {
+    const showFeedback = trigger !== "auto";
     if (resourceBusyRef.current) return null;
     if (hosts.length === 0) {
       setResourceSnapshots([]);
       setResourceCheckedAt(null);
+      if (showFeedback) setInfoNotice(copy.monitor.refreshed(0));
       return null;
     }
 
     resourceBusyRef.current = true;
     setResourceBusy(true);
-    if (manual) setResourceError(null);
+    if (showFeedback) setResourceError(null);
 
     try {
       const result = await api.sampleHostResources(
@@ -2264,24 +2441,28 @@ function App() {
       );
       setResourceSnapshots(result.snapshots);
       setResourceCheckedAt(result.checkedAt);
-      if (manual) setNotice(copy.monitor.refreshed(result.snapshots.length));
+      if (showFeedback) setInfoNotice(copy.monitor.refreshed(result.snapshots.length));
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setResourceError(message);
-      if (manual) setErrorNotice(`${copy.monitor.refreshFailed} ${message}`, taskIdForError(error));
+      if (showFeedback) setErrorNotice(copy.monitor.refreshFailed, taskIdForError(error));
       return null;
     } finally {
       resourceBusyRef.current = false;
       setResourceBusy(false);
     }
-  }, [copy.monitor, hosts, setErrorNotice]);
+  }, [copy.monitor, hosts, setErrorNotice, setInfoNotice]);
 
   useEffect(() => {
-    if (loading || activeSection !== "monitor" || !settings.resourceMonitorAutoRefresh) return;
-    void refreshResourceMonitor(false);
+    if (loading || activeSection !== "monitor") return;
+    const firstEntry = !resourceMonitorVisitedRef.current;
+    resourceMonitorVisitedRef.current = true;
+    if (firstEntry) void refreshResourceMonitor("initial");
+    else if (settings.resourceMonitorAutoRefresh) void refreshResourceMonitor("auto");
+    if (!settings.resourceMonitorAutoRefresh) return;
     const timer = window.setInterval(() => {
-      void refreshResourceMonitor(false);
+      void refreshResourceMonitor("auto");
     }, settings.resourceMonitorRefreshSeconds * 1000);
     return () => window.clearInterval(timer);
   }, [
@@ -2326,12 +2507,9 @@ function App() {
   };
 
   const refreshTasks = useCallback(async () => {
-    const page = await api.queryTasks({ limit: 200, cursor: null });
+    const page = await api.queryTasks({ limit: MAX_VISIBLE_TASKS, cursor: null });
     const nextTasks = normalizeTaskRunsForUi(page.items);
-    setTasks((current) => {
-      const refreshedIds = new Set(nextTasks.map((task) => task.id));
-      return [...nextTasks, ...current.filter((task) => !refreshedIds.has(task.id))];
-    });
+    setTasks(nextTasks);
     setTaskNextCursor(page.nextCursor);
     setUnacknowledgedTaskIds(new Set(page.unacknowledgedTaskIds));
     return nextTasks;
@@ -2341,11 +2519,11 @@ function App() {
     if (!taskNextCursor || taskLoadingMore) return;
     setTaskLoadingMore(true);
     try {
-      const page = await api.queryTasks({ limit: 200, cursor: taskNextCursor });
+      const page = await api.queryTasks({ limit: MAX_VISIBLE_TASKS, cursor: taskNextCursor });
       const olderTasks = normalizeTaskRunsForUi(page.items);
       setTasks((current) => {
         const currentIds = new Set(current.map((task) => task.id));
-        return [...current, ...olderTasks.filter((task) => !currentIds.has(task.id))];
+        return mergeTaskRunsForUi(current, olderTasks.filter((task) => !currentIds.has(task.id)));
       });
       setTaskNextCursor(page.nextCursor);
       setUnacknowledgedTaskIds(new Set(page.unacknowledgedTaskIds));
@@ -2370,6 +2548,13 @@ function App() {
       setErrorNotice(formatError(error), taskId);
     });
   }, [refreshTasks, setErrorNotice, unacknowledgedTaskIds]);
+
+  const clearTaskHistory = useCallback(async () => {
+    const cleared = await api.clearTaskHistory();
+    await refreshTasks();
+    setNotice(apiMode === "mock" ? copy.tasks.mockHistoryCleared(cleared) : copy.tasks.historyCleared(cleared));
+    return cleared;
+  }, [copy.tasks, refreshTasks, setNotice]);
 
   useEffect(() => {
     configureFeedback({
@@ -2633,7 +2818,12 @@ function App() {
   const handleAddHost = () => {
     setActiveSection("hosts");
     setHostModalOpen(true);
-    setNotice(copy.notices.addHost);
+    setInfoNotice(copy.notices.addHost, "global");
+  };
+
+  const handleNewProfile = () => {
+    setNewProfileRequest((current) => current + 1);
+    setInfoNotice(copy.notices.newApiConfig, "global");
   };
 
   const handleConnectSshHost = async (
@@ -2650,8 +2840,9 @@ function App() {
 
       try {
         const result = await api.connectSshHost(draft, password, requestId, onProgress);
-        setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-        setNotice(result.message);
+        setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
+        if (result.ok) setNotice(result.message);
+        else setErrorNotice(result.message, result.task.id);
         if (!result.ok) {
           if (result.writeResult.action === "rolled_back") {
             await refreshSshState();
@@ -2698,7 +2889,7 @@ function App() {
     return runSectionOperation(section, async () => {
       const result = await api.deleteSshConfigHost(alias);
       await refreshSshState();
-      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+      setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
       setNotice(result.backupPath ? `${result.message} Backup: ${result.backupPath}` : result.message);
       return result;
     });
@@ -2733,27 +2924,47 @@ function App() {
     }
   };
 
-  const handleTestHost = async (idOrAlias: string, signalSection: SectionId | null = activeSection) => {
+  const handleTestHost = async (
+    idOrAlias: string,
+    signalSection: SectionId | null = activeSection,
+    options: HostProbeOptions = {}
+  ) => {
+    const {
+      includeLatestVersion = true,
+      notifyCompletion = true,
+      refreshCatalog = true
+    } = options;
     const run = async () => {
+      const blockedStore = storageHealth.find((item) =>
+        (item.store === "profiles" || item.store === "hosts")
+        && item.state !== "current"
+        && item.state !== "missing"
+      );
+      if (blockedStore) {
+        throw new Error(storageWriteBlockerError(blockedStore));
+      }
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
       const hostAlias = target?.hostAlias ?? idOrAlias;
       setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
 
       try {
-        const [result] = await Promise.all([
-          api.remoteProbeCodex(hostAlias),
-          refreshLatestCodex(true).catch((error): LatestCodexVersion => {
-            const latest = {
-              version: null,
-              checkedAt: null,
-              source: "npm",
-              error: formatError(error)
-            };
-            setLatestCodexVersion(latest);
-            return latest;
-          })
-        ]);
+        const probe = api.remoteProbeCodex(hostAlias);
+        const result = includeLatestVersion
+          ? (await Promise.all([
+              probe,
+              refreshLatestCodex(true).catch((error): LatestCodexVersion => {
+                const latest = {
+                  version: null,
+                  checkedAt: null,
+                  source: "npm",
+                  error: formatError(error)
+                };
+                setLatestCodexVersion(latest);
+                return latest;
+              })
+            ]))[0]
+          : await probe;
         setHosts((current) =>
           current.map((host) =>
             host.hostAlias === result.hostAlias
@@ -2781,12 +2992,18 @@ function App() {
               : host
           )
         );
-        const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
-        setHosts(refreshedHosts);
-        setProfiles(refreshedProfiles);
-        setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
-        setNotice(`${target?.name ?? hostAlias}: ${result.task.summary}`);
-        return { ...result, ok: result.sshStatus === "online" };
+        if (refreshCatalog) {
+          const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
+          setHosts(refreshedHosts);
+          setProfiles(refreshedProfiles);
+        }
+        setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
+        if (notifyCompletion) {
+          const message = `${target?.name ?? hostAlias}: ${localizeTaskSummary(result.task, copy)}`;
+          if (result.task.status === "success") setNotice(message);
+          else setErrorNotice(message, result.task.id);
+        }
+        return { ...result, ok: result.sshStatus === "online" && result.task.status === "success" };
       } finally {
         setHostBusy((current) => {
           const next = { ...current };
@@ -2802,6 +3019,14 @@ function App() {
   const handleTestAllSshHosts = async () => {
     const section = activeSection;
     return runSectionOperation(section, async () => {
+      const blockedStore = storageHealth.find((item) =>
+        (item.store === "profiles" || item.store === "hosts")
+        && item.state !== "current"
+        && item.state !== "missing"
+      );
+      if (blockedStore) {
+        throw new Error(storageWriteBlockerError(blockedStore));
+      }
       const latestCodexProbe = refreshLatestCodex(true).catch((error): LatestCodexVersion => {
         const latest = {
           version: null,
@@ -2812,12 +3037,24 @@ function App() {
         setLatestCodexVersion(latest);
         return latest;
       });
-      const [, ...results] = await Promise.all([
+      const [, results] = await Promise.all([
         latestCodexProbe,
-        ...sshConfigHosts.map((host) => handleTestHost(host.alias, null))
+        Promise.allSettled(
+          sshConfigHosts.map((host) => handleTestHost(host.alias, null, {
+            includeLatestVersion: false,
+            notifyCompletion: false,
+            refreshCatalog: false
+          }))
+        )
       ]);
-      setNotice(copy.hosts.testedAll);
-      return { ok: results.every((result) => result.ok) };
+      const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
+      setHosts(refreshedHosts);
+      setProfiles(refreshedProfiles);
+      const successful = results.filter((result) => result.status === "fulfilled" && result.value.ok).length;
+      const ok = successful === results.length;
+      if (ok) setNotice(copy.hosts.testedAllResult(successful, results.length));
+      else setErrorNotice(copy.hosts.testedAllFailed(successful, results.length));
+      return { ok };
     });
   };
 
@@ -2840,7 +3077,7 @@ function App() {
           : host
       )
     );
-    setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+    setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
   };
 
   const runRemoteCodexAction = async (idOrAlias: string, action: RemoteCodexAction) => {
@@ -2876,7 +3113,8 @@ function App() {
           });
         });
         applyRemoteCodexResult(result, action);
-        setNotice(`${hostName}: ${result.message}`);
+        if (result.ok) setNotice(`${hostName}: ${result.message}`);
+        else setErrorNotice(`${hostName}: ${result.message}`, result.task.id);
         void refreshLatestCodex(true);
         if (showProgressModal) {
           setCodexOperationModal((current) =>
@@ -2893,7 +3131,7 @@ function App() {
         return result;
       } catch (error) {
         const errorMessage = formatError(error);
-        setNotice(`${hostName}: ${errorMessage}`);
+        setErrorNotice(`${hostName}: ${errorMessage}`, taskIdForError(error));
         if (showProgressModal) {
           setCodexOperationModal((current) =>
             current && current.hostAlias === hostAlias && current.action === action
@@ -2955,7 +3193,9 @@ function App() {
           setHosts((current) => current.map((host) => (rejectedAliases.includes(host.hostAlias) ? { ...host, status: "offline" } : host)));
         }
         const successCount = fulfilled.filter((result) => result.ok).length;
-        setNotice(copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length));
+        const message = copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length);
+        if (successCount === uniqueAliases.length) setNotice(message);
+        else setErrorNotice(message);
         void refreshLatestCodex(true);
         return { ok: successCount === uniqueAliases.length };
       } finally {
@@ -2997,7 +3237,7 @@ function App() {
     return runSectionOperation(section, async () => {
       const profile = profiles.find((item) => item.id === id);
       const result = await api.deleteProfile(id);
-      setTasks((current) => [normalizeTaskRunForUi(result.task), ...current]);
+      setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
       if (!result.deleted) {
         setNotice(result.message);
         return result;
@@ -3055,7 +3295,7 @@ function App() {
   const applySkillDetectionResult = async (result: SkillDetectionResult) => {
     setSkillPacks(result.skills);
     setSkillInventoryStatus(result.status);
-    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+    if (result.tasks.length > 0) setTasks((current) => mergeTaskRunsForUi(normalizeTaskRunsForUi(result.tasks), current));
     const nextHosts = await api.listHosts();
     setHosts(nextHosts);
     setNotice(result.message);
@@ -3064,13 +3304,12 @@ function App() {
 
   const applySkillOperationResult = async (result: SkillTargetOperationResult) => {
     setSkillPacks(result.skills);
-    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+    if (result.tasks.length > 0) setTasks((current) => mergeTaskRunsForUi(normalizeTaskRunsForUi(result.tasks), current));
     const nextHosts = await api.listHosts();
     setHosts(nextHosts);
     const nextStatus = await api.getSkillInventoryStatus();
     setSkillInventoryStatus(nextStatus);
-    setNotice(
-      result.message === "install-success"
+    const message = result.message === "install-success"
         ? copy.skills.installSuccess
         : result.message === "install-partial-failure"
           ? copy.skills.installPartialFailure
@@ -3078,8 +3317,9 @@ function App() {
             ? copy.skills.uninstallSuccess
             : result.message === "uninstall-partial-failure"
               ? copy.skills.uninstallPartialFailure
-          : result.message || copy.skills.operationDone
-    );
+              : result.message || copy.skills.operationDone;
+    if (result.ok) setNotice(message);
+    else setErrorNotice(message);
     return result;
   };
 
@@ -3118,7 +3358,7 @@ function App() {
     const section = activeSection;
     return runSectionOperation(section, async () => {
       const result = await api.getSkillTargets(skillId);
-      if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+      if (result.tasks.length > 0) setTasks((current) => mergeTaskRunsForUi(normalizeTaskRunsForUi(result.tasks), current));
       return result;
     });
   };
@@ -3150,7 +3390,7 @@ function App() {
   const applyInstalledSkillDownloadResult = async (result: InstalledSkillDownloadResult) => {
     setSkillPacks(result.skills);
     setSkillInventoryStatus(result.status);
-    if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+    if (result.tasks.length > 0) setTasks((current) => mergeTaskRunsForUi(normalizeTaskRunsForUi(result.tasks), current));
     const nextHosts = await api.listHosts();
     setHosts(nextHosts);
     setNotice(result.message || copy.skills.downloaded);
@@ -3216,7 +3456,7 @@ function App() {
     const section = activeSection;
     return runSectionOperation(section, async () => {
       const result = await api.applyProfile(profileId, hostIds);
-      if (result.tasks.length > 0) setTasks((current) => [...normalizeTaskRunsForUi(result.tasks), ...current]);
+      if (result.tasks.length > 0) setTasks((current) => mergeTaskRunsForUi(normalizeTaskRunsForUi(result.tasks), current));
       const profileName =
         result.profiles.find((profile) => profile.id === profileId)?.name ??
         profiles.find((profile) => profile.id === profileId)?.name ??
@@ -3332,7 +3572,7 @@ function App() {
     } catch (error) {
       const detail = formatError(error);
       setSettingsSaveError(detail);
-      setErrorNotice(`${copy.settings.settingsSaveFailed} ${detail}`, taskIdForError(error));
+      setErrorNotice(copy.settings.settingsSaveFailed, taskIdForError(error));
       return false;
     } finally {
       settingsSaveBusyRef.current = false;
@@ -3441,7 +3681,11 @@ function App() {
         });
         if (!(await persistSettings({ ...settings, setupGuideDismissed: true }))) return refreshed;
         setSetupGuideOpen(false);
-        setNotice(keyError ?? copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
+        if (keyError) {
+          setErrorNotice(keyError);
+          return { ...refreshed, ok: false };
+        }
+        setNotice(copy.setupGuide.imported(refreshed.detectedSshConfigHosts.length));
         return refreshed;
       } finally {
         setSetupGuideBusy(false);
@@ -3468,7 +3712,10 @@ function App() {
             successfulTaskCount={successfulTaskCount}
             profileById={profileById}
             onAddServer={handleAddHost}
-            onTestAllSshHosts={handleTestAllSshHosts}
+            onTestAllSshHosts={() => handleTestAllSshHosts().catch((error) => {
+              setErrorNotice(formatError(error), taskIdForError(error));
+              return { ok: false };
+            })}
           />
         );
       case "hosts":
@@ -3491,8 +3738,13 @@ function App() {
             onManageCodex={handleRemoteCodexAction}
             onOpenAddHost={handleAddHost}
             onOpenSetupGuide={handleOpenSetupGuide}
-            onTestAllSshHosts={handleTestAllSshHosts}
-            onTestHost={handleTestHost}
+            onTestAllSshHosts={() => handleTestAllSshHosts().catch((error) => {
+              setErrorNotice(formatError(error), taskIdForError(error));
+              return { ok: false };
+            })}
+            onTestHost={(id) => {
+              void handleTestHost(id).catch((error) => setErrorNotice(formatError(error), taskIdForError(error)));
+            }}
             onUpdateOutdatedCodexHosts={handleUpdateOutdatedCodexHosts}
           />
         );
@@ -3553,7 +3805,7 @@ function App() {
             snapshots={resourceSnapshots}
             onAutoRefreshChange={(resourceMonitorAutoRefresh) => persistSettings({ ...settings, resourceMonitorAutoRefresh })}
             onHostOrderChange={(resourceMonitorHostOrder) => persistSettings({ ...settings, resourceMonitorHostOrder })}
-            onRefresh={() => refreshResourceMonitor(true)}
+            onRefresh={() => refreshResourceMonitor("manual")}
             onRefreshSecondsChange={(resourceMonitorRefreshSeconds) =>
               persistSettings({
                 ...settings,
@@ -3568,8 +3820,10 @@ function App() {
             copy={copy}
             hasMore={Boolean(taskNextCursor)}
             loadingMore={taskLoadingMore}
+            mockMode={apiMode === "mock"}
             requestedTaskId={requestedTaskId}
             tasks={tasks}
+            onClearTaskHistory={clearTaskHistory}
             onLoadMore={loadMoreTasks}
             onRequestHandled={() => setRequestedTaskId(null)}
             onTaskViewed={openTaskDetail}
@@ -3615,7 +3869,7 @@ function App() {
           id: "new-api-config",
           label: copy.profiles.newApiConfig,
           kind: "primary" as const,
-          onClick: () => setNewProfileRequest((current) => current + 1)
+          onClick: handleNewProfile
         }]
       : [])
   ];
@@ -3635,9 +3889,7 @@ function App() {
 
         <nav className="navList">
           {copy.navItems.map((item) => {
-            const completionTone = taskFailureSections.has(item.id)
-              ? "error"
-              : sectionCompletionSignals[item.id];
+            const completionTone = sectionCompletionSignals[item.id];
             return (
               <button
                 aria-label={completionTone ? `${item.label}: ${copy.status.task[completionTone === "error" ? "failed" : "success"]}` : item.label}
@@ -3659,23 +3911,6 @@ function App() {
         </nav>
 
         <div className="sidebarFooter">
-          <TaskDrawer
-            copy={{
-              open: copy.tasks.drawerOpen,
-              title: copy.tasks.drawerTitle,
-              description: copy.tasks.drawerDescription,
-              close: copy.tasks.drawerClose,
-              viewAll: copy.tasks.drawerViewAll,
-              empty: copy.emptyLists.tasks,
-              details: copy.tasks.details,
-              attentionCount: copy.tasks.drawerAttentionCount
-            }}
-            statusLabel={(task) => copy.status.task[task.status]}
-            tasks={tasks}
-            unacknowledgedTaskIds={unacknowledgedTaskIds}
-            onOpenTask={openTaskDetail}
-            onViewAll={() => setActiveSection("tasks")}
-          />
           <span className="statusDot" data-status={health.mode === "tauri" ? "online" : "unknown"} />
           <div>
             <strong>{apiMode === "mock" ? copy.common.mockMode : copy.common.backendMode}</strong>
@@ -3693,7 +3928,14 @@ function App() {
         </div>
       </aside>
 
-      <main className="contentShell">
+      <main
+        className="contentShell"
+        onInputCapture={handleContentInteraction}
+        onKeyDownCapture={handleContentInteraction}
+        onPointerDownCapture={handleContentInteraction}
+        onScrollCapture={handleContentInteraction}
+        onWheelCapture={handleContentInteraction}
+      >
         <StorageHealthCenter copy={copy} health={storageHealth} onChanged={refreshStorageHealth} />
         {activeSection !== "monitor" ? (
           <header className="topBar">
@@ -6612,7 +6854,7 @@ function profileDraftWithCreateDefaults(draft: ProfileDraft): ProfileDraft {
   };
 }
 
-function SkillsView({
+export function SkillsView({
   copy,
   hosts,
   inventoryStatus,
@@ -6648,6 +6890,7 @@ function SkillsView({
   onViewTasks: () => void;
 }) {
   const reportActionError = useActionErrorReporter(copy);
+  const { notify } = useFeedback();
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [firstScanOpen, setFirstScanOpen] = useState(false);
   const [previewSkill, setPreviewSkill] = useState<SkillPack | null>(null);
@@ -6815,6 +7058,21 @@ function SkillsView({
     setMessage({ text: copy.skills.downloaded, tone: "success" });
   };
 
+  const openDownload = () => {
+    setDownloadOpen(true);
+    notify({ title: copy.skills.downloadTitle, message: copy.skills.downloadBody, placement: "global", tone: "info" });
+  };
+
+  const openInstalledDownload = (skill: InstalledSkillPreview) => {
+    setDownloadInstalledSkill(skill);
+    notify({
+      title: copy.skills.downloadInstalledTitle,
+      message: copy.skills.downloadInstalledBody(skill.skillName),
+      placement: "global",
+      tone: "info"
+    });
+  };
+
   const openTargets = async (skill: SkillPack, mode: "install" | "uninstall") => {
     setTargetSkill(skill);
     setTargetMode(mode);
@@ -6896,7 +7154,7 @@ function SkillsView({
             <button className="secondaryButton" disabled={busy === "import"} type="button" onClick={() => void handleImport().catch(reportActionError)}>
               {copy.skills.importDirectory}
             </button>
-            <button className="primaryButton" disabled={busy === "download"} type="button" onClick={() => setDownloadOpen(true)}>
+            <button className="primaryButton" disabled={busy === "download"} type="button" onClick={openDownload}>
               {copy.skills.download}
             </button>
           </CommandBar>
@@ -7052,7 +7310,7 @@ function SkillsView({
           copy={copy}
           skill={previewInstalledSkill}
           onClose={() => setPreviewInstalledSkill(null)}
-          onDownload={() => setDownloadInstalledSkill(previewInstalledSkill)}
+          onDownload={() => openInstalledDownload(previewInstalledSkill)}
           onSaveAbout={async (about) => {
             if (!previewInstalledSkill.localSkill) return;
             const updated = await onUpdateLibrarySkillAbout(previewInstalledSkill.localSkill.id, about);
@@ -7949,12 +8207,14 @@ function SkillDeleteModal({
   );
 }
 
-function TasksView({
+export function TasksView({
   copy,
   hasMore,
   loadingMore,
+  mockMode,
   requestedTaskId,
   tasks,
+  onClearTaskHistory,
   onLoadMore,
   onRequestHandled,
   onTaskViewed
@@ -7962,15 +8222,21 @@ function TasksView({
   copy: UICopy;
   hasMore: boolean;
   loadingMore: boolean;
+  mockMode: boolean;
   requestedTaskId: string | null;
   tasks: TaskRun[];
+  onClearTaskHistory: () => Promise<number>;
   onLoadMore: () => Promise<void>;
   onRequestHandled: () => void;
   onTaskViewed: (taskId: string) => void;
 }) {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const reportActionError = useActionErrorReporter(copy);
   const selectedTask = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId) ?? null : null;
+  const completedTaskCount = tasks.filter((task) => task.status !== "queued" && task.status !== "running").length;
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowTick(Date.now()), 30_000);
@@ -7987,6 +8253,18 @@ function TasksView({
     onRequestHandled();
   }, [onRequestHandled, requestedTaskId, tasks]);
 
+  const clearCompletedTaskHistory = async () => {
+    setClearingHistory(true);
+    try {
+      await onClearTaskHistory();
+      setClearHistoryOpen(false);
+    } catch (error) {
+      reportActionError(error);
+    } finally {
+      setClearingHistory(false);
+    }
+  };
+
   return (
     <div className="tasksGrid">
       <section className="panel spanWide">
@@ -7994,6 +8272,14 @@ function TasksView({
           <div>
             <TitleWithIcon icon="tasks" level={2}>{copy.tasks.taskHistory}</TitleWithIcon>
           </div>
+          <button
+            className="secondaryButton dangerButton"
+            disabled={clearingHistory || completedTaskCount === 0}
+            type="button"
+            onClick={() => setClearHistoryOpen(true)}
+          >
+            {clearingHistory ? copy.tasks.clearingHistory : copy.tasks.clearHistory}
+          </button>
         </div>
         {tasks.length === 0 ? (
           <EmptyListState copy={copy} message={copy.emptyLists.tasks} variant="tasks" />
@@ -8017,7 +8303,7 @@ function TasksView({
                     <td>{task.hostName}</td>
                     <td><TaskStatusBadge copy={copy} status={task.status} /></td>
                     <td>{formatTaskTimestamp(task, copy, nowTick)}</td>
-                    <td>{task.summary}</td>
+                    <td>{localizeTaskSummary(task, copy)}</td>
                     <td className="taskDetailsCol">
                       <button className="miniButton" type="button" onClick={() => {
                         setSelectedTaskId(task.id);
@@ -8038,7 +8324,26 @@ function TasksView({
           </div>
         ) : null}
       </section>
-      {selectedTask ? <TaskLogModal copy={copy} now={nowTick} task={selectedTask} onClose={() => setSelectedTaskId(null)} /> : null}
+      {selectedTask ? (
+        <TaskLogModal
+          copy={copy}
+          now={nowTick}
+          task={selectedTask}
+          onClose={() => setSelectedTaskId(null)}
+        />
+      ) : null}
+      <ConfirmDialog
+        busy={clearingHistory}
+        copy={{
+          title: copy.tasks.clearHistoryTitle,
+          body: mockMode ? copy.tasks.clearHistoryMockBody : copy.tasks.clearHistoryBody,
+          cancel: copy.hosts.cancel,
+          confirm: clearingHistory ? copy.tasks.clearingHistory : copy.tasks.clearHistoryConfirm
+        }}
+        open={clearHistoryOpen}
+        onCancel={() => setClearHistoryOpen(false)}
+        onConfirm={() => void clearCompletedTaskHistory()}
+      />
     </div>
   );
 }
@@ -8071,7 +8376,7 @@ function TaskLogModal({
         />
         <div className="codexOperationSummary taskLogSummary">
           <span>{copy.codexOperation.summary}</span>
-          <strong>{task.summary}</strong>
+          <strong>{localizeTaskSummary(task, copy)}</strong>
           <small>{`${copy.tasks.host}: ${task.hostName} | ${copy.tasks.started}: ${formatTaskTimestamp(task, copy, now)}`}</small>
         </div>
         <div className="codexOperationLog">
@@ -8081,7 +8386,7 @@ function TaskLogModal({
           </div>
           <div className="codexOperationLogRows taskLogFlowRows">
             {task.logs.length > 0 ? task.logs.map((log) => (
-              <details className="taskLogFlowRow" data-level={log.level} key={log.id} open={task.status === "failed" || log.level === "error"}>
+              <details className="taskLogFlowRow" data-level={log.level} key={log.id} open={task.status === "failed" && log.level === "error"}>
                 <summary className="codexOperationLogRow" data-level={log.level}>
                   <strong>{copy.status.log[log.level]}</strong>
                   <span>{log.message}</span>
@@ -8477,13 +8782,22 @@ function ProfileStorageBadge({ copy, profile }: { copy: UICopy; profile: Profile
 
 function normalizeTaskRunsForUi(tasks: TaskRun[]) {
   const receivedAt = new Date().toISOString();
-  return tasks.map((task) => normalizeTaskRunForUi(task, receivedAt));
+  return tasks.slice(0, MAX_VISIBLE_TASKS).map((task) => normalizeTaskRunForUi(task, receivedAt));
+}
+
+function mergeTaskRunsForUi(primary: TaskRun[], secondary: TaskRun[]) {
+  const seen = new Set<string>();
+  return [...primary, ...secondary].filter((task) => {
+    if (seen.has(task.id)) return false;
+    seen.add(task.id);
+    return true;
+  }).slice(0, MAX_VISIBLE_TASKS);
 }
 
 function normalizeTaskRunForUi(task: TaskRun, receivedAt = new Date().toISOString()): TaskRun {
-  if (taskTimestampMillis(task)) return task;
-  const startedAt = isNowTimeLabel(task.startedAt) ? receivedAt : task.startedAt;
-  const endedAt = task.endedAt && isNowTimeLabel(task.endedAt) ? receivedAt : task.endedAt;
+  const hasTimestamp = Boolean(taskTimestampMillis(task));
+  const startedAt = hasTimestamp || !isNowTimeLabel(task.startedAt) ? task.startedAt : receivedAt;
+  const endedAt = hasTimestamp || !task.endedAt || !isNowTimeLabel(task.endedAt) ? task.endedAt : receivedAt;
   const logs = task.logs.map((log) => (isNowTimeLabel(log.timestamp) ? { ...log, timestamp: receivedAt } : log));
   return { ...task, startedAt, endedAt, logs };
 }
@@ -8503,7 +8817,13 @@ function TaskStatusBadge({ copy, status }: { copy: UICopy; status: TaskStatus })
 
 function localizeTaskAction(action: string, copy: UICopy) {
   const labels = copy.tasks.actionLabels as Record<string, string>;
-  return labels[action] ?? action;
+  return labels[action] ?? (copy.common.locale === "zh-CN" ? copy.tasks.unknownAction : action);
+}
+
+function localizeTaskSummary(task: TaskRun, copy: UICopy) {
+  if (copy.common.locale !== "zh-CN") return task.summary;
+  const summaries = copy.tasks.summaryByStatus as Record<TaskStatus, (action: string) => string>;
+  return summaries[task.status](localizeTaskAction(task.action, copy));
 }
 
 function formatTaskTimestamp(task: TaskRun, copy: UICopy, now = Date.now()) {

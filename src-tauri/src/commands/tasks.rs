@@ -22,7 +22,7 @@ pub(crate) fn query_tasks(
         limit: None,
         cursor: None,
     });
-    let limit = query.limit.unwrap_or(50).clamp(1, 200) as usize;
+    let limit = query.limit.unwrap_or(50).clamp(1, 100) as usize;
     let mut items = state
         .task_store
         .list_page(limit + 1, query.cursor.as_deref())?;
@@ -52,6 +52,16 @@ pub(crate) fn acknowledge_task(state: State<'_, AppState>, task_id: String) -> A
     state
         .task_store
         .acknowledge(task_id.trim())
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub(crate) fn clear_task_history(state: State<'_, AppState>) -> ApiResult<u64> {
+    ensure_task_storage_healthy(&state)?;
+    state
+        .task_store
+        .clear_history()
+        .map(|count| count as u64)
         .map_err(Into::into)
 }
 

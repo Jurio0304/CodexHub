@@ -25,3 +25,6 @@ Object.defineProperty(window, "matchMedia", {
   writable: true
 });
 HTMLElement.prototype.scrollIntoView = () => {};
+HTMLElement.prototype.hasPointerCapture = () => false;
+HTMLElement.prototype.setPointerCapture = () => {};
+HTMLElement.prototype.releasePointerCapture = () => {};

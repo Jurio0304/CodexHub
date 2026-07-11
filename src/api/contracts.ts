@@ -136,6 +136,7 @@ export type CodexHubApi = {
   queryTasks: (query?: TaskQuery) => Promise<TaskPage>;
   getTask: (taskId: string) => Promise<TaskRun | null>;
   acknowledgeTask: (taskId: string) => Promise<boolean>;
+  clearTaskHistory: () => Promise<number>;
   recordFrontendError: (message: string) => Promise<TaskRun>;
   onTaskUpdated: (handler: TaskUpdatedHandler) => Promise<UnlistenFn>;
   getStorageHealth: () => Promise<StorageHealth[]>;

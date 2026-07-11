@@ -27,8 +27,8 @@ const requiredFiles = [
   "src/App.tsx",
   "src/ui/ModalFrame.tsx",
   "src/ui/AlertModalFrame.tsx",
+  "src/ui/ConfirmDialog.tsx",
   "src/ui/AppErrorBoundary.tsx",
-  "src/ui/TaskDrawer.tsx",
   "src/ui/feedback.tsx",
   "src/api.ts",
   "src/api/contracts.ts",
@@ -913,6 +913,7 @@ for (const token of [
 
 const app = read("src/App.tsx");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
+const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
 for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
 }
@@ -1313,6 +1314,20 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing latest/relative Codex UI token: ${token}`);
 }
+for (const token of [
+  "Promise.allSettled(",
+  "includeLatestVersion: false",
+  "notifyCompletion: false",
+  "refreshCatalog: false",
+  "copy.hosts.testedAllResult",
+  "copy.hosts.testedAllFailed"
+]) {
+  if (!app.includes(token)) fail(`missing parallel host-test orchestration token: ${token}`);
+}
+if (app.includes("TaskDrawer")) fail("global Task drawer should be removed while the Tasks page remains available");
+if (!app.includes('apiMode === "mock" ? copy.common.mockMode : copy.common.backendMode')) {
+  fail("the pre-drawer backend-mode footer should remain explicit in desktop and Mock modes");
+}
 for (const token of ["value < 100", "value < 300", "return { label: host.codexVersion || copy.profiles.notChecked, tone: \"green\" }", "const updateDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled;"]) {
   if (app.includes(token)) fail(`Host latency/version UI should not keep old absolute or always-update logic: ${token}`);
 }
@@ -1434,8 +1449,20 @@ if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay 
 if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
 if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");
 if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
-for (const token of ["TaskLogModal", "taskLogDetailModal", "taskLogFlowRow", "taskLogMetaGrid", "taskLogStreamGrid", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\" || log.level === \"error\"}"]) {
+for (const token of ["TaskLogModal", "taskLogDetailModal", "taskLogFlowRow", "taskLogMetaGrid", "taskLogStreamGrid", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\" && log.level === \"error\"}"]) {
   if (!app.includes(token)) fail(`missing task-history log modal token: ${token}`);
+}
+for (const token of ["MAX_VISIBLE_TASKS = 100", "onClearTaskHistory", "api.clearTaskHistory()", "copy.tasks.clearHistory", "copy.tasks.historyCleared", "clearHistoryOpen"]) {
+  if (!app.includes(token)) fail(`missing task-history retention or page clear token: ${token}`);
+}
+if (app.includes("taskLogClearButton") || app.includes("onClearLogs")) {
+  fail("task detail dialog should not own task-history clearing");
+}
+for (const token of ["MAX_TASK_HISTORY: usize = 100", "TaskHistoryArchive", "task_recycle_tombstones", "trash::delete", "manual-clear", "retention", "system recycle bin"]) {
+  if (!rustBackend.includes(token)) fail(`missing system task-history recycle token: ${token}`);
+}
+if (rustBackend.includes("task_log_trash")) {
+  fail("task records must use system recycle-bin archives instead of task_log_trash");
 }
 if (app.includes("<em>{log.timestamp}</em>")) fail("Tasks log summary rows should show message content without timestamp labels");
 for (const token of ["logPanel", "publicKeyBox", "commandGrid", "commands.map((command)"]) {
@@ -1655,6 +1682,32 @@ for (const oldFontPreset of ["System Default", "Chinese Optimized", "English Opt
 }
 
 const styles = read("src/styles.css");
+if (!alertModalFrameSource.includes("portalModalContent")) fail("AlertDialog content should use the centered portal content class");
+for (const token of [".modalFrame.portalModalContent", "position: fixed", "transform: translate(-50%, -50%)", "z-index: 51"]) {
+  if (!styles.includes(token)) fail(`missing centered AlertDialog portal style: ${token}`);
+}
+const feedback = read("src/ui/feedback.tsx");
+for (const token of ["duration={5000}", "dismissForInteraction", 'data-tone={item.tone}', "feedbackToastActions", 'FeedbackPlacement = "detail" | "global"', 'data-placement={viewportPlacement}']) {
+  if (!feedback.includes(token)) fail(`missing transient feedback token: ${token}`);
+}
+if (feedback.includes("<Toast.Close") || feedback.includes("persistentFeedbackRegion")) {
+  fail("feedback should have no close icon or persistent error region");
+}
+if (styles.includes("taskDrawer") || styles.includes("persistentFeedback")) {
+  fail("removed Task drawer and persistent feedback styles should not remain");
+}
+for (const token of ['.feedbackToast[data-tone="info"]', '.feedbackToast[data-tone="success"]', '.feedbackToast[data-tone="warning"]', '.feedbackToast[data-tone="error"]', "animation: feedback-enter 1000ms", "animation: feedback-exit 1000ms", "filter: blur(8px)", "translate3d(0, 10px, 0)", "box-shadow: 0 18px 44px", "left: calc(250px + (100vw - 250px) / 2)", '.feedbackToastViewport[data-placement="global"]']) {
+  if (!styles.includes(token)) fail(`missing elevated semantic feedback style: ${token}`);
+}
+for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNotice(copy.notices.newApiConfig, "global")', 'refreshResourceMonitor("initial")', 'refreshResourceMonitor("manual")', 'refreshResourceMonitor("auto")', 'const showFeedback = trigger !== "auto"', 'placement: "global", tone: "info"']) {
+  if (!app.includes(token)) fail(`missing scoped information or monitor feedback token: ${token}`);
+}
+for (const token of [".storageHealthBanner", "width: min(100%, var(--app-content-max))", "margin: 0 auto 16px"]) {
+  if (!styles.includes(token)) fail(`storage health banner should align with the visible detail width: ${token}`);
+}
+for (const token of ["storagePlanCard", "storagePlanCode", "grid-template-columns: repeat(2, minmax(0, 1fr))", 'font-family: "Consolas"']) {
+  if (!app.includes(token) && !styles.includes(token)) fail(`storage migration confirmation should use card and code-snippet styling: ${token}`);
+}
 for (const token of ["monitorBentoGrid", "monitorHostCard", "monitorSummaryTile", "monitorGpuBlock", "monitorProcessRow", "monitorAutoRefreshControl", "monitorDragHandle", "monitorSegmentedMeter", "monitorDragGhost", "--monitor-gap", "grid-auto-rows: 2px", "data-placeholder", 'data-tone="memory"', 'data-tone="cpu"', 'data-tone="gpu"']) {
   if (!styles.includes(token)) fail(`missing resource monitor Bento style token: ${token}`);
 }

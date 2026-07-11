@@ -17,6 +17,6 @@ pub(crate) use storage::{
     preview_storage_restore, restore_storage_backup,
 };
 pub(crate) use tasks::{
-    acknowledge_task, get_task, list_tasks, query_tasks, record_frontend_error,
+    acknowledge_task, clear_task_history, get_task, list_tasks, query_tasks, record_frontend_error,
 };
 pub(crate) use updater::*;

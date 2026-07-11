@@ -65,6 +65,7 @@ export const commandPolicies = {
   query_tasks: { effect: "read", liveSsh: false, sensitiveInput: false },
   get_task: { effect: "read", liveSsh: false, sensitiveInput: false },
   acknowledge_task: { effect: "local-write", liveSsh: false, sensitiveInput: false },
+  clear_task_history: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   record_frontend_error: { effect: "local-write", liveSsh: false, sensitiveInput: false },
   get_storage_health: { effect: "read", liveSsh: false, sensitiveInput: false },
   preview_storage_migration: { effect: "read", liveSsh: false, sensitiveInput: false },

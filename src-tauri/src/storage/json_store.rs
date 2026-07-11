@@ -252,6 +252,33 @@ pub(crate) fn list_store_health(paths: &AppPaths) -> Result<Vec<StorageHealth>, 
         .collect()
 }
 
+/// Fails before external work starts when a durable store cannot accept writes.
+pub(crate) fn ensure_stores_current(paths: &AppPaths, stores: &[&str]) -> Result<(), String> {
+    for store in stores {
+        let file_name = file_name_for_store(store)?;
+        let health = inspect_store(paths, store, file_name)?;
+        match health.state {
+            StorageState::Missing | StorageState::Current => {}
+            StorageState::MigrationRequired => {
+                return Err(format!(
+                    "storage-migration-required:{store}: Preview and confirm the local data migration before writing."
+                ))
+            }
+            StorageState::RecoveryRequired => {
+                return Err(format!(
+                    "storage-recovery-required:{store}: Resolve the interrupted local data operation before writing."
+                ))
+            }
+            StorageState::Corrupt => {
+                return Err(format!(
+                    "storage-corrupt:{store}: Preview and confirm recovery before writing."
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn inspect_store(
     paths: &AppPaths,
     store: &str,
@@ -852,6 +879,23 @@ mod tests {
                 .count(),
             backups_after_first
         );
+    }
+
+    #[test]
+    fn write_preflight_rejects_legacy_data_and_accepts_current_or_missing_stores() {
+        let paths = app_paths("write-preflight");
+        let task_store = TaskStore::in_memory();
+        fs::create_dir_all(paths.config_dir()).expect("create config directory");
+        fs::write(paths.config_file("profiles.json"), br#"[]"#).expect("write legacy profiles");
+
+        let error = ensure_stores_current(&paths, &["profiles", "hosts"])
+            .expect_err("legacy profiles must block related writes");
+        assert!(error.contains("storage-migration-required:profiles"));
+
+        let plan = preview_migration(&paths, "profiles").expect("preview profiles migration");
+        apply_migration(&paths, &task_store, &plan).expect("migrate profiles");
+        ensure_stores_current(&paths, &["profiles", "hosts"])
+            .expect("current profiles and missing hosts should be writable");
     }
 
     #[test]

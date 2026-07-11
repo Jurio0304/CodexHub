@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import { mockApi } from "./mock";
 
 test("Mock task pagination, acknowledgement, and update events match the desktop contract", async () => {
+  await mockApi.clearTaskHistory();
   const onUpdate = vi.fn();
   const dispose = await mockApi.onTaskUpdated(onUpdate);
   const created = [];
@@ -22,6 +23,16 @@ test("Mock task pagination, acknowledgement, and update events match the desktop
   expect(await mockApi.acknowledgeTask(created[2].id)).toBe(true);
   const acknowledged = await mockApi.queryTasks({ limit: 10, cursor: null });
   expect(acknowledged.unacknowledgedTaskIds).not.toContain(created[2].id);
+  expect(await mockApi.clearTaskHistory()).toBe(3);
+  expect(await mockApi.getTask(created[2].id)).toBeNull();
+
+  for (let index = 0; index < 105; index += 1) {
+    await mockApi.recordFrontendError(`retention-${index}`);
+  }
+  const retained = await mockApi.queryTasks({ limit: 200, cursor: null });
+  expect(retained.items).toHaveLength(100);
+  expect(retained.nextCursor).toBeNull();
+  await mockApi.clearTaskHistory();
 
   dispose();
 });

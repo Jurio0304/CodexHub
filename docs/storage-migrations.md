@@ -29,7 +29,7 @@ Durable JSON v1 is:
 }
 ```
 
-Legacy arrays/objects are v0 and remain readable. A write to v0 is locked until the user:
+Legacy arrays/objects are v0 and remain readable. The compact storage banner groups every affected store into one review flow. A write to v0 is locked until the user:
 
 1. previews a plan containing store, path, source SHA-256, source/target schema, and backup directory;
 2. explicitly confirms the plan;
@@ -38,6 +38,10 @@ Legacy arrays/objects are v0 and remain readable. A write to v0 is locked until 
 5. has staged JSON flushed, parsed, and atomically replaced.
 
 Repeated application of an already completed plan is a no-op. A changed fingerprint returns `storage-migration-stale` and creates neither write nor backup. Corrupt targets never silently load a backup.
+
+Operations that require Host/Profile persistence or profile credential metadata preflight the related stores before starting SSH or changing OS credentials. Known migration blockers therefore fail before external work begins. Multi-host SSH probes still run concurrently; their linked Host/Profile read-modify-write windows are serialized so one completed probe cannot overwrite another probe's state.
+
+The SQLite task store uses schema v3 for task-history retention. It keeps at most 100 task records, exports recyclable completed tasks and their full logs to a validated JSON archive, moves the archive to the operating system recycle bin, and then deletes the corresponding rows. Running and queued tasks remain in SQLite; task tombstones prevent delayed writes from recreating recycled records.
 
 ## Atomic Writes And Backups
 

@@ -18,12 +18,13 @@ pub(crate) fn persist_task(
 ) -> Result<(), String> {
     let mut task = sanitize_task(task);
     if let Some(existing) = store.get(&task.id)? {
-        let mut merged = existing.logs;
-        for log in task.logs {
+        let mut merged = task.logs;
+        for log in existing.logs {
             if !merged.iter().any(|current| current.id == log.id) {
                 merged.push(log);
             }
         }
+        merged.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
         task.logs = merged;
     }
     store.upsert(&task)?;
@@ -277,10 +278,7 @@ mod tests {
                 timestamp: now(),
                 message: "password=do-not-store".into(),
                 command: Some("api_key=do-not-store".into()),
-                stdout: Some(format!(
-                    "-----BEGIN OPENSSH {} KEY-----\nsecret",
-                    "PRIVATE"
-                )),
+                stdout: Some(format!("-----BEGIN OPENSSH {} KEY-----\nsecret", "PRIVATE")),
                 stderr: Some("sk-1234567890".into()),
                 exit_code: Some(1),
                 duration_ms: None,

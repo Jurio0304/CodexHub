@@ -1154,6 +1154,7 @@ pub(crate) fn update_host_profile_apply(
     profile: &Profile,
     api_key_env_present: Option<bool>,
 ) -> Result<storage::RelatedWriteResult, String> {
+    let _write_guard = services::profile_links::acquire_write_lock(state)?;
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
     if let Some(host) = hosts
         .iter_mut()
@@ -1370,6 +1371,7 @@ pub(crate) fn update_host_probe(
     skills_exists: bool,
     skills_count: u16,
 ) -> Result<storage::RelatedWriteResult, String> {
+    let _write_guard = services::profile_links::acquire_write_lock(state)?;
     let mut probed_host_id = None;
     let mut hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
     if let Some(host) = hosts

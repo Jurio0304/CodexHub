@@ -91,6 +91,7 @@ pub fn run() {
             query_tasks,
             get_task,
             acknowledge_task,
+            clear_task_history,
             record_frontend_error,
             get_storage_health,
             preview_storage_migration,

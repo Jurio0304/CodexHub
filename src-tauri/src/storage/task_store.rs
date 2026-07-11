@@ -1,27 +1,33 @@
 use crate::tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus};
 use chrono::Local;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Params, Transaction};
+use serde::Serialize;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-const CURRENT_TASK_SCHEMA_VERSION: i64 = 1;
+const CURRENT_TASK_SCHEMA_VERSION: i64 = 3;
+const MAX_TASK_HISTORY: usize = 100;
 static BACKUP_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TASK_ARCHIVE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// SQLite is the durable source of truth for task history. The mutex is held only
-/// for short SQL transactions and never across SSH, network, or filesystem work.
+/// SQLite is the durable source of truth for task history. The mutex serializes
+/// persistence and the bounded local recycle-bin handoff, never SSH or network work.
 pub(crate) struct TaskStore {
     connection: Mutex<Connection>,
     unavailable_reason: Option<String>,
+    recycle_staging_dir: PathBuf,
 }
 
 impl TaskStore {
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                format!("Could not create the task database directory: {error}")
-            })?;
-        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| "Task database path has no parent directory.".to_string())?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create the task database directory: {error}"))?;
         let connection = Connection::open(path)
             .map_err(|error| format!("Could not open the task database: {error}"))?;
         let schema_version = connection
@@ -39,8 +45,10 @@ impl TaskStore {
         let store = Self {
             connection: Mutex::new(connection),
             unavailable_reason: None,
+            recycle_staging_dir: parent.join(".task-history-recycle-staging"),
         };
         store.mark_interrupted()?;
+        store.enforce_task_retention()?;
         Ok(store)
     }
 
@@ -51,6 +59,7 @@ impl TaskStore {
         Self {
             connection: Mutex::new(connection),
             unavailable_reason: None,
+            recycle_staging_dir: test_recycle_staging_dir(),
         }
     }
 
@@ -60,6 +69,7 @@ impl TaskStore {
                 Connection::open_in_memory().expect("open disabled task database handle"),
             ),
             unavailable_reason: Some(reason),
+            recycle_staging_dir: test_recycle_staging_dir(),
         }
     }
 
@@ -114,6 +124,11 @@ impl TaskStore {
                     timed_out INTEGER,
                     UNIQUE(task_run_id, sequence)
                 );
+                CREATE TABLE IF NOT EXISTS task_recycle_tombstones (
+                    task_run_id TEXT PRIMARY KEY,
+                    recycled_at TEXT NOT NULL,
+                    recycle_reason TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS operation_journal (
                     operation_id TEXT PRIMARY KEY,
                     kind TEXT NOT NULL,
@@ -130,7 +145,7 @@ impl TaskStore {
                     created_at TEXT NOT NULL,
                     restored_at TEXT
                 );
-                PRAGMA user_version = 1;
+                PRAGMA user_version = 3;
                 "#,
             )
             .map_err(|error| format!("Could not initialize the task database: {error}"))?;
@@ -140,6 +155,12 @@ impl TaskStore {
                 [Local::now().to_rfc3339()],
             )
             .map_err(|error| format!("Could not record the task schema migration: {error}"))?;
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO schema_migrations(version, name, checksum, applied_at) VALUES(3, 'task-history-system-recycle', 'v3', ?1)",
+                [Local::now().to_rfc3339()],
+            )
+            .map_err(|error| format!("Could not record the task log recycle-bin migration: {error}"))?;
         Ok(())
     }
 
@@ -152,6 +173,9 @@ impl TaskStore {
         let transaction = connection
             .transaction()
             .map_err(|error| format!("Could not start the task transaction: {error}"))?;
+        if task_was_recycled(&transaction, &task.id)? {
+            return Ok(());
+        }
         upsert_run(&transaction, task)?;
         transaction
             .execute("DELETE FROM task_logs WHERE task_run_id = ?1", [&task.id])
@@ -161,7 +185,9 @@ impl TaskStore {
         }
         transaction
             .commit()
-            .map_err(|error| format!("Could not commit the task transaction: {error}"))
+            .map_err(|error| format!("Could not commit the task transaction: {error}"))?;
+        drop(connection);
+        self.enforce_task_retention()
     }
 
     pub(crate) fn list(&self, limit: usize) -> Result<Vec<TaskRun>, String> {
@@ -242,30 +268,7 @@ impl TaskStore {
             .connection
             .lock()
             .map_err(|_| "Task database mutex was poisoned.".to_string())?;
-        let mut task = connection
-            .query_row(
-                "SELECT id, host_id, host_name, action, status, started_at, ended_at, summary FROM task_runs WHERE id = ?1",
-                [task_id],
-                |row| {
-                    Ok(TaskRun {
-                        id: row.get(0)?,
-                        host_id: row.get(1)?,
-                        host_name: row.get(2)?,
-                        action: row.get(3)?,
-                        status: parse_status(&row.get::<_, String>(4)?),
-                        started_at: row.get(5)?,
-                        ended_at: row.get(6)?,
-                        summary: row.get(7)?,
-                        logs: Vec::new(),
-                    })
-                },
-            )
-            .optional()
-            .map_err(|error| format!("Could not read task {task_id}: {error}"))?;
-        if let Some(task) = &mut task {
-            task.logs = load_logs(&connection, task_id)?;
-        }
-        Ok(task)
+        load_task_from_connection(&connection, task_id)
     }
 
     pub(crate) fn acknowledge(&self, task_id: &str) -> Result<bool, String> {
@@ -281,6 +284,22 @@ impl TaskStore {
             )
             .map(|changed| changed > 0)
             .map_err(|error| format!("Could not acknowledge task {task_id}: {error}"))
+    }
+
+    /// Archives every completed task to the OS recycle bin before deleting it.
+    pub(crate) fn clear_history(&self) -> Result<usize, String> {
+        self.ensure_available()?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Task database mutex was poisoned.".to_string())?;
+        let task_ids = completed_task_ids(&connection, None)?;
+        archive_and_delete_tasks(
+            &mut connection,
+            &self.recycle_staging_dir,
+            &task_ids,
+            "manual-clear",
+        )
     }
 
     pub(crate) fn begin_operation(
@@ -422,10 +441,191 @@ impl TaskStore {
             .map(|_| ())
             .map_err(|error| format!("Could not recover interrupted tasks: {error}"))
     }
+
+    fn enforce_task_retention(&self) -> Result<(), String> {
+        self.ensure_available()?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Task database mutex was poisoned.".to_string())?;
+        let total = connection
+            .query_row("SELECT COUNT(*) FROM task_runs", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|error| format!("Could not count task history: {error}"))?
+            .max(0) as usize;
+        if total <= MAX_TASK_HISTORY {
+            return Ok(());
+        }
+        let task_ids = completed_task_ids(&connection, Some(total - MAX_TASK_HISTORY))?;
+        archive_and_delete_tasks(
+            &mut connection,
+            &self.recycle_staging_dir,
+            &task_ids,
+            "retention",
+        )
+        .map(|_| ())
+    }
 }
 
-/// Future schema upgrades checkpoint WAL first and use SQLite's own consistent
-/// snapshot mechanism. The v1 bootstrap does not create an unnecessary backup.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskHistoryArchive<'a> {
+    schema_version: u8,
+    exported_at: String,
+    reason: &'a str,
+    task_count: usize,
+    tasks: &'a [TaskRun],
+}
+
+fn task_was_recycled(transaction: &Transaction<'_>, task_id: &str) -> Result<bool, String> {
+    transaction
+        .query_row(
+            "SELECT 1 FROM task_recycle_tombstones WHERE task_run_id = ?1",
+            [task_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|entry| entry.is_some())
+        .map_err(|error| format!("Could not inspect task recycle state: {error}"))
+}
+
+fn completed_task_ids(
+    connection: &Connection,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let base = "SELECT id FROM task_runs
+                WHERE status NOT IN ('queued', 'running')
+                ORDER BY started_at ASC, rowid ASC";
+    match limit {
+        Some(limit) => query_task_ids(connection, &format!("{base} LIMIT ?1"), [limit as i64]),
+        None => query_task_ids(connection, base, []),
+    }
+}
+
+fn query_task_ids<P: Params>(
+    connection: &Connection,
+    sql: &str,
+    params: P,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(sql)
+        .map_err(|error| format!("Could not prepare task recycle query: {error}"))?;
+    let task_ids = statement
+        .query_map(params, |row| row.get(0))
+        .map_err(|error| format!("Could not query recyclable tasks: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not decode recyclable tasks: {error}"))?;
+    Ok(task_ids)
+}
+
+fn archive_and_delete_tasks(
+    connection: &mut Connection,
+    recycle_staging_dir: &Path,
+    task_ids: &[String],
+    reason: &str,
+) -> Result<usize, String> {
+    if task_ids.is_empty() {
+        return Ok(0);
+    }
+    let tasks = task_ids
+        .iter()
+        .map(|task_id| {
+            load_task_from_connection(connection, task_id)?
+                .ok_or_else(|| format!("Task {task_id} disappeared before it could be recycled."))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    stage_archive_in_system_recycle_bin(recycle_staging_dir, reason, &tasks)?;
+
+    let recycled_at = Local::now().to_rfc3339();
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Could not start task history recycle transaction: {error}"))?;
+    for task_id in task_ids {
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO task_recycle_tombstones(task_run_id, recycled_at, recycle_reason)
+                 VALUES(?1, ?2, ?3)",
+                params![task_id, recycled_at, reason],
+            )
+            .map_err(|error| format!("Could not record recycled task {task_id}: {error}"))?;
+        transaction
+            .execute("DELETE FROM task_runs WHERE id = ?1", [task_id])
+            .map_err(|error| format!("Could not delete recycled task {task_id}: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit task history recycling: {error}"))?;
+    Ok(tasks.len())
+}
+
+fn stage_archive_in_system_recycle_bin(
+    recycle_staging_dir: &Path,
+    reason: &str,
+    tasks: &[TaskRun],
+) -> Result<(), String> {
+    fs::create_dir_all(recycle_staging_dir)
+        .map_err(|error| format!("Could not create task recycle staging directory: {error}"))?;
+    let sequence = TASK_ARCHIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let archive_path = recycle_staging_dir.join(format!(
+        "CodexHub-task-history-{reason}-{}-{sequence}.json",
+        Local::now().format("%Y%m%d-%H%M%S-%3f")
+    ));
+    let bytes = task_archive_bytes(reason, tasks)?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&archive_path)
+        .map_err(|error| format!("Could not stage task history archive: {error}"))?;
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&archive_path);
+        return Err(format!("Could not flush task history archive: {error}"));
+    }
+    drop(file);
+
+    if let Err(error) = move_file_to_system_recycle_bin(&archive_path) {
+        let _ = fs::remove_file(&archive_path);
+        return Err(error);
+    }
+    let _ = fs::remove_dir(recycle_staging_dir);
+    Ok(())
+}
+
+fn task_archive_bytes(reason: &str, tasks: &[TaskRun]) -> Result<Vec<u8>, String> {
+    serde_json::to_vec_pretty(&TaskHistoryArchive {
+        schema_version: 1,
+        exported_at: Local::now().to_rfc3339(),
+        reason,
+        task_count: tasks.len(),
+        tasks,
+    })
+    .map_err(|error| format!("Could not serialize task history archive: {error}"))
+}
+
+#[cfg(not(test))]
+fn move_file_to_system_recycle_bin(path: &Path) -> Result<(), String> {
+    trash::delete(path).map_err(|error| {
+        format!("Could not move task history archive to the system recycle bin: {error}")
+    })
+}
+
+#[cfg(test)]
+fn move_file_to_system_recycle_bin(path: &Path) -> Result<(), String> {
+    fs::remove_file(path)
+        .map_err(|error| format!("Could not simulate task history recycling: {error}"))
+}
+
+fn test_recycle_staging_dir() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "codexhub-task-recycle-{}-{}",
+        std::process::id(),
+        TASK_ARCHIVE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Schema upgrades checkpoint WAL first and use SQLite's own consistent snapshot.
 fn backup_before_schema_upgrade(
     connection: &Connection,
     database_path: &Path,
@@ -507,6 +707,36 @@ fn insert_log(transaction: &Transaction<'_>, sequence: usize, log: &TaskLog) -> 
         .map_err(|error| format!("Could not persist task log {}: {error}", log.id))
 }
 
+fn load_task_from_connection(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Option<TaskRun>, String> {
+    let mut task = connection
+        .query_row(
+            "SELECT id, host_id, host_name, action, status, started_at, ended_at, summary FROM task_runs WHERE id = ?1",
+            [task_id],
+            |row| {
+                Ok(TaskRun {
+                    id: row.get(0)?,
+                    host_id: row.get(1)?,
+                    host_name: row.get(2)?,
+                    action: row.get(3)?,
+                    status: parse_status(&row.get::<_, String>(4)?),
+                    started_at: row.get(5)?,
+                    ended_at: row.get(6)?,
+                    summary: row.get(7)?,
+                    logs: Vec::new(),
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Could not read task {task_id}: {error}"))?;
+    if let Some(task) = &mut task {
+        task.logs = load_logs(connection, task_id)?;
+    }
+    Ok(task)
+}
+
 fn load_logs(connection: &Connection, task_id: &str) -> Result<Vec<TaskLog>, String> {
     let mut statement = connection
         .prepare(
@@ -576,6 +806,22 @@ fn parse_level(value: &str) -> TaskLogLevel {
 mod tests {
     use super::*;
 
+    fn task_log(task_id: &str, index: usize) -> TaskLog {
+        TaskLog {
+            id: format!("log-{task_id}-{index:03}"),
+            task_run_id: task_id.into(),
+            level: TaskLogLevel::Info,
+            timestamp: format!("2026-07-10T00:{:02}:00+08:00", index % 60),
+            message: format!("Safe log {index}"),
+            command: None,
+            stdout: None,
+            stderr: None,
+            exit_code: Some(0),
+            duration_ms: Some(10),
+            timed_out: Some(false),
+        }
+    }
+
     fn task(id: &str, status: TaskStatus) -> TaskRun {
         TaskRun {
             id: id.into(),
@@ -586,19 +832,7 @@ mod tests {
             started_at: "2026-07-10T00:00:00+08:00".into(),
             ended_at: None,
             summary: "Safe summary".into(),
-            logs: vec![TaskLog {
-                id: format!("log-{id}"),
-                task_run_id: id.into(),
-                level: TaskLogLevel::Info,
-                timestamp: "2026-07-10T00:00:00+08:00".into(),
-                message: "Safe log".into(),
-                command: None,
-                stdout: None,
-                stderr: None,
-                exit_code: Some(0),
-                duration_ms: Some(10),
-                timed_out: Some(false),
-            }],
+            logs: vec![task_log(id, 0)],
         }
     }
 
@@ -646,6 +880,99 @@ mod tests {
                 .expect("task exists")
                 .started_at,
             "2026-07-10T00:00:00+08:00"
+        );
+    }
+
+    #[test]
+    fn task_history_retention_keeps_latest_hundred_and_recycles_older_tasks() {
+        let store = TaskStore::in_memory();
+        for index in 0..105 {
+            let mut run = task(&format!("task-retention-{index:03}"), TaskStatus::Success);
+            run.started_at = format!("2026-07-10T00:00:{index:03}+08:00");
+            store.upsert(&run).expect("persist retained task");
+        }
+
+        let stored = store.list(200).expect("read retained task history");
+        assert_eq!(stored.len(), MAX_TASK_HISTORY);
+        assert_eq!(
+            stored.last().map(|task| task.id.as_str()),
+            Some("task-retention-005")
+        );
+        assert!(store
+            .get("task-retention-004")
+            .expect("read recycled task")
+            .is_none());
+
+        let connection = store.connection.lock().expect("task database lock");
+        let recycled: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM task_recycle_tombstones WHERE recycle_reason = 'retention'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count retained task tombstones");
+        assert_eq!(recycled, 5);
+    }
+
+    #[test]
+    fn clearing_task_history_recycles_completed_tasks_and_keeps_active_tasks() {
+        let store = TaskStore::in_memory();
+        store
+            .upsert(&task("task-clear-success", TaskStatus::Success))
+            .expect("persist successful task");
+        store
+            .upsert(&task("task-clear-failed", TaskStatus::Failed))
+            .expect("persist failed task");
+        store
+            .upsert(&task("task-clear-running", TaskStatus::Running))
+            .expect("persist running task");
+
+        assert_eq!(store.clear_history().expect("clear task history"), 2);
+        let remaining = store.list(10).expect("read remaining task history");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "task-clear-running");
+
+        let connection = store.connection.lock().expect("task database lock");
+        let recycled: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM task_recycle_tombstones WHERE recycle_reason = 'manual-clear'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count cleared task tombstones");
+        assert_eq!(recycled, 2);
+    }
+
+    #[test]
+    fn recycled_tasks_do_not_return_after_a_stale_task_write() {
+        let store = TaskStore::in_memory();
+        let run = task("task-clear-stale", TaskStatus::Failed);
+        store.upsert(&run).expect("persist task before clear");
+        store.clear_history().expect("clear task history");
+
+        store.upsert(&run).expect("persist stale task snapshot");
+
+        assert!(store
+            .get(&run.id)
+            .expect("read task after stale write")
+            .is_none());
+    }
+
+    #[test]
+    fn task_archive_is_recoverable_json_with_complete_logs() {
+        let mut run = task("task-archive", TaskStatus::Failed);
+        run.logs = (0..105).map(|index| task_log(&run.id, index)).collect();
+
+        let bytes = task_archive_bytes("manual-clear", &[run]).expect("serialize task archive");
+        let archive: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("parse task archive");
+
+        assert_eq!(archive["schemaVersion"], 1);
+        assert_eq!(archive["reason"], "manual-clear");
+        assert_eq!(archive["taskCount"], 1);
+        assert_eq!(
+            archive["tasks"][0]["logs"].as_array().map(Vec::len),
+            Some(105)
         );
     }
 

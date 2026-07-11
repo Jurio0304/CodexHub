@@ -310,6 +310,10 @@ pub(crate) async fn execute_remote_probe_codex(
     timeout_ms: Option<u64>,
 ) -> Result<RemoteProbeResult, String> {
     ensure_task_storage_for_app(&app)?;
+    {
+        let state = app.state::<AppState>();
+        storage::ensure_stores_current(&state.paths, &["profiles", "hosts"])?;
+    }
     run_blocking_command("remote_probe_codex", move || {
         let state = app.state::<AppState>();
         run_remote_probe(&app, &state, host_alias, timeout_ms)

@@ -103,7 +103,7 @@ function mockTaskRun(hostId: string, hostName: string, action: string, summary: 
 }
 
 function recordMockTask(task: TaskRun) {
-  mockTasks = [task, ...mockTasks.filter((item) => item.id !== task.id)];
+  mockTasks = retainLatestMockTaskHistory([task, ...mockTasks.filter((item) => item.id !== task.id)]);
   const event: TaskEvent = {
     taskId: task.id,
     status: task.status,
@@ -111,6 +111,15 @@ function recordMockTask(task: TaskRun) {
     updatedAt: new Date().toISOString()
   };
   for (const handler of mockTaskHandlers) handler(clone(event));
+}
+
+function retainLatestMockTaskHistory(tasks: TaskRun[]) {
+  const retained = [...tasks];
+  for (let index = retained.length - 1; retained.length > 100 && index >= 0; index -= 1) {
+    if (retained[index].status === "queued" || retained[index].status === "running") continue;
+    retained.splice(index, 1);
+  }
+  return retained;
 }
 
 function nowStamp() {
@@ -1347,7 +1356,7 @@ export const mockApi: CodexHubApi = {
   updateLibrarySkillAbout: async (skillId: string, about: string) => mockUpdateLibrarySkillAbout(skillId, about),
   listTasks: async () => clone(mockTasks),
   queryTasks: async (query) => {
-    const limit = Math.max(1, Math.min(200, query?.limit ?? 50));
+    const limit = Math.max(1, Math.min(100, query?.limit ?? 50));
     const cursorIndex = query?.cursor ? mockTasks.findIndex((task) => task.id === query.cursor) : -1;
     const start = query?.cursor ? (cursorIndex >= 0 ? cursorIndex + 1 : mockTasks.length) : 0;
     const pageItems = mockTasks.slice(start, start + limit);
@@ -1368,6 +1377,15 @@ export const mockApi: CodexHubApi = {
     if (!mockTasks.some((task) => task.id === taskId)) return false;
     mockAcknowledgedTaskIds.add(taskId);
     return true;
+  },
+  clearTaskHistory: async () => {
+    const removedIds = mockTasks
+      .filter((task) => task.status !== "queued" && task.status !== "running")
+      .map((task) => task.id);
+    const removedIdSet = new Set(removedIds);
+    mockTasks = mockTasks.filter((task) => !removedIdSet.has(task.id));
+    for (const taskId of removedIds) mockAcknowledgedTaskIds.delete(taskId);
+    return removedIds.length;
   },
   recordFrontendError: async (message: string) => {
     const task = mockTaskRun("local-ui", "CodexHub UI", "Frontend error", message, false);

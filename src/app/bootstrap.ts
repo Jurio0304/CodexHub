@@ -32,7 +32,7 @@ export async function loadInitialAppData(): Promise<InitialAppData> {
     api.listProfiles(),
     api.listSkillPacks(),
     api.getSkillInventoryStatus(),
-    api.queryTasks({ limit: 200, cursor: null })
+    api.queryTasks({ limit: 100, cursor: null })
   ]);
 
   return {

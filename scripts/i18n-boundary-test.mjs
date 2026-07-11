@@ -124,6 +124,23 @@ if (missingInZh.length > 0 || missingInEn.length > 0) {
   );
 }
 
+const appSource = fs.readFileSync("src/App.tsx", "utf8");
+for (const token of [
+  '"Refresh latest Codex version": "刷新 Codex 最新版本"',
+  '"Import cc-switch profiles": "导入 cc-switch 配置"',
+  'unknownAction: "后台任务"',
+  'genericError: "操作失败，请在任务详情或日志中查看诊断信息。"',
+  "function localizeTaskSummary(task: TaskRun, copy: UICopy)",
+  "function localizeFeedbackMessage(message: string, copy: UICopy, tone: FeedbackTone)"
+]) {
+  if (!appSource.includes(token)) {
+    throw new Error(`Task localization contract is incomplete: ${token}`);
+  }
+}
+if (/<(?:td|strong)>\{task\.summary\}<\//u.test(appSource)) {
+  throw new Error("Task summaries must render through localizeTaskSummary instead of raw backend English.");
+}
+
 if (violations.length > 0) {
   throw new Error(`Hard-coded Chinese UI strings must live in a copy registry:\n${violations.join("\n")}`);
 }

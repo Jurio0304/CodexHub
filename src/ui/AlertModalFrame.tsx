@@ -36,7 +36,7 @@ export function AlertModalFrame({
         <AlertDialog.Content
           aria-describedby={descriptionId}
           aria-labelledby={titleId}
-          className={`modalFrame ${className}`.trim()}
+          className={`modalFrame portalModalContent ${className}`.trim()}
           ref={contentRef}
           onCloseAutoFocus={(event) => {
             event.preventDefault();

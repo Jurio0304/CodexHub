@@ -10,25 +10,28 @@ CodexHub uses one feedback path so a completed action is visible, keyboard-acces
 | --- | --- | --- |
 | Form validation, selection, copy confirmation, pure UI action | Inline status or five-second Toast | No |
 | Successful read refresh | Five-second Toast when user-triggered | No |
-| Read failure before external work starts | Dismissible persistent error with retry where available | No |
-| Settings/Host/Profile/Skill durable write | Success Toast or persistent error | Always |
-| Live SSH, probe, install, update, apply, sync | Progress surface plus Task drawer | Queued, running, and final transitions |
-| Partial failure, interrupted work, migration/recovery failure | Persistent error with task/recovery route | Always |
+| Read failure before external work starts | Five-second failure Toast with retry where available | No |
+| Settings/Host/Profile/Skill durable write | Five-second success/failure Toast | Always |
+| Live SSH, probe, install, update, apply, sync | Progress surface plus Tasks page record | Queued, running, and final transitions |
+| Partial failure, interrupted work, migration/recovery failure | Five-second failure Toast with task/recovery route | Always |
 | React render failure | Root Error Boundary with sanitized fixed text | Frontend-failure task when SQLite is available |
 
-`FeedbackProvider` deduplicates by tone, task id, and message. Success/info Toasts last five seconds, warnings last eight seconds, and errors never auto-dismiss. A task-linked error opens the durable task and acknowledges it only after the user views the task.
+`FeedbackProvider` deduplicates by placement, tone, task id, and message. Every Toast starts closing within five seconds. Its one-second entrance moves a short distance upward while changing from blurred to sharp; its one-second exit reverses that motion. Pointer, keyboard, touch, wheel, or scroll input starts the exit immediately. There is no close icon; an optional task/retry action runs first and then closes the Toast.
+
+The four semantic tones use theme-aware pale surfaces, stronger borders, and an elevated shadow: blue for information, yellow for warning, green for success, and red for failure. `detail` feedback is centered over the content pane. `global` feedback is centered over the full app viewport for dialogs such as Add Server, New API config, and skill download.
 
 ## Task Surfaces
 
-- The global Task drawer shows running and unacknowledged failed/interrupted work first, followed by the 20 latest tasks.
-- The Tasks page uses cursor pagination for complete SQLite history.
+- The Tasks page reads the authoritative retained SQLite history and never displays more than 100 task records.
+- The complete task list keeps at most the latest 100 task records. Automatic retention and the Tasks-page **Clear all** action first export complete task/log records as a JSON archive, move that file to the operating system recycle bin, and only then delete the completed SQLite rows. Running and queued tasks remain active.
+- A failed task opens only `error` detail rows automatically. Other log levels stay collapsed until the user expands them.
 - `task-updated` is a notification event. Event-delivery failure is logged with redaction; SQLite remains authoritative.
 - SSH bootstrap and remote Codex progress messages are redacted and appended to SQLite before completion. Final task persistence merges them instead of replacing the running log.
-- Sidebar success indicators clear when the owning page is entered. Failure indicators come from unacknowledged tasks and cannot be cleared by scrolling, pointer movement, or unrelated keyboard input.
+- Sidebar success and failure indicators share one transient state and clear when the owning page is entered or receives the next interaction.
 
 ## Error Contract
 
-Structured commands return `ApiError { code, message, retryable, taskId, recoveryId }`. Legacy string-returning commands use a sanitized `task-error:<taskId>:` compatibility envelope after a durable failure, so the same persistent error action can open its task. The title/action is localized from `code`; `message` is a redacted technical summary. Desktop IPC or storage failure never calls the Mock API. Mock mode is selected explicitly at build/start time.
+Structured commands return `ApiError { code, message, retryable, taskId, recoveryId }`. Legacy string-returning commands use a sanitized `task-error:<taskId>:` compatibility envelope after a durable failure, so the same transient error action can open its task. Chinese feedback renders localized operation/recovery guidance while the redacted technical summary remains in task logs. Desktop IPC or storage failure never calls the Mock API. Mock mode is selected explicitly at build/start time.
 
 Error Boundary reports use a fixed `React render failure.` payload. Raw exception text, component stacks, credentials, tokens, passwords, and private key material are neither rendered nor persisted.
 
@@ -42,10 +45,11 @@ Shared Dialog and AlertDialog wrappers provide:
 - Esc through the same close callback;
 - blocked Esc/backdrop close while a write is busy;
 - focus restoration to the triggering control, falling back to active navigation;
+- fixed, centered portal content above the modal overlay, including nested skill download/uninstall/delete confirmations;
 - `aria-labelledby`/`aria-describedby`, scoped `role="status"`, and persistent `role="alert"` regions.
 
 `prefers-reduced-motion: reduce` disables Toast/drawer movement, spinners, and existing transitions while retaining visible text and static busy state.
 
 ## Validation
 
-`pnpm test:ui` covers Toast lifetime, persistent task actions, localization, Error Boundary redaction, Task drawer focus, Dialog/AlertDialog focus behavior, and axe checks. `pnpm test:i18n` rejects Chinese UI literals outside copy registries and verifies identical English/Chinese keys.
+`pnpm test:ui` covers five-second Toast lifetime, interaction dismissal, task actions, localization, Error Boundary redaction, Dialog/AlertDialog focus behavior, and axe checks. `pnpm test:i18n` rejects Chinese UI literals outside copy registries, verifies identical English/Chinese keys, and guards localized task actions/summaries.

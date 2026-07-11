@@ -51,6 +51,7 @@ pub(crate) fn execute_delete_profile(
     id: String,
 ) -> Result<DeleteOperationResult, String> {
     ensure_task_storage_healthy(&state)?;
+    let _write_guard = services::profile_links::acquire_write_lock(&state)?;
     let mut profiles = load_profiles(&app, &state)?;
     let profile_name = profiles
         .iter()
@@ -348,6 +349,7 @@ pub(crate) fn execute_import_cc_switch_profiles(
     state: &AppState,
     replace: Option<bool>,
 ) -> Result<ProfileImportExport, String> {
+    storage::ensure_stores_current(&state.paths, &["profiles"])?;
     run_durable_local(&state, "Import cc-switch profiles", "profiles", || {
         let detected = detect_cc_switch_profiles_inner(&state)?;
         let credential_by_key = detected

@@ -8,11 +8,13 @@ export type ConfirmDialogCopy = {
 };
 
 export function ConfirmDialog({
+  busy = false,
   copy,
   open,
   onCancel,
   onConfirm
 }: {
+  busy?: boolean;
   copy: ConfirmDialogCopy;
   open: boolean;
   onCancel: () => void;
@@ -21,6 +23,7 @@ export function ConfirmDialog({
   if (!open) return null;
   return (
     <AlertModalFrame
+      busy={busy}
       className="taskLogModal simpleDeleteModal confirmDialog"
       descriptionId="confirm-dialog-description"
       titleId="confirm-dialog-title"
@@ -35,8 +38,8 @@ export function ConfirmDialog({
         </div>
       </div>
       <div className="modalActions">
-        <button className="secondaryButton" data-alert-cancel type="button" onClick={onCancel}>{copy.cancel}</button>
-        <button className="primaryButton dangerButton" type="button" onClick={onConfirm}>{copy.confirm}</button>
+        <button className="secondaryButton" data-alert-cancel disabled={busy} type="button" onClick={onCancel}>{copy.cancel}</button>
+        <button className="primaryButton dangerButton" disabled={busy} type="button" onClick={onConfirm}>{copy.confirm}</button>
       </div>
     </AlertModalFrame>
   );
