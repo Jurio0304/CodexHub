@@ -102,7 +102,7 @@ const requiredFiles = [
   ".github/workflows/build-windows-release.yml"
 ];
 
-const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
+const read = (file) => fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n?/g, "\n");
 const removed = (...parts) => parts.join("");
 const fail = (message) => {
   console.error(`SMOKE FAIL: ${message}`);
