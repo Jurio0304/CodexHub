@@ -6,7 +6,7 @@ on:
       tag:
         description: "Existing GitHub Release tag to use for updater URLs and optional asset upload."
         required: true
-        default: "v0.4.3"
+        default: "v0.4.4"
       upload_to_release:
         description: "Upload unsigned macOS assets and merged latest.json to the existing GitHub Release."
         required: true

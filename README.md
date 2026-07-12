@@ -21,7 +21,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.3-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.4-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -111,11 +111,11 @@ For the Linux desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.4.3_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.4.3_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.3 macOS artifact is unsigned/ad-hoc and should be real-Mac validated before broad rollout, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.4.4_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.4.4_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.4 macOS artifact is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
-* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.3_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
-* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.3_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.4_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.4_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
 ## ⚡ Quick Start
@@ -166,8 +166,8 @@ For everyday use, download the latest stable build from this repository's Releas
 
 ## ⚠️ Known Limitations
 
-* The v0.4.3 macOS artifact still requires real-device validation for this release, and Developer ID signing and notarization are not configured yet.
-* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.4.3.
+* The v0.4.4 macOS artifact remains unsigned/ad-hoc; Developer ID signing and notarization are not configured yet.
+* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.4.4.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub does not force Codex App to reconnect.
 * Linux remotes are the current target; Windows remotes are not in scope.
