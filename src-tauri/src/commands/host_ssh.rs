@@ -131,8 +131,15 @@ pub(crate) async fn sample_host_resources(
     app: AppHandle,
     host_aliases: Vec<String>,
     timeout_ms: Option<u64>,
+    record_task: Option<bool>,
 ) -> Result<resource_monitor::HostResourceBatchResult, String> {
-    services::host_use_cases::execute_sample_host_resources(app, host_aliases, timeout_ms).await
+    services::host_use_cases::execute_sample_host_resources(
+        app,
+        host_aliases,
+        timeout_ms,
+        record_task.unwrap_or(true),
+    )
+    .await
 }
 
 #[tauri::command]

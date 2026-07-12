@@ -325,42 +325,62 @@ pub(crate) async fn execute_sample_host_resources(
     app: AppHandle,
     host_aliases: Vec<String>,
     timeout_ms: Option<u64>,
+    should_record_task: bool,
 ) -> Result<resource_monitor::HostResourceBatchResult, String> {
-    ensure_task_storage_for_app(&app)?;
+    if should_record_task {
+        ensure_task_storage_for_app(&app)?;
+    }
     run_blocking_command("sample_host_resources", move || {
         let state = app.state::<AppState>();
-        let task_id = format!("task-resource-sample-{}", timestamp_millis());
-        let mut task = jobs::begin_task(
-            &state.task_store,
-            state.task_event_sink.as_ref(),
-            &task_id,
-            "resource-monitor",
-            &format!("{} host(s)", host_aliases.len()),
-            "Sample host resources",
-        )?;
-        let result = resource_monitor::sample_host_resources(host_aliases, timeout_ms);
-        let (total, partial, failed) = result.outcome_counts();
-        task.status = if partial > 0 || failed > 0 {
-            TaskStatus::Failed
-        } else {
-            TaskStatus::Success
-        };
-        task.ended_at = Some(timestamp_label());
-        task.summary = format!("Sampled {total} host(s): {partial} partial, {failed} failed.");
-        task.logs.push(basic_log(
-            &task_id,
-            task.logs.len() + 1,
-            if partial > 0 || failed > 0 {
-                TaskLogLevel::Warn
-            } else {
-                TaskLogLevel::Info
-            },
-            &task.summary,
-        ));
-        jobs::persist_task(&state.task_store, state.task_event_sink.as_ref(), &task)?;
-        Ok(result)
+        run_resource_sample(&state, host_aliases, timeout_ms, should_record_task)
     })
     .await?
+}
+
+/// Initial and manual refreshes are durable; scheduled polling is taskless.
+fn run_resource_sample(
+    state: &AppState,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    should_record_task: bool,
+) -> Result<resource_monitor::HostResourceBatchResult, String> {
+    if !should_record_task {
+        return Ok(resource_monitor::sample_host_resources(
+            host_aliases,
+            timeout_ms,
+        ));
+    }
+
+    let task_id = format!("task-resource-sample-{}", timestamp_millis());
+    let mut task = jobs::begin_task(
+        &state.task_store,
+        state.task_event_sink.as_ref(),
+        &task_id,
+        "resource-monitor",
+        &format!("{} host(s)", host_aliases.len()),
+        "Sample host resources",
+    )?;
+    let result = resource_monitor::sample_host_resources(host_aliases, timeout_ms);
+    let (total, partial, failed) = result.outcome_counts();
+    task.status = if partial > 0 || failed > 0 {
+        TaskStatus::Failed
+    } else {
+        TaskStatus::Success
+    };
+    task.ended_at = Some(timestamp_label());
+    task.summary = format!("Sampled {total} host(s): {partial} partial, {failed} failed.");
+    task.logs.push(basic_log(
+        &task_id,
+        task.logs.len() + 1,
+        if partial > 0 || failed > 0 {
+            TaskLogLevel::Warn
+        } else {
+            TaskLogLevel::Info
+        },
+        &task.summary,
+    ));
+    jobs::persist_task(&state.task_store, state.task_event_sink.as_ref(), &task)?;
+    Ok(result)
 }
 
 pub(crate) async fn execute_remote_manage_codex(
@@ -410,4 +430,38 @@ pub(crate) async fn execute_refresh_latest_codex_version(
 
 pub(crate) async fn execute_get_local_codex_status() -> Result<LocalCodexStatus, String> {
     run_blocking_command("get_local_codex_status", run_get_local_codex_status).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_resource_sample_does_not_persist_a_task() {
+        let state = AppState::new(storage::TaskStore::in_memory());
+        let result = run_resource_sample(&state, vec!["bad alias!".into()], Some(3_000), false)
+            .expect("run automatic resource sample");
+
+        assert_eq!(result.outcome_counts().0, 1);
+        assert!(state
+            .task_store
+            .list(10)
+            .expect("read automatic sample tasks")
+            .is_empty());
+    }
+
+    #[test]
+    fn user_requested_resource_sample_persists_one_task() {
+        let state = AppState::new(storage::TaskStore::in_memory());
+        run_resource_sample(&state, vec!["bad alias!".into()], Some(3_000), true)
+            .expect("run recorded resource sample");
+
+        let tasks = state
+            .task_store
+            .list(10)
+            .expect("read recorded sample tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].action, "Sample host resources");
+        assert!(matches!(tasks[0].status, TaskStatus::Failed));
+    }
 }

@@ -107,6 +107,12 @@ type HostProbeOptions = {
 };
 type ResourceRefreshTrigger = "initial" | "manual" | "auto";
 const MAX_VISIBLE_TASKS = 100;
+
+// Scheduled polling updates monitor cards without consuming durable task history.
+export function shouldRecordResourceSample(trigger: ResourceRefreshTrigger) {
+  return trigger !== "auto";
+}
+
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   hostAlias: string;
@@ -2421,7 +2427,8 @@ function App() {
   };
 
   const refreshResourceMonitor = useCallback(async (trigger: ResourceRefreshTrigger): Promise<HostResourceBatchResult | null> => {
-    const showFeedback = trigger !== "auto";
+    const recordTask = shouldRecordResourceSample(trigger);
+    const showFeedback = recordTask;
     if (resourceBusyRef.current) return null;
     if (hosts.length === 0) {
       setResourceSnapshots([]);
@@ -2437,7 +2444,8 @@ function App() {
     try {
       const result = await api.sampleHostResources(
         hosts.map((host) => host.hostAlias),
-        RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS
+        RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS,
+        recordTask
       );
       setResourceSnapshots(result.snapshots);
       setResourceCheckedAt(result.checkedAt);

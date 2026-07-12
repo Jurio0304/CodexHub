@@ -24,6 +24,7 @@ The four semantic tones use theme-aware pale surfaces, stronger borders, and an 
 
 - The Tasks page reads the authoritative retained SQLite history and never displays more than 100 task records.
 - The complete task list keeps at most the latest 100 task records. Automatic retention and the Tasks-page **Clear all** action first export complete task/log records as a JSON archive, move that file to the operating system recycle bin, and only then delete the completed SQLite rows. Running and queued tasks remain active.
+- Resource-monitor sampling writes one task for the first page entry or a manual refresh. Scheduled auto-refresh remains taskless so polling cannot displace user-initiated history.
 - A failed task opens only `error` detail rows automatically. Other log levels stay collapsed until the user expands them.
 - `task-updated` is a notification event. Event-delivery failure is logged with redaction; SQLite remains authoritative.
 - SSH bootstrap and remote Codex progress messages are redacted and appended to SQLite before completion. Final task persistence merges them instead of replacing the running log.

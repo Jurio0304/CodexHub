@@ -671,12 +671,25 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
   };
 }
 
-function mockSampleHostResources(hostAliases: string[]): HostResourceBatchResult {
+function mockSampleHostResources(hostAliases: string[], recordTask = true): HostResourceBatchResult {
   const aliases = hostAliases.length > 0 ? hostAliases : ["mock-gpu-01", "mock-cpu-01", "mock-gpu-02"];
-  return {
+  const result: HostResourceBatchResult = {
     checkedAt: new Date().toISOString(),
     snapshots: aliases.map(mockHostResourceSnapshot)
   };
+  if (recordTask) {
+    const partial = result.snapshots.filter((snapshot) => snapshot.status === "partial").length;
+    const failed = result.snapshots.filter((snapshot) => snapshot.status === "failed").length;
+    const total = result.snapshots.length;
+    recordMockTask(mockTaskRun(
+      "resource-monitor",
+      `${total} host(s)`,
+      "Sample host resources",
+      `Sampled ${total} host(s): ${partial} partial, ${failed} failed.`,
+      partial === 0 && failed === 0
+    ));
+  }
+  return result;
 }
 
 function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
@@ -1212,7 +1225,8 @@ export const mockApi: CodexHubApi = {
       identityFile: fallbackSshStatus().preferredIdentityFile
     }),
   remoteProbeCodex: async (hostAlias: string) => mockRemoteProbe(hostAlias),
-  sampleHostResources: async (hostAliases: string[]) => mockSampleHostResources(hostAliases),
+  sampleHostResources: async (hostAliases: string[], _timeoutMs = 8000, recordTask = true) =>
+    mockSampleHostResources(hostAliases, recordTask),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,

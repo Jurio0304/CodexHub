@@ -1493,7 +1493,7 @@ for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior"
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
-for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "mockSampleHostResources", "gpuUuid", "processes"]) {
+for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "mockSampleHostResources", "recordTask?: boolean", "recordTask = true", "gpuUuid", "processes"]) {
   if (!api.includes(token)) fail(`missing resource monitor API token: ${token}`);
 }
 for (const token of [
@@ -1699,8 +1699,11 @@ if (styles.includes("taskDrawer") || styles.includes("persistentFeedback")) {
 for (const token of ['.feedbackToast[data-tone="info"]', '.feedbackToast[data-tone="success"]', '.feedbackToast[data-tone="warning"]', '.feedbackToast[data-tone="error"]', "animation: feedback-enter 1000ms", "animation: feedback-exit 1000ms", "filter: blur(8px)", "translate3d(0, 10px, 0)", "box-shadow: 0 18px 44px", "left: calc(250px + (100vw - 250px) / 2)", '.feedbackToastViewport[data-placement="global"]']) {
   if (!styles.includes(token)) fail(`missing elevated semantic feedback style: ${token}`);
 }
-for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNotice(copy.notices.newApiConfig, "global")', 'refreshResourceMonitor("initial")', 'refreshResourceMonitor("manual")', 'refreshResourceMonitor("auto")', 'const showFeedback = trigger !== "auto"', 'placement: "global", tone: "info"']) {
+for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNotice(copy.notices.newApiConfig, "global")', 'refreshResourceMonitor("initial")', 'refreshResourceMonitor("manual")', 'refreshResourceMonitor("auto")', 'const recordTask = shouldRecordResourceSample(trigger)', 'const showFeedback = recordTask', 'RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS,\n        recordTask', 'placement: "global", tone: "info"']) {
   if (!app.includes(token)) fail(`missing scoped information or monitor feedback token: ${token}`);
+}
+for (const token of ["record_task.unwrap_or(true)", "if should_record_task", "if !should_record_task", "run_resource_sample"]) {
+  if (!rustBackend.includes(token)) fail(`missing automatic resource-sample task policy token: ${token}`);
 }
 for (const token of [".storageHealthBanner", "width: min(100%, var(--app-content-max))", "margin: 0 auto 16px"]) {
   if (!styles.includes(token)) fail(`storage health banner should align with the visible detail width: ${token}`);

@@ -36,3 +36,17 @@ test("Mock task pagination, acknowledgement, and update events match the desktop
 
   dispose();
 });
+
+test("Mock automatic resource polling stays out of task history", async () => {
+  await mockApi.clearTaskHistory();
+
+  await mockApi.sampleHostResources(["mock-gpu-01"], 8000, false);
+  expect((await mockApi.queryTasks({ limit: 10, cursor: null })).items).toHaveLength(0);
+
+  await mockApi.sampleHostResources(["mock-gpu-01"], 8000, true);
+  const recorded = await mockApi.queryTasks({ limit: 10, cursor: null });
+  expect(recorded.items).toHaveLength(1);
+  expect(recorded.items[0]).toEqual(expect.objectContaining({ action: "Sample host resources" }));
+
+  await mockApi.clearTaskHistory();
+});

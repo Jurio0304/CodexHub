@@ -157,10 +157,11 @@ export const desktopApi: CodexHubApi = {
       hostAlias: requireHostAlias("remote_probe_codex", hostAlias),
       timeoutMs
     }),
-  sampleHostResources: (hostAliases: string[], timeoutMs = 8000) =>
+  sampleHostResources: (hostAliases: string[], timeoutMs = 8000, recordTask = true) =>
     requiredInvoke<HostResourceBatchResultDto>("sample_host_resources", {
       hostAliases: hostAliases.map((alias) => requireHostAlias("sample_host_resources", alias)),
-      timeoutMs
+      timeoutMs,
+      recordTask
     }),
   remoteManageCodex: async (
     hostAlias: string,

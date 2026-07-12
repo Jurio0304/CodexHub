@@ -91,7 +91,7 @@ export type CodexHubApi = {
   bootstrapSshHost: (draft: SshHostDraft, password: string, timeoutMs?: number) => Promise<SshBootstrapResult>;
   bootstrapExistingSshHost: (hostAlias: string, password: string, timeoutMs?: number) => Promise<SshBootstrapResult>;
   remoteProbeCodex: (hostAlias: string, timeoutMs?: number) => Promise<RemoteProbeResult>;
-  sampleHostResources: (hostAliases: string[], timeoutMs?: number) => Promise<HostResourceBatchResult>;
+  sampleHostResources: (hostAliases: string[], timeoutMs?: number, recordTask?: boolean) => Promise<HostResourceBatchResult>;
   remoteManageCodex: (
     hostAlias: string,
     action: RemoteCodexAction,
