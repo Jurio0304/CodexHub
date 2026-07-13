@@ -1163,13 +1163,21 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(CODEX_INSTALL_SCRIPT
             .contains("CodexHub will not disable TLS verification for the official installer"));
         assert!(CODEX_INSTALL_SCRIPT.contains("Insecure TLS fallback is limited to npmmirror URLs"));
+        assert!(!CODEX_INSTALL_SCRIPT.contains("pub(crate) https://"));
+        assert!(CODEX_INSTALL_SCRIPT.contains("phase_label=\"${4:-download}\""));
+        assert!(CODEX_INSTALL_SCRIPT.contains("--connect-timeout \"$connect_timeout\""));
+        assert!(CODEX_INSTALL_SCRIPT.contains("--max-time \"$max_time\""));
         assert!(
             CODEX_INSTALL_SCRIPT.contains("npmmirror metadata response was HTML instead of JSON")
         );
         assert!(CODEX_INSTALL_SCRIPT.contains("not a readable gzip tarball"));
         assert!(CODEX_INSTALL_SCRIPT.contains("archive contains unsafe paths"));
         assert!(CODEX_INSTALL_SCRIPT.contains("curl -k -fsSL"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("wget --no-check-certificate"));
+        assert!(CODEX_INSTALL_SCRIPT.contains("wget --timeout=\"$max_time\" --tries=1"));
+        assert!(CODEX_INSTALL_SCRIPT.contains("--no-check-certificate"));
+        assert!(CODEX_INSTALL_SCRIPT.contains("npmmirror Codex metadata"));
+        assert!(CODEX_INSTALL_SCRIPT.contains("npmmirror Codex native package"));
+        assert!(CODEX_INSTALL_SCRIPT.contains("Starting npm install fallback"));
         assert!(CODEX_INSTALL_SCRIPT.contains("vendor/$target"));
         assert!(CODEX_INSTALL_SCRIPT.contains("ln -sfn \"$release_dir/bin/codex\""));
         assert!(CODEX_INSTALL_SCRIPT.contains("command -v npm"));

@@ -3116,7 +3116,7 @@ function App() {
             return {
               ...current,
               message: event.step === "summary" ? event.message : current.message,
-              logs: [...current.logs, event].slice(-80)
+              logs: appendCodexProgressLog(current.logs, event).slice(-80)
             };
           });
         });
@@ -9114,12 +9114,27 @@ function codexOperationHint(copy: UICopy, action: RemoteCodexAction) {
 
 function progressLogLevel(log: RemoteCodexProgressEvent): "info" | "warn" | "error" {
   if (log.status === "failed" || log.status === "stderr") return "error";
-  if (log.status === "heartbeat") return "warn";
   return "info";
 }
 
 function progressLogLabel(copy: UICopy, log: RemoteCodexProgressEvent) {
   return copy.status.log[progressLogLevel(log)];
+}
+
+function appendCodexProgressLog(
+  logs: RemoteCodexProgressEvent[],
+  event: RemoteCodexProgressEvent
+) {
+  if (event.status !== "heartbeat" || logs.length === 0) {
+    return [...logs, event];
+  }
+
+  const last = logs[logs.length - 1];
+  if (last.status === "heartbeat" && last.step === event.step) {
+    return [...logs.slice(0, -1), event];
+  }
+
+  return [...logs, event];
 }
 
 function waitForNextFrame() {

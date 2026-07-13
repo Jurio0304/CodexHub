@@ -1180,7 +1180,7 @@ is_tls_cert_error() {
 
 allow_insecure_for_url() {
   case "$1" in
-    pub(crate) https://registry.npmmirror.com/* | https://*.npmmirror.com/*)
+    https://registry.npmmirror.com/* | https://*.npmmirror.com/*)
       return 0
       ;;
     *)
@@ -1193,8 +1193,13 @@ download_file_url() {
   url="$1"
   output="$2"
   allow_insecure="${3:-no}"
+  phase_label="${4:-download}"
+  connect_timeout="${5:-15}"
+  max_time="${6:-60}"
   err_file="$tmp_dir/download.err"
   last_status=127
+
+  printf '[CodexHub] Starting %s from %s\n' "$phase_label" "$url"
 
   if [ "$allow_insecure" = "yes" ] && ! allow_insecure_for_url "$url"; then
     printf 'Insecure TLS fallback is limited to npmmirror URLs; refusing disabled verification for %s\n' "$url" >&2
@@ -1203,7 +1208,8 @@ download_file_url() {
 
   if command -v curl >/dev/null 2>&1; then
     rm -f "$err_file"
-    if curl -fsSL "$url" -o "$output" 2>"$err_file"; then
+    if curl -fsSL --connect-timeout "$connect_timeout" --max-time "$max_time" "$url" -o "$output" 2>"$err_file"; then
+      printf '[CodexHub] Finished %s.\n' "$phase_label"
       return 0
     fi
     last_status=$?
@@ -1211,8 +1217,9 @@ download_file_url() {
     if [ "$allow_insecure" = "yes" ] && is_tls_cert_error "$err_file"; then
       printf 'TLS certificate verification failed for %s; retrying npmmirror download with certificate checks disabled.\n' "$url" >&2
       rm -f "$err_file"
-      if curl -k -fsSL "$url" -o "$output" 2>"$err_file"; then
+      if curl -k -fsSL --connect-timeout "$connect_timeout" --max-time "$max_time" "$url" -o "$output" 2>"$err_file"; then
         insecure_tls_fallback=yes
+        printf '[CodexHub] Finished %s with insecure TLS fallback.\n' "$phase_label"
         return 0
       fi
       last_status=$?
@@ -1221,7 +1228,8 @@ download_file_url() {
   fi
   if command -v wget >/dev/null 2>&1; then
     rm -f "$err_file"
-    if wget -qO "$output" "$url" 2>"$err_file"; then
+    if wget --timeout="$max_time" --tries=1 -qO "$output" "$url" 2>"$err_file"; then
+      printf '[CodexHub] Finished %s.\n' "$phase_label"
       return 0
     fi
     last_status=$?
@@ -1229,14 +1237,16 @@ download_file_url() {
     if [ "$allow_insecure" = "yes" ] && is_tls_cert_error "$err_file"; then
       printf 'TLS certificate verification failed for %s; retrying npmmirror download with certificate checks disabled.\n' "$url" >&2
       rm -f "$err_file"
-      if wget --no-check-certificate -qO "$output" "$url" 2>"$err_file"; then
+      if wget --timeout="$max_time" --tries=1 --no-check-certificate -qO "$output" "$url" 2>"$err_file"; then
         insecure_tls_fallback=yes
+        printf '[CodexHub] Finished %s with insecure TLS fallback.\n' "$phase_label"
         return 0
       fi
       last_status=$?
       cat "$err_file" >&2
     fi
   fi
+  printf '[CodexHub] %s failed with status %s.\n' "$phase_label" "$last_status" >&2
   return "$last_status"
 }
 
@@ -1296,8 +1306,10 @@ PY
 }
 
 official_status=127
+printf '[CodexHub] Trying official Codex installer download.\n'
 if command -v curl >/dev/null 2>&1; then
   if curl -fsSL --connect-timeout 15 --max-time 45 "https://chatgpt.com/codex/install.sh" -o "$tmp_dir/install.sh" 2>"$tmp_dir/official.err"; then
+    printf '[CodexHub] Official installer downloaded; starting installer.\n'
     if command -v timeout >/dev/null 2>&1; then
       timeout 75 sh "$tmp_dir/install.sh"
     else
@@ -1313,6 +1325,7 @@ if command -v curl >/dev/null 2>&1; then
   fi
 elif command -v wget >/dev/null 2>&1; then
   if wget --timeout=15 --tries=1 -qO "$tmp_dir/install.sh" "https://chatgpt.com/codex/install.sh" 2>"$tmp_dir/official.err"; then
+    printf '[CodexHub] Official installer downloaded; starting installer.\n'
     if command -v timeout >/dev/null 2>&1; then
       timeout 75 sh "$tmp_dir/install.sh"
     else
@@ -1331,6 +1344,7 @@ else
 fi
 
 if [ "$official_status" -eq 0 ]; then
+  printf '[CodexHub] Official Codex installer completed successfully.\n'
   printf 'CODEXHUB_INSTALL_METHOD=official\n'
   exit 0
 fi
@@ -1356,7 +1370,7 @@ if command -v python3 >/dev/null 2>&1; then
 
   version=""
   tarball=""
-  if [ -n "$platform" ] && download_file_url "https://registry.npmmirror.com/@openai/codex" "$tmp_dir/codex-metadata.json" yes; then
+  if [ -n "$platform" ] && download_file_url "https://registry.npmmirror.com/@openai/codex" "$tmp_dir/codex-metadata.json" yes "npmmirror Codex metadata" 15 30; then
     metadata_out="$tmp_dir/codex-metadata.out"
     if extract_npmmirror_metadata "$tmp_dir/codex-metadata.json" "$platform" >"$metadata_out"; then
       version=$(sed -n 's/^CODEXHUB_NATIVE_VERSION=//p' "$metadata_out" | head -n 1)
@@ -1364,7 +1378,7 @@ if command -v python3 >/dev/null 2>&1; then
     else
       native_status=$?
     fi
-    if [ -n "$version" ] && [ -n "$tarball" ] && download_file_url "$tarball" "$tmp_dir/codex-platform.tgz" yes; then
+    if [ -n "$version" ] && [ -n "$tarball" ] && download_file_url "$tarball" "$tmp_dir/codex-platform.tgz" yes "npmmirror Codex native package" 15 75; then
       extract_dir="$tmp_dir/native-extract"
       release_dir="$CODEX_HOME/packages/standalone/releases/$version"
       stage_dir="$release_dir.tmp.$$"
@@ -1418,9 +1432,11 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 127
 fi
 
+printf '[CodexHub] Starting npm install fallback.\n'
 npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com
 npm_status=$?
 if [ "$npm_status" -eq 0 ]; then
+  printf '[CodexHub] npm install fallback completed successfully.\n'
   printf 'CODEXHUB_INSTALL_METHOD=npm-mirror\n'
   exit 0
 fi
