@@ -9,6 +9,8 @@ import type {
   GpuVendorDto,
   HealthDto,
   HostResourceBatchResultDto,
+  HostOperationKindDto,
+  HostOperationProgressEventDto,
   HostResourceSnapshotDto,
   HostResourceStatusDto,
   LatestCodexVersionDto,
@@ -17,9 +19,13 @@ import type {
   NetworkProxyCandidateDto,
   NetworkProxyStatusDto,
   RemoteCodexActionDto,
+  RemoteCodexBatchItemDto,
+  RemoteCodexBatchResultDto,
   RemoteCodexMaintenanceResultDto,
   RemoteCodexProgressEventDto,
   RemoteProbeResultDto,
+  RemoteProbeBatchItemDto,
+  RemoteProbeBatchResultDto,
   SshBootstrapResultDto,
   SshCheckResultDto,
   SshConfigDeleteResultDto,
@@ -32,6 +38,8 @@ import type {
   TaskLog,
   TaskLogLevel,
   TaskRun,
+  TaskStep,
+  TaskStepStatus,
   TaskStatus
 } from "./generated/rust-contracts";
 
@@ -329,7 +337,16 @@ export type InstalledSkillDownloadResult = {
 };
 
 // Wire task contracts are generated from Rust; UI-only models remain in this file.
-export type { TaskLog, TaskLogLevel, TaskRun, TaskStatus };
+export type {
+  HostOperationKindDto as HostOperationKind,
+  HostOperationProgressEventDto as HostOperationProgressEvent,
+  TaskLog,
+  TaskLogLevel,
+  TaskRun,
+  TaskStep,
+  TaskStepStatus,
+  TaskStatus
+};
 
 export type ConnectionTest = ConnectionTestDto;
 export type SshCheckResult = SshCheckResultDto;
@@ -354,6 +371,9 @@ export type SshBootstrapProgressEvent = {
 
 export type RemoteProbeResult = RemoteProbeResultDto;
 
+export type RemoteProbeBatchItem = RemoteProbeBatchItemDto;
+export type RemoteProbeBatchResult = RemoteProbeBatchResultDto;
+
 export type HostResourceStatus = HostResourceStatusDto;
 export type GpuVendor = GpuVendorDto;
 export type GpuTool = "nvidia-smi" | "rocm-smi" | "lspci" | "none" | string;
@@ -366,6 +386,9 @@ export type HostResourceBatchResult = HostResourceBatchResultDto;
 export type RemoteCodexAction = RemoteCodexActionDto;
 export type RemoteCodexProgressEvent = RemoteCodexProgressEventDto;
 export type RemoteCodexMaintenanceResult = RemoteCodexMaintenanceResultDto;
+
+export type RemoteCodexBatchItem = RemoteCodexBatchItemDto;
+export type RemoteCodexBatchResult = RemoteCodexBatchResultDto;
 
 export type SshKeyInfo = SshKeyInfoDto;
 export type SshStatus = SshStatusDto;

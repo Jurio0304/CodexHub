@@ -122,8 +122,26 @@ pub(crate) async fn remote_probe_codex(
     app: AppHandle,
     host_alias: String,
     timeout_ms: Option<u64>,
+    request_id: Option<String>,
 ) -> Result<RemoteProbeResult, String> {
-    services::host_use_cases::execute_remote_probe_codex(app, host_alias, timeout_ms).await
+    services::host_use_cases::execute_remote_probe_codex(app, host_alias, timeout_ms, request_id)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn batch_remote_probe_codex(
+    app: AppHandle,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+) -> Result<RemoteProbeBatchResult, String> {
+    services::host_use_cases::execute_batch_remote_probe_codex(
+        app,
+        host_aliases,
+        timeout_ms,
+        request_id,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -152,6 +170,22 @@ pub(crate) async fn remote_manage_codex(
 ) -> Result<RemoteCodexMaintenanceResult, String> {
     services::host_use_cases::execute_remote_manage_codex(
         app, host_alias, action, timeout_ms, request_id,
+    )
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn batch_remote_update_codex(
+    app: AppHandle,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+) -> Result<RemoteCodexBatchResult, String> {
+    services::host_use_cases::execute_batch_remote_update_codex(
+        app,
+        host_aliases,
+        timeout_ms,
+        request_id,
     )
     .await
 }

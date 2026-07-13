@@ -1149,41 +1149,46 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
     }
 
     #[test]
-    fn codex_install_script_uses_user_install_dir_and_mirror_fallback() {
-        assert!(CODEX_INSTALL_SCRIPT.contains("CODEX_INSTALL_DIR=\"$HOME/.local/bin\""));
-        assert!(CODEX_INSTALL_SCRIPT.contains("CODEX_HOME=\"$HOME/.codex\""));
-        assert!(CODEX_INSTALL_SCRIPT.contains("CODEX_NON_INTERACTIVE=1"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("https://chatgpt.com/codex/install.sh"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("registry=https://registry.npmmirror.com"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("https://registry.npmmirror.com/@openai/codex"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=npm-mirror-native"));
+    fn codex_install_methods_are_separate_safe_user_installers() {
+        for script in [
+            CODEX_OFFICIAL_INSTALL_SCRIPT,
+            CODEX_REMOTE_NATIVE_MIRROR_SCRIPT,
+            CODEX_REMOTE_NPM_MIRROR_SCRIPT,
+        ] {
+            assert!(script.contains("CODEX_INSTALL_DIR=\"$HOME/.local/bin\""));
+            assert!(script.contains("CODEX_HOME=\"$HOME/.codex\""));
+            assert!(!script.contains("sudo"));
+            assert!(!script.contains("chown"));
+            assert!(!script.contains("/usr/local/bin"));
+        }
+
+        assert!(CODEX_OFFICIAL_INSTALL_SCRIPT.contains("https://chatgpt.com/codex/install.sh"));
+        assert!(!CODEX_OFFICIAL_INSTALL_SCRIPT.contains("curl -k"));
+        assert!(!CODEX_OFFICIAL_INSTALL_SCRIPT.contains("--no-check-certificate"));
+        assert!(CODEX_OFFICIAL_INSTALL_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=official"));
+
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
+            .contains("https://registry.npmmirror.com/@openai/codex"));
         assert!(
-            CODEX_INSTALL_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=npm-mirror-native-insecure-tls")
+            CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=npm-mirror-native")
         );
-        assert!(CODEX_INSTALL_SCRIPT
-            .contains("CodexHub will not disable TLS verification for the official installer"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("Insecure TLS fallback is limited to npmmirror URLs"));
-        assert!(!CODEX_INSTALL_SCRIPT.contains("pub(crate) https://"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("phase_label=\"${4:-download}\""));
-        assert!(CODEX_INSTALL_SCRIPT.contains("--connect-timeout \"$connect_timeout\""));
-        assert!(CODEX_INSTALL_SCRIPT.contains("--max-time \"$max_time\""));
-        assert!(
-            CODEX_INSTALL_SCRIPT.contains("npmmirror metadata response was HTML instead of JSON")
-        );
-        assert!(CODEX_INSTALL_SCRIPT.contains("not a readable gzip tarball"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("archive contains unsafe paths"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("curl -k -fsSL"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("wget --timeout=\"$max_time\" --tries=1"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("--no-check-certificate"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("npmmirror Codex metadata"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("npmmirror Codex native package"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("Starting npm install fallback"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("vendor/$target"));
-        assert!(CODEX_INSTALL_SCRIPT.contains("ln -sfn \"$release_dir/bin/codex\""));
-        assert!(CODEX_INSTALL_SCRIPT.contains("command -v npm"));
-        assert!(!CODEX_INSTALL_SCRIPT.contains("sudo"));
-        assert!(!CODEX_INSTALL_SCRIPT.contains("chown"));
-        assert!(!CODEX_INSTALL_SCRIPT.contains("/usr/local/bin"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
+            .contains("CODEXHUB_INSTALL_METHOD=npm-mirror-native-insecure-tls"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
+            .contains("Insecure TLS fallback is limited to npmmirror URLs"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("phase_label=\"${4:-download}\""));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
+            .contains("npmmirror metadata response was HTML instead of JSON"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("not a readable gzip tarball"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("archive contains unsafe paths"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("curl -k -fsSL"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("--no-check-certificate"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("vendor/$target"));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("ln -sfn \"$release_dir/bin/codex\""));
+
+        assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("command -v npm"));
+        assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("registry=https://registry.npmmirror.com"));
+        assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=npm-mirror"));
     }
 
     #[test]

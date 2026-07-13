@@ -2878,6 +2878,7 @@ pub(crate) fn skill_task(
         started_at: timestamp_label(),
         ended_at: Some(timestamp_label()),
         summary: summary.to_string(),
+        steps: Vec::new(),
         logs,
     }
 }

@@ -1,4 +1,4 @@
-use crate::tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus};
+use crate::tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus, TaskStep, TaskStepStatus};
 use chrono::Local;
 use rusqlite::{params, Connection, OptionalExtension, Params, Transaction};
 use serde::Serialize;
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-const CURRENT_TASK_SCHEMA_VERSION: i64 = 3;
+const CURRENT_TASK_SCHEMA_VERSION: i64 = 4;
 const MAX_TASK_HISTORY: usize = 100;
 static BACKUP_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static TASK_ARCHIVE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -28,7 +28,7 @@ impl TaskStore {
             .ok_or_else(|| "Task database path has no parent directory.".to_string())?;
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create the task database directory: {error}"))?;
-        let connection = Connection::open(path)
+        let mut connection = Connection::open(path)
             .map_err(|error| format!("Could not open the task database: {error}"))?;
         let schema_version = connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
@@ -41,7 +41,7 @@ impl TaskStore {
         if schema_version > 0 && schema_version < CURRENT_TASK_SCHEMA_VERSION {
             backup_before_schema_upgrade(&connection, path, schema_version)?;
         }
-        Self::configure(&connection)?;
+        Self::configure(&mut connection)?;
         let store = Self {
             connection: Mutex::new(connection),
             unavailable_reason: None,
@@ -54,8 +54,8 @@ impl TaskStore {
 
     #[cfg(test)]
     pub(crate) fn in_memory() -> Self {
-        let connection = Connection::open_in_memory().expect("open task database in memory");
-        Self::configure(&connection).expect("configure task database in memory");
+        let mut connection = Connection::open_in_memory().expect("open task database in memory");
+        Self::configure(&mut connection).expect("configure task database in memory");
         Self {
             connection: Mutex::new(connection),
             unavailable_reason: None,
@@ -80,7 +80,7 @@ impl TaskStore {
         }
     }
 
-    fn configure(connection: &Connection) -> Result<(), String> {
+    fn configure(connection: &mut Connection) -> Result<(), String> {
         connection
             .execute_batch(
                 r#"
@@ -145,7 +145,6 @@ impl TaskStore {
                     created_at TEXT NOT NULL,
                     restored_at TEXT
                 );
-                PRAGMA user_version = 3;
                 "#,
             )
             .map_err(|error| format!("Could not initialize the task database: {error}"))?;
@@ -161,11 +160,93 @@ impl TaskStore {
                 [Local::now().to_rfc3339()],
             )
             .map_err(|error| format!("Could not record the task log recycle-bin migration: {error}"))?;
+        migrate_task_steps_v4(connection)?;
         Ok(())
+    }
+
+    /// Updates one step without replacing sibling steps, which keeps parallel
+    /// host probes from losing each other's progress.
+    pub(crate) fn update_step(
+        &self,
+        task_id: &str,
+        step: &TaskStep,
+        log: Option<&TaskLog>,
+        task_summary: Option<&str>,
+    ) -> Result<(), String> {
+        self.ensure_available()?;
+        if step.task_run_id != task_id {
+            return Err(format!(
+                "Task step {} belongs to a different task.",
+                step.step_id
+            ));
+        }
+        if let Some(log) = log {
+            if log.task_run_id != task_id || log.step_id.as_deref() != Some(step.step_id.as_str()) {
+                return Err(format!(
+                    "Task log {} does not belong to step {}.",
+                    log.id, step.step_id
+                ));
+            }
+        }
+
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Task database mutex was poisoned.".to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Could not start the task step transaction: {error}"))?;
+        if task_was_recycled(&transaction, task_id)? {
+            return Ok(());
+        }
+        let task_exists = transaction
+            .query_row("SELECT 1 FROM task_runs WHERE id = ?1", [task_id], |_| {
+                Ok(())
+            })
+            .optional()
+            .map_err(|error| format!("Could not inspect task {task_id}: {error}"))?
+            .is_some();
+        if !task_exists {
+            return Err(format!("Task {task_id} was not found for step progress."));
+        }
+        upsert_step(&transaction, step)?;
+        if let Some(log) = log {
+            upsert_incremental_log(&transaction, log)?;
+        }
+        if let Some(summary) = task_summary {
+            transaction
+                .execute(
+                    "UPDATE task_runs SET summary = ?2 WHERE id = ?1",
+                    params![task_id, summary],
+                )
+                .map_err(|error| format!("Could not update task {task_id} summary: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("Could not commit the task step transaction: {error}"))
     }
 
     pub(crate) fn upsert(&self, task: &TaskRun) -> Result<(), String> {
         self.ensure_available()?;
+        if task.steps.iter().any(|step| step.task_run_id != task.id) {
+            return Err(format!(
+                "Task {} contains a step for another task.",
+                task.id
+            ));
+        }
+        if task.logs.iter().any(|log| log.task_run_id != task.id) {
+            return Err(format!("Task {} contains a log for another task.", task.id));
+        }
+        if let Some(log) = task.logs.iter().find(|log| {
+            log.step_id
+                .as_ref()
+                .is_some_and(|step_id| !task.steps.iter().any(|step| step.step_id == *step_id))
+        }) {
+            return Err(format!(
+                "Task log {} references a step missing from task {}.",
+                log.id, task.id
+            ));
+        }
         let mut connection = self
             .connection
             .lock()
@@ -180,6 +261,12 @@ impl TaskStore {
         transaction
             .execute("DELETE FROM task_logs WHERE task_run_id = ?1", [&task.id])
             .map_err(|error| format!("Could not replace task logs: {error}"))?;
+        transaction
+            .execute("DELETE FROM task_steps WHERE task_run_id = ?1", [&task.id])
+            .map_err(|error| format!("Could not replace task steps: {error}"))?;
+        for step in &task.steps {
+            insert_step(&transaction, step)?;
+        }
         for (sequence, log) in task.logs.iter().enumerate() {
             insert_log(&transaction, sequence, log)?;
         }
@@ -228,6 +315,7 @@ impl TaskStore {
                     started_at: row.get(5)?,
                     ended_at: row.get(6)?,
                     summary: row.get(7)?,
+                    steps: Vec::new(),
                     logs: Vec::new(),
                 })
             })
@@ -236,6 +324,7 @@ impl TaskStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("Could not decode task history: {error}"))?;
         for task in &mut tasks {
+            task.steps = load_steps(&connection, &task.id)?;
             task.logs = load_logs(&connection, &task.id)?;
         }
         Ok(tasks)
@@ -425,21 +514,52 @@ impl TaskStore {
 
     fn mark_interrupted(&self) -> Result<(), String> {
         self.ensure_available()?;
-        let connection = self
+        let mut connection = self
             .connection
             .lock()
             .map_err(|_| "Task database mutex was poisoned.".to_string())?;
         let now = Local::now().to_rfc3339();
-        connection
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Could not start interrupted task recovery: {error}"))?;
+        // Step state is recovered with the parent task so the UI never keeps a
+        // stale spinner after CodexHub restarts.
+        transaction
+            .execute(
+                "UPDATE task_steps
+                 SET status = CASE status
+                       WHEN 'running' THEN 'failed'
+                       WHEN 'pending' THEN 'skipped'
+                       ELSE status
+                     END,
+                     ended_at = CASE
+                       WHEN status IN ('running', 'pending') THEN ?1
+                       ELSE ended_at
+                     END,
+                     summary = CASE status
+                       WHEN 'running' THEN summary || ' CodexHub exited before this step completed.'
+                       WHEN 'pending' THEN summary || ' Skipped because CodexHub exited before execution.'
+                       ELSE summary
+                     END
+                 WHERE status IN ('running', 'pending')
+                   AND task_run_id IN (
+                     SELECT id FROM task_runs WHERE status IN ('queued', 'running')
+                   )",
+                [&now],
+            )
+            .map_err(|error| format!("Could not recover interrupted task steps: {error}"))?;
+        transaction
             .execute(
                 "UPDATE task_runs
                  SET status = 'interrupted', ended_at = ?1,
                      summary = summary || ' The previous CodexHub process ended before completion.'
                  WHERE status IN ('queued', 'running')",
-                [now],
+                [&now],
             )
-            .map(|_| ())
-            .map_err(|error| format!("Could not recover interrupted tasks: {error}"))
+            .map_err(|error| format!("Could not recover interrupted tasks: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("Could not commit interrupted task recovery: {error}"))
     }
 
     fn enforce_task_retention(&self) -> Result<(), String> {
@@ -466,6 +586,86 @@ impl TaskStore {
         )
         .map(|_| ())
     }
+}
+
+/// v4 keeps the migration transactional; `open` creates and validates a
+/// SQLite snapshot before this function runs for every existing v1-v3 file.
+fn migrate_task_steps_v4(connection: &mut Connection) -> Result<(), String> {
+    let schema_version = connection
+        .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+        .map_err(|error| {
+            format!("Could not inspect the task schema before v4 migration: {error}")
+        })?;
+    if schema_version >= CURRENT_TASK_SCHEMA_VERSION {
+        return Ok(());
+    }
+    let log_has_step_id = table_has_column(connection, "task_logs", "step_id")?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Could not start the task schema v4 migration: {error}"))?;
+    transaction
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS task_steps (
+                task_run_id TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
+                step_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT,
+                PRIMARY KEY(task_run_id, step_id),
+                UNIQUE(task_run_id, sequence)
+            );
+            CREATE INDEX IF NOT EXISTS idx_task_steps_status
+                ON task_steps(task_run_id, status, sequence);
+            "#,
+        )
+        .map_err(|error| format!("Could not create the task step schema: {error}"))?;
+    if !log_has_step_id {
+        transaction
+            .execute_batch("ALTER TABLE task_logs ADD COLUMN step_id TEXT;")
+            .map_err(|error| format!("Could not link task logs to steps: {error}"))?;
+    }
+    transaction
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_task_logs_step_id
+             ON task_logs(task_run_id, step_id, sequence);",
+        )
+        .map_err(|error| format!("Could not index task step logs: {error}"))?;
+    transaction
+        .execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, name, checksum, applied_at) VALUES(4, 'task-steps', 'v4', ?1)",
+            [Local::now().to_rfc3339()],
+        )
+        .map_err(|error| format!("Could not record the task schema v4 migration: {error}"))?;
+    transaction
+        .execute_batch("PRAGMA user_version = 4;")
+        .map_err(|error| format!("Could not finalize the task schema v4 migration: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not commit the task schema v4 migration: {error}"))
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, String> {
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info({table_name})"))
+        .map_err(|error| format!("Could not inspect table {table_name}: {error}"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("Could not query table {table_name}: {error}"))?;
+    for column in columns {
+        if column.map_err(|error| format!("Could not decode table {table_name}: {error}"))?
+            == column_name
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[derive(Serialize)]
@@ -683,11 +883,62 @@ fn upsert_run(transaction: &Transaction<'_>, task: &TaskRun) -> Result<(), Strin
         .map_err(|error| format!("Could not persist task {}: {error}", task.id))
 }
 
+fn insert_step(transaction: &Transaction<'_>, step: &TaskStep) -> Result<(), String> {
+    transaction
+        .execute(
+            "INSERT INTO task_steps(task_run_id, step_id, sequence, status, summary, started_at, ended_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                step.task_run_id,
+                step.step_id,
+                i64::from(step.sequence),
+                step_status_label(&step.status),
+                step.summary,
+                step.started_at,
+                step.ended_at
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "Could not persist task step {} for {}: {error}",
+                step.step_id, step.task_run_id
+            )
+        })
+}
+
+fn upsert_step(transaction: &Transaction<'_>, step: &TaskStep) -> Result<(), String> {
+    transaction
+        .execute(
+            "INSERT INTO task_steps(task_run_id, step_id, sequence, status, summary, started_at, ended_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(task_run_id, step_id) DO UPDATE SET
+               sequence=excluded.sequence, status=excluded.status, summary=excluded.summary,
+               started_at=excluded.started_at, ended_at=excluded.ended_at",
+            params![
+                step.task_run_id,
+                step.step_id,
+                i64::from(step.sequence),
+                step_status_label(&step.status),
+                step.summary,
+                step.started_at,
+                step.ended_at
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "Could not update task step {} for {}: {error}",
+                step.step_id, step.task_run_id
+            )
+        })
+}
+
 fn insert_log(transaction: &Transaction<'_>, sequence: usize, log: &TaskLog) -> Result<(), String> {
     transaction
         .execute(
-            "INSERT INTO task_logs(id, task_run_id, sequence, level, timestamp, message, command, stdout, stderr, exit_code, duration_ms, timed_out)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO task_logs(id, task_run_id, sequence, level, timestamp, message, command, stdout, stderr, exit_code, duration_ms, timed_out, step_id)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 log.id,
                 log.task_run_id,
@@ -700,11 +951,59 @@ fn insert_log(transaction: &Transaction<'_>, sequence: usize, log: &TaskLog) -> 
                 log.stderr,
                 log.exit_code,
                 log.duration_ms.map(|value| value as i64),
-                log.timed_out.map(i64::from)
+                log.timed_out.map(i64::from),
+                log.step_id
             ],
         )
         .map(|_| ())
         .map_err(|error| format!("Could not persist task log {}: {error}", log.id))
+}
+
+fn upsert_incremental_log(transaction: &Transaction<'_>, log: &TaskLog) -> Result<(), String> {
+    let existing_sequence = transaction
+        .query_row(
+            "SELECT sequence FROM task_logs WHERE id = ?1",
+            [&log.id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Could not inspect task log {}: {error}", log.id))?;
+    if let Some(sequence) = existing_sequence {
+        transaction
+            .execute(
+                "UPDATE task_logs
+                 SET task_run_id=?2, sequence=?3, level=?4, timestamp=?5, message=?6,
+                     command=?7, stdout=?8, stderr=?9, exit_code=?10, duration_ms=?11,
+                     timed_out=?12, step_id=?13
+                 WHERE id=?1",
+                params![
+                    log.id,
+                    log.task_run_id,
+                    sequence,
+                    level_label(&log.level),
+                    log.timestamp,
+                    log.message,
+                    log.command,
+                    log.stdout,
+                    log.stderr,
+                    log.exit_code,
+                    log.duration_ms.map(|value| value as i64),
+                    log.timed_out.map(i64::from),
+                    log.step_id
+                ],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("Could not update task log {}: {error}", log.id))
+    } else {
+        let next_sequence = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(sequence), -1) + 1 FROM task_logs WHERE task_run_id = ?1",
+                [&log.task_run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("Could not allocate task log sequence: {error}"))?;
+        insert_log(transaction, next_sequence.max(0) as usize, log)
+    }
 }
 
 fn load_task_from_connection(
@@ -725,6 +1024,7 @@ fn load_task_from_connection(
                     started_at: row.get(5)?,
                     ended_at: row.get(6)?,
                     summary: row.get(7)?,
+                    steps: Vec::new(),
                     logs: Vec::new(),
                 })
             },
@@ -732,15 +1032,41 @@ fn load_task_from_connection(
         .optional()
         .map_err(|error| format!("Could not read task {task_id}: {error}"))?;
     if let Some(task) = &mut task {
+        task.steps = load_steps(connection, task_id)?;
         task.logs = load_logs(connection, task_id)?;
     }
     Ok(task)
 }
 
+fn load_steps(connection: &Connection, task_id: &str) -> Result<Vec<TaskStep>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT task_run_id, step_id, sequence, status, summary, started_at, ended_at
+             FROM task_steps WHERE task_run_id = ?1 ORDER BY sequence ASC",
+        )
+        .map_err(|error| format!("Could not prepare task step query: {error}"))?;
+    let steps = statement
+        .query_map([task_id], |row| {
+            Ok(TaskStep {
+                task_run_id: row.get(0)?,
+                step_id: row.get(1)?,
+                sequence: row.get::<_, i64>(2)?.max(0) as u32,
+                status: parse_step_status(&row.get::<_, String>(3)?),
+                summary: row.get(4)?,
+                started_at: row.get(5)?,
+                ended_at: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("Could not query steps for task {task_id}: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not decode steps for task {task_id}: {error}"))?;
+    Ok(steps)
+}
+
 fn load_logs(connection: &Connection, task_id: &str) -> Result<Vec<TaskLog>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, task_run_id, level, timestamp, message, command, stdout, stderr, exit_code, duration_ms, timed_out
+            "SELECT id, task_run_id, step_id, level, timestamp, message, command, stdout, stderr, exit_code, duration_ms, timed_out
              FROM task_logs WHERE task_run_id = ?1 ORDER BY sequence ASC",
         )
         .map_err(|error| format!("Could not prepare task log query: {error}"))?;
@@ -749,15 +1075,16 @@ fn load_logs(connection: &Connection, task_id: &str) -> Result<Vec<TaskLog>, Str
             Ok(TaskLog {
                 id: row.get(0)?,
                 task_run_id: row.get(1)?,
-                level: parse_level(&row.get::<_, String>(2)?),
-                timestamp: row.get(3)?,
-                message: row.get(4)?,
-                command: row.get(5)?,
-                stdout: row.get(6)?,
-                stderr: row.get(7)?,
-                exit_code: row.get(8)?,
-                duration_ms: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-                timed_out: row.get::<_, Option<i64>>(10)?.map(|value| value != 0),
+                step_id: row.get(2)?,
+                level: parse_level(&row.get::<_, String>(3)?),
+                timestamp: row.get(4)?,
+                message: row.get(5)?,
+                command: row.get(6)?,
+                stdout: row.get(7)?,
+                stderr: row.get(8)?,
+                exit_code: row.get(9)?,
+                duration_ms: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                timed_out: row.get::<_, Option<i64>>(11)?.map(|value| value != 0),
             })
         })
         .map_err(|error| format!("Could not query logs for task {task_id}: {error}"))?
@@ -786,6 +1113,26 @@ fn parse_status(value: &str) -> TaskStatus {
     }
 }
 
+fn step_status_label(status: &TaskStepStatus) -> &'static str {
+    match status {
+        TaskStepStatus::Pending => "pending",
+        TaskStepStatus::Running => "running",
+        TaskStepStatus::Success => "success",
+        TaskStepStatus::Failed => "failed",
+        TaskStepStatus::Skipped => "skipped",
+    }
+}
+
+fn parse_step_status(value: &str) -> TaskStepStatus {
+    match value {
+        "running" => TaskStepStatus::Running,
+        "success" => TaskStepStatus::Success,
+        "failed" => TaskStepStatus::Failed,
+        "skipped" => TaskStepStatus::Skipped,
+        _ => TaskStepStatus::Pending,
+    }
+}
+
 fn level_label(level: &TaskLogLevel) -> &'static str {
     match level {
         TaskLogLevel::Info => "info",
@@ -806,10 +1153,23 @@ fn parse_level(value: &str) -> TaskLogLevel {
 mod tests {
     use super::*;
 
+    fn task_step(task_id: &str, step_id: &str, sequence: u32, status: TaskStepStatus) -> TaskStep {
+        TaskStep {
+            task_run_id: task_id.into(),
+            step_id: step_id.into(),
+            sequence,
+            status,
+            summary: format!("Safe step {step_id}"),
+            started_at: None,
+            ended_at: None,
+        }
+    }
+
     fn task_log(task_id: &str, index: usize) -> TaskLog {
         TaskLog {
             id: format!("log-{task_id}-{index:03}"),
             task_run_id: task_id.into(),
+            step_id: None,
             level: TaskLogLevel::Info,
             timestamp: format!("2026-07-10T00:{:02}:00+08:00", index % 60),
             message: format!("Safe log {index}"),
@@ -832,6 +1192,7 @@ mod tests {
             started_at: "2026-07-10T00:00:00+08:00".into(),
             ended_at: None,
             summary: "Safe summary".into(),
+            steps: Vec::new(),
             logs: vec![task_log(id, 0)],
         }
     }
@@ -839,26 +1200,37 @@ mod tests {
     #[test]
     fn task_history_round_trips_and_acknowledges() {
         let store = TaskStore::in_memory();
-        store
-            .upsert(&task("task-1", TaskStatus::Success))
-            .expect("persist task");
+        let mut run = task("task-1", TaskStatus::Success);
+        run.steps = vec![task_step(&run.id, "prepare", 0, TaskStepStatus::Success)];
+        run.logs[0].step_id = Some("prepare".into());
+        store.upsert(&run).expect("persist task");
         let tasks = store.list(20).expect("list tasks");
         assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].steps.len(), 1);
+        assert_eq!(tasks[0].steps[0].step_id, "prepare");
         assert_eq!(tasks[0].logs.len(), 1);
+        assert_eq!(tasks[0].logs[0].step_id.as_deref(), Some("prepare"));
         assert!(store.acknowledge("task-1").expect("acknowledge task"));
     }
 
     #[test]
     fn startup_marks_incomplete_tasks_interrupted() {
         let store = TaskStore::in_memory();
-        store
-            .upsert(&task("task-running", TaskStatus::Running))
-            .expect("persist running task");
+        let mut run = task("task-running", TaskStatus::Running);
+        run.steps = vec![
+            task_step(&run.id, "running", 0, TaskStepStatus::Running),
+            task_step(&run.id, "pending", 1, TaskStepStatus::Pending),
+            task_step(&run.id, "complete", 2, TaskStepStatus::Success),
+        ];
+        store.upsert(&run).expect("persist running task");
         store.mark_interrupted().expect("mark interrupted");
-        assert!(matches!(
-            store.get("task-running").expect("get task").unwrap().status,
-            TaskStatus::Interrupted
-        ));
+        let recovered = store.get("task-running").expect("get task").unwrap();
+        assert!(matches!(recovered.status, TaskStatus::Interrupted));
+        assert!(matches!(recovered.steps[0].status, TaskStepStatus::Failed));
+        assert!(matches!(recovered.steps[1].status, TaskStepStatus::Skipped));
+        assert!(matches!(recovered.steps[2].status, TaskStepStatus::Success));
+        assert!(recovered.steps[0].ended_at.is_some());
+        assert!(recovered.steps[1].ended_at.is_some());
     }
 
     #[test]
@@ -1004,6 +1376,165 @@ mod tests {
             store.pending_operation_ids().expect("recovery operations"),
             vec!["operation-2"]
         );
+    }
+
+    fn v3_database_path(label: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "codexhub-task-store-{label}-{}-{}",
+            std::process::id(),
+            BACKUP_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).expect("create task store test directory");
+        directory.join("tasks.sqlite")
+    }
+
+    fn create_v3_database(path: &Path, malformed_logs: bool) {
+        let connection = Connection::open(path).expect("create v3 task database");
+        connection
+            .execute_batch(
+                r#"
+                PRAGMA foreign_keys = ON;
+                CREATE TABLE schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    applied_at TEXT NOT NULL
+                );
+                CREATE TABLE task_runs (
+                    id TEXT PRIMARY KEY,
+                    host_id TEXT NOT NULL,
+                    host_name TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    summary TEXT NOT NULL,
+                    acknowledged_at TEXT
+                );
+                PRAGMA user_version = 3;
+                "#,
+            )
+            .expect("create v3 task schema");
+        if malformed_logs {
+            connection
+                .execute_batch(
+                    "CREATE TABLE task_logs (
+                        id TEXT PRIMARY KEY,
+                        task_run_id TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
+                        level TEXT NOT NULL
+                    );",
+                )
+                .expect("create malformed v3 task logs");
+            return;
+        }
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE task_logs (
+                    id TEXT PRIMARY KEY,
+                    task_run_id TEXT NOT NULL REFERENCES task_runs(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    level TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    command TEXT,
+                    stdout TEXT,
+                    stderr TEXT,
+                    exit_code INTEGER,
+                    duration_ms INTEGER,
+                    timed_out INTEGER,
+                    UNIQUE(task_run_id, sequence)
+                );
+                INSERT INTO task_runs(
+                    id, host_id, host_name, action, status, started_at, ended_at, summary
+                ) VALUES(
+                    'legacy-task', 'legacy-host', 'Legacy host', 'Legacy action', 'success',
+                    '2026-07-01T00:00:00+08:00', '2026-07-01T00:00:01+08:00', 'Legacy summary'
+                );
+                INSERT INTO task_logs(
+                    id, task_run_id, sequence, level, timestamp, message
+                ) VALUES(
+                    'legacy-log', 'legacy-task', 0, 'info',
+                    '2026-07-01T00:00:01+08:00', 'Legacy detail'
+                );
+                "#,
+            )
+            .expect("create legacy v3 task data");
+    }
+
+    fn schema_backup_paths(database_path: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(database_path.parent().expect("database parent"))
+            .expect("read database directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("codexhub-schema-v3-"))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn v3_migration_creates_validated_backup_and_preserves_legacy_history() {
+        let path = v3_database_path("migration");
+        create_v3_database(&path, false);
+
+        let store = TaskStore::open(&path).expect("migrate v3 task database");
+        let legacy = store
+            .get("legacy-task")
+            .expect("read legacy task")
+            .expect("legacy task exists");
+        assert!(legacy.steps.is_empty());
+        assert_eq!(legacy.logs.len(), 1);
+        assert!(legacy.logs[0].step_id.is_none());
+
+        let connection = store.connection.lock().expect("task database lock");
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read migrated schema version");
+        assert_eq!(version, CURRENT_TASK_SCHEMA_VERSION);
+        assert!(table_has_column(&connection, "task_logs", "step_id").unwrap());
+        drop(connection);
+
+        let backups = schema_backup_paths(&path);
+        assert_eq!(backups.len(), 1);
+        let backup = Connection::open(&backups[0]).expect("open schema backup");
+        let backup_version: i64 = backup
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read backup schema version");
+        let backup_logs: i64 = backup
+            .query_row("SELECT COUNT(*) FROM task_logs", [], |row| row.get(0))
+            .expect("read backup task logs");
+        assert_eq!(backup_version, 3);
+        assert_eq!(backup_logs, 1);
+    }
+
+    #[test]
+    fn v4_migration_rolls_back_partial_schema_changes() {
+        let path = v3_database_path("rollback");
+        create_v3_database(&path, true);
+
+        let error = match TaskStore::open(&path) {
+            Ok(_) => panic!("malformed schema must fail migration"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Could not index task step logs"));
+        let connection = Connection::open(&path).expect("reopen failed migration database");
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("read rolled back schema version");
+        let task_steps: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'task_steps'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("inspect rolled back task steps");
+        assert_eq!(version, 3);
+        assert_eq!(task_steps, 0);
+        assert!(!table_has_column(&connection, "task_logs", "step_id").unwrap());
+        assert_eq!(schema_backup_paths(&path).len(), 1);
     }
 
     #[test]

@@ -137,6 +137,48 @@ for (const token of [
     throw new Error(`Task localization contract is incomplete: ${token}`);
   }
 }
+for (const key of [
+  "hostTestTitle",
+  "batchHostTestTitle",
+  "batchUpdateTitle",
+  "partial",
+  "pending",
+  "skipped",
+  "testStarted",
+  "batchTestStarted",
+  "batchUpdateStarted",
+  "technicalDetails",
+  "hostSelector",
+  "skippedSummary",
+  "fallbackFailedSummary",
+  "historyStep",
+  "historyStepSummary",
+  "unassignedStep",
+  "unassignedStepSummary",
+  "steps"
+]) {
+  if (!appSource.includes(`${key}:`)) {
+    throw new Error(`Host-operation copy contract is incomplete: codexOperation.${key}`);
+  }
+}
+for (const stepId of [
+  "ssh-check",
+  "system",
+  "codex",
+  "api",
+  "skills",
+  "preparation",
+  "official-installer",
+  "remote-native-mirror",
+  "remote-npm-mirror",
+  "local-upload",
+  "uninstall",
+  "final-verification"
+]) {
+  if (!appSource.includes(`${JSON.stringify(stepId)}:`) && !appSource.includes(`${stepId}:`)) {
+    throw new Error(`Host-operation step copy is missing: ${stepId}`);
+  }
+}
 if (/<(?:td|strong)>\{task\.summary\}<\//u.test(appSource)) {
   throw new Error("Task summaries must render through localizeTaskSummary instead of raw backend English.");
 }

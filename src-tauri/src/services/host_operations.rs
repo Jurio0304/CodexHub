@@ -1,4 +1,231 @@
+use crate::tasks::{TaskStep, TaskStepStatus};
 use crate::*;
+
+const PROBE_STEP_IDS: &[(&str, &str)] = &[
+    ("ssh-check", "Checking SSH connectivity."),
+    ("system", "Reading the remote system environment."),
+    ("codex", "Detecting the Codex installation and version."),
+    ("api", "Inspecting the remote API configuration."),
+    ("skills", "Inspecting installed Codex skills."),
+];
+const INSTALL_STEP_IDS: &[(&str, &str)] = &[
+    ("preparation", "Preparing the remote host."),
+    (
+        "official-installer",
+        "Waiting to try the official installer.",
+    ),
+    (
+        "remote-native-mirror",
+        "Waiting to try the remote native mirror package.",
+    ),
+    ("remote-npm-mirror", "Waiting to try the remote npm mirror."),
+    (
+        "local-upload",
+        "Waiting to download and upload a native package.",
+    ),
+    (
+        "final-verification",
+        "Waiting to verify the final Codex installation.",
+    ),
+];
+const UNINSTALL_STEP_IDS: &[(&str, &str)] = &[
+    ("preparation", "Preparing the remote host."),
+    (
+        "uninstall",
+        "Waiting to remove the managed Codex installation.",
+    ),
+    (
+        "final-verification",
+        "Waiting to verify that Codex is no longer available.",
+    ),
+];
+
+struct HostProgressContext<'a> {
+    app: &'a AppHandle,
+    state: &'a AppState,
+    task_id: &'a str,
+    request_id: &'a str,
+    host_alias: &'a str,
+    operation: HostOperationKind,
+}
+
+fn operation_steps(task_id: &str, definitions: &[(&str, &str)]) -> Vec<TaskStep> {
+    definitions
+        .iter()
+        .enumerate()
+        .map(|(sequence, (step_id, summary))| TaskStep {
+            task_run_id: task_id.to_string(),
+            step_id: (*step_id).to_string(),
+            sequence: sequence as u32,
+            status: TaskStepStatus::Pending,
+            summary: (*summary).to_string(),
+            started_at: None,
+            ended_at: None,
+        })
+        .collect()
+}
+
+fn persist_and_emit_step(
+    context: &HostProgressContext<'_>,
+    step_id: &str,
+    status: TaskStepStatus,
+    summary: impl Into<String>,
+    mut log: Option<TaskLog>,
+) -> Result<TaskStep, String> {
+    let persisted = context
+        .state
+        .task_store
+        .get(context.task_id)?
+        .ok_or_else(|| format!("Task {} was not found.", context.task_id))?;
+    let previous = persisted
+        .steps
+        .iter()
+        .find(|step| step.step_id == step_id)
+        .cloned()
+        .ok_or_else(|| format!("Task step {step_id} was not initialized."))?;
+    let now = timestamp_label();
+    let terminal = matches!(
+        status,
+        TaskStepStatus::Success | TaskStepStatus::Failed | TaskStepStatus::Skipped
+    );
+    let step = TaskStep {
+        task_run_id: context.task_id.to_string(),
+        step_id: step_id.to_string(),
+        sequence: previous.sequence,
+        status: status.clone(),
+        summary: summary.into(),
+        started_at: if matches!(status, TaskStepStatus::Pending | TaskStepStatus::Skipped) {
+            previous.started_at
+        } else {
+            previous.started_at.or_else(|| Some(now.clone()))
+        },
+        ended_at: terminal.then_some(now),
+    };
+    if let Some(log) = log.as_mut() {
+        log.step_id = Some(step_id.to_string());
+    }
+    let update = jobs::persist_step_update(
+        &context.state.task_store,
+        context.state.task_event_sink.as_ref(),
+        context.task_id,
+        &step,
+        log.as_ref(),
+        Some(&step.summary),
+    )?;
+    debug_assert_eq!(update.task.id, context.task_id);
+    if let Err(error) = context.app.emit(
+        "host-operation-progress",
+        HostOperationProgressEvent {
+            request_id: context.request_id.to_string(),
+            task_id: context.task_id.to_string(),
+            host_alias: context.host_alias.to_string(),
+            operation: context.operation.clone(),
+            step: update.step.clone(),
+            log: update.log.clone(),
+        },
+    ) {
+        eprintln!(
+            "Could not emit host operation progress: {}",
+            redact_error_text(&error.to_string())
+        );
+    }
+    Ok(update.step)
+}
+
+fn initialize_operation_steps(
+    state: &AppState,
+    task: &mut TaskRun,
+    definitions: &[(&str, &str)],
+) -> Result<(), String> {
+    task.steps = operation_steps(&task.id, definitions);
+    if let Some((first_step_id, _)) = definitions.first() {
+        assign_existing_logs_to_step(task, first_step_id);
+    }
+    jobs::persist_task(&state.task_store, state.task_event_sink.as_ref(), task)
+}
+
+fn assign_existing_logs_to_step(task: &mut TaskRun, step_id: &str) {
+    for log in &mut task.logs {
+        if log.step_id.is_none() {
+            log.step_id = Some(step_id.to_string());
+        }
+    }
+}
+
+fn persist_step_logs(
+    context: &HostProgressContext<'_>,
+    step_id: &str,
+    logs: &mut [TaskLog],
+) -> Result<(), String> {
+    for log in logs {
+        log.step_id = Some(step_id.to_string());
+        persist_and_emit_step(
+            context,
+            step_id,
+            TaskStepStatus::Running,
+            log.message.clone(),
+            Some(log.clone()),
+        )?;
+    }
+    Ok(())
+}
+
+fn host_operation_request_id(request_id: Option<String>, prefix: &str) -> String {
+    request_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("{prefix}-{}", timestamp_millis()))
+}
+
+fn host_operation_kind(action: &RemoteCodexAction) -> HostOperationKind {
+    match action {
+        RemoteCodexAction::Install => HostOperationKind::CodexInstall,
+        RemoteCodexAction::Update | RemoteCodexAction::CheckVersion => {
+            HostOperationKind::CodexUpdate
+        }
+        RemoteCodexAction::Uninstall => HostOperationKind::CodexUninstall,
+    }
+}
+
+fn next_installation_method(attempt_outcomes: &[bool]) -> Option<usize> {
+    if attempt_outcomes.iter().any(|succeeded| *succeeded) {
+        None
+    } else {
+        (attempt_outcomes.len() < 4).then_some(attempt_outcomes.len())
+    }
+}
+
+fn final_verification_failures(
+    method_succeeded: bool,
+    has_path: bool,
+    has_version: bool,
+    current_shell_available: bool,
+    login_shell_available: bool,
+) -> Vec<&'static str> {
+    let checks = [
+        (method_succeeded, "verified installation method"),
+        (has_path, "Codex path"),
+        (has_version, "Codex version"),
+        (current_shell_available, "current-shell command"),
+        (login_shell_available, "login-shell command"),
+    ];
+    checks
+        .into_iter()
+        .filter_map(|(passed, label)| (!passed).then_some(label))
+        .collect()
+}
+
+fn uninstall_target_reached(
+    has_path: bool,
+    has_version: bool,
+    current_shell_available: bool,
+    login_shell_available: bool,
+) -> bool {
+    !has_path && !has_version && !current_shell_available && !login_shell_available
+}
+
+fn retained_codex_versions(version: Option<String>) -> (Option<String>, Option<String>) {
+    (version.clone(), version)
+}
 
 pub(crate) fn merge_discovered_hosts(state: &AppState) -> Result<(), String> {
     let discovered_hosts = ssh::list_ssh_config_hosts()?;
@@ -163,6 +390,7 @@ pub(crate) fn run_ssh_check(
         started_at: running.started_at,
         ended_at: Some(timestamp_label()),
         summary: message.clone(),
+        steps: Vec::new(),
         logs,
     };
 
@@ -805,8 +1033,200 @@ pub(crate) fn bootstrap_task(
         started_at: timestamp_label(),
         ended_at: Some(timestamp_label()),
         summary: summary.to_string(),
+        steps: Vec::new(),
         logs,
     }
+}
+
+#[derive(Clone)]
+struct SystemProbeData {
+    os: String,
+    arch: String,
+    shell: String,
+    path: Option<String>,
+}
+
+#[derive(Clone)]
+struct CodexProbeData {
+    installed: bool,
+    command_available: bool,
+    path: Option<String>,
+    version: String,
+}
+
+#[derive(Clone)]
+struct ApiProbeData {
+    config_exists: bool,
+    base_url: Option<String>,
+    env_var: Option<String>,
+    env_present: Option<bool>,
+}
+
+#[derive(Clone)]
+struct SkillsProbeData {
+    exists: bool,
+    count: u16,
+}
+
+fn system_probe_group_script() -> &'static str {
+    r#"set -u
+printf 'CODEXHUB_OS=%s\n' "$(uname -s)"
+printf 'CODEXHUB_ARCH=%s\n' "$(uname -m)"
+shell_value=${SHELL:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)}
+printf 'CODEXHUB_SHELL=%s\n' "$shell_value"
+printf 'CODEXHUB_PATH=%s\n' "$PATH"
+"#
+}
+
+fn codex_probe_group_script() -> String {
+    let path_script = shell_single_quote(&codex_path_probe_script());
+    let version_script = shell_single_quote(&codex_version_probe_script());
+    let command_script = shell_single_quote(CODEX_COMMAND_AVAILABLE_SCRIPT);
+    format!(
+        r#"set -u
+codex_path=$(sh -c {path_script} 2>/dev/null || true)
+codex_version=$(sh -c {version_script} 2>/dev/null || true)
+if codex_command=$(sh -c {command_script} 2>/dev/null); then
+  command_available=yes
+else
+  command_available=no
+fi
+if [ -n "$codex_path" ]; then installed=yes; else installed=no; fi
+printf 'CODEXHUB_CODEX_INSTALLED=%s\n' "$installed"
+printf 'CODEXHUB_CODEX_COMMAND_AVAILABLE=%s\n' "$command_available"
+printf 'CODEXHUB_CODEX_PATH=%s\n' "$codex_path"
+printf 'CODEXHUB_CODEX_VERSION=%s\n' "$codex_version"
+"#
+    )
+}
+
+fn api_probe_group_script() -> &'static str {
+    r#"set -u
+config="$HOME/.codex/config.toml"
+# read ~/.codex/config.toml base URL and API env metadata without printing secrets
+if [ ! -f "$config" ]; then
+  printf 'CODEXHUB_CONFIG_EXISTS=no\n'
+  printf 'CODEXHUB_API_BASE_URL=\nCODEXHUB_API_ENV_VAR=\nCODEXHUB_API_ENV_PRESENT=unknown\n'
+  exit 0
+fi
+base_url=$(sed -n -E 's/^[[:space:]]*(openai_base_url|base_url)[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p' "$config" 2>/dev/null | head -n 1)
+api_env=$(sed -n -E 's/^[[:space:]]*(env_key|apiKeyEnvVar)[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p' "$config" 2>/dev/null | head -n 1)
+env_present=unknown
+case "$api_env" in
+  "" | [0-9]* | *[!A-Za-z0-9_]*) ;;
+  *)
+    if printenv "$api_env" >/dev/null 2>&1; then
+      env_present=yes
+    elif [ -f "$HOME/.codex-hub/env" ]; then
+      set -a
+      . "$HOME/.codex-hub/env" >/dev/null 2>&1 || true
+      set +a
+      if printenv "$api_env" >/dev/null 2>&1; then env_present=yes; else env_present=no; fi
+    else
+      env_present=no
+    fi
+    ;;
+esac
+printf 'CODEXHUB_CONFIG_EXISTS=yes\n'
+printf 'CODEXHUB_API_BASE_URL=%s\n' "$base_url"
+printf 'CODEXHUB_API_ENV_VAR=%s\n' "$api_env"
+printf 'CODEXHUB_API_ENV_PRESENT=%s\n' "$env_present"
+"#
+}
+
+fn skills_probe_group_script() -> String {
+    format!(
+        r#"set -u
+if [ -d "$HOME/.codex/skills" ]; then skills_exists=yes; else skills_exists=no; fi
+skills_count=$(
+{}
+)
+printf 'CODEXHUB_SKILLS_EXISTS=%s\n' "$skills_exists"
+printf 'CODEXHUB_SKILLS_COUNT=%s\n' "$skills_count"
+"#,
+        remote_skill_count_script()
+    )
+}
+
+fn marker_required(output: &ssh::SshCommandOutput, marker: &str) -> Result<String, String> {
+    marker_value(&output.stdout, marker)
+        .ok_or_else(|| format!("Remote probe did not return {marker}."))
+}
+
+fn parse_yes_marker(output: &ssh::SshCommandOutput, marker: &str) -> Result<bool, String> {
+    match marker_required(output, marker)?.as_str() {
+        "yes" => Ok(true),
+        "no" => Ok(false),
+        value => Err(format!(
+            "Remote probe returned invalid {marker} value: {value}."
+        )),
+    }
+}
+
+fn parse_system_probe(output: &ssh::SshCommandOutput) -> Result<SystemProbeData, String> {
+    Ok(SystemProbeData {
+        os: marker_required(output, "CODEXHUB_OS")?,
+        arch: marker_required(output, "CODEXHUB_ARCH")?,
+        shell: marker_required(output, "CODEXHUB_SHELL")?,
+        path: marker_value(&output.stdout, "CODEXHUB_PATH"),
+    })
+}
+
+fn parse_codex_probe(output: &ssh::SshCommandOutput) -> Result<CodexProbeData, String> {
+    let installed = parse_yes_marker(output, "CODEXHUB_CODEX_INSTALLED")?;
+    Ok(CodexProbeData {
+        installed,
+        command_available: parse_yes_marker(output, "CODEXHUB_CODEX_COMMAND_AVAILABLE")?,
+        path: marker_value(&output.stdout, "CODEXHUB_CODEX_PATH"),
+        version: if installed {
+            marker_value(&output.stdout, "CODEXHUB_CODEX_VERSION")
+                .unwrap_or_else(|| "unavailable".into())
+        } else {
+            "not installed".into()
+        },
+    })
+}
+
+fn parse_api_probe(output: &ssh::SshCommandOutput) -> Result<ApiProbeData, String> {
+    let env_present = match marker_required(output, "CODEXHUB_API_ENV_PRESENT")?.as_str() {
+        "yes" => Some(true),
+        "no" => Some(false),
+        "unknown" => None,
+        value => {
+            return Err(format!(
+                "Remote probe returned invalid API env state: {value}."
+            ))
+        }
+    };
+    Ok(ApiProbeData {
+        config_exists: parse_yes_marker(output, "CODEXHUB_CONFIG_EXISTS")?,
+        base_url: marker_value(&output.stdout, "CODEXHUB_API_BASE_URL"),
+        env_var: marker_value(&output.stdout, "CODEXHUB_API_ENV_VAR"),
+        env_present,
+    })
+}
+
+fn parse_skills_probe(output: &ssh::SshCommandOutput) -> Result<SkillsProbeData, String> {
+    Ok(SkillsProbeData {
+        exists: parse_yes_marker(output, "CODEXHUB_SKILLS_EXISTS")?,
+        count: marker_required(output, "CODEXHUB_SKILLS_COUNT")?
+            .parse::<u16>()
+            .map_err(|error| format!("Remote skill count was invalid: {error}"))?,
+    })
+}
+
+fn probe_group_output(
+    alias: &str,
+    step_id: &str,
+    script: &str,
+    timeout: u64,
+) -> ssh::SshCommandOutput {
+    ssh::run_ssh_script(alias, script, timeout).unwrap_or_else(|error| {
+        failed_command_output(
+            format!("ssh {alias} probe-{step_id}"),
+            format!("Could not run ssh: {error}"),
+        )
+    })
 }
 
 pub(crate) fn run_remote_probe(
@@ -814,6 +1234,7 @@ pub(crate) fn run_remote_probe(
     state: &AppState,
     host_alias: String,
     timeout_ms: Option<u64>,
+    request_id: Option<String>,
 ) -> Result<RemoteProbeResult, String> {
     let timeout = ssh::normalize_timeout_ms(timeout_ms);
     let alias_result = ssh::validate_ssh_alias(&host_alias);
@@ -823,13 +1244,30 @@ pub(crate) fn run_remote_probe(
     let task_id = format!("task-probe-{}", timestamp_millis());
     let host_name = host_name_for_alias(state, &alias);
     let host_id = host_id_for_alias(state, &alias);
-    let running = jobs::begin_task(
+    let mut running = jobs::begin_task(
         &state.task_store,
         state.task_event_sink.as_ref(),
         &task_id,
         &host_id,
         &host_name,
         "Probe remote system",
+    )?;
+    initialize_operation_steps(state, &mut running, PROBE_STEP_IDS)?;
+    let request_id = host_operation_request_id(request_id, "host-test");
+    let progress = HostProgressContext {
+        app,
+        state,
+        task_id: &task_id,
+        request_id: &request_id,
+        host_alias: &alias,
+        operation: HostOperationKind::HostTest,
+    };
+    persist_and_emit_step(
+        &progress,
+        "ssh-check",
+        TaskStepStatus::Running,
+        format!("Checking SSH connectivity to {alias}."),
+        None,
     )?;
     let check_output = match alias_result {
         Ok(valid_alias) => ssh::run_ssh_echo_ok(&valid_alias, timeout).unwrap_or_else(|error| {
@@ -855,9 +1293,30 @@ pub(crate) fn run_remote_probe(
         &check_message,
         &check_output,
     ));
+    let ssh_log = logs.last().cloned();
+    persist_and_emit_step(
+        &progress,
+        "ssh-check",
+        if check_ok {
+            TaskStepStatus::Success
+        } else {
+            TaskStepStatus::Failed
+        },
+        check_message.clone(),
+        ssh_log,
+    )?;
 
     if !check_ok {
         update_host_check(state, &alias, false, check_output.duration_ms);
+        for (step_id, _) in PROBE_STEP_IDS.iter().skip(1) {
+            persist_and_emit_step(
+                &progress,
+                step_id,
+                TaskStepStatus::Skipped,
+                "Not run because SSH preparation failed.",
+                None,
+            )?;
+        }
         let task = TaskRun {
             id: task_id.clone(),
             host_id,
@@ -867,6 +1326,11 @@ pub(crate) fn run_remote_probe(
             started_at: started_at.clone(),
             ended_at: Some(timestamp_label()),
             summary: format!("Remote probe skipped because SSH check failed: {check_message}"),
+            steps: state
+                .task_store
+                .get(&task_id)?
+                .map(|task| task.steps)
+                .unwrap_or_default(),
             logs,
         };
         record_task(state, task.clone())?;
@@ -894,136 +1358,155 @@ pub(crate) fn run_remote_probe(
         });
     }
     update_host_check(state, &alias, true, check_output.duration_ms);
-
-    let codex_path_probe_script = codex_path_probe_script();
-    let codex_version_probe_script = codex_version_probe_script();
-    let remote_skill_count_script = remote_skill_count_script();
-    let commands = vec![
-        ("uname -s", "uname -s", TaskLogLevel::Info),
-        ("uname -m", "uname -m", TaskLogLevel::Info),
-        (
-            "echo $SHELL",
-            "printf '%s\n' \"${SHELL:-$(getent passwd \"$(id -un)\" 2>/dev/null | cut -d: -f7)}\"",
-            TaskLogLevel::Info,
-        ),
-        ("resolve codex", codex_path_probe_script.as_str(), TaskLogLevel::Warn),
-        (
-            "check codex command in PATH",
-            CODEX_COMMAND_AVAILABLE_SCRIPT,
-            TaskLogLevel::Warn,
-        ),
-        ("codex --version", codex_version_probe_script.as_str(), TaskLogLevel::Warn),
-        ("echo $PATH", "printf '%s\n' \"$PATH\"", TaskLogLevel::Info),
-        (
-            "check ~/.codex/config.toml",
-            "test -f \"$HOME/.codex/config.toml\" && printf yes || printf no",
-            TaskLogLevel::Info,
-        ),
-        (
-            "read ~/.codex/config.toml base URL",
-            "if [ -f \"$HOME/.codex/config.toml\" ]; then sed -n -E 's/^[[:space:]]*(openai_base_url|base_url)[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\\2/p' \"$HOME/.codex/config.toml\" 2>/dev/null | head -n 1; fi",
-            TaskLogLevel::Info,
-        ),
-        (
-            "read ~/.codex/config.toml API env",
-            REMOTE_CONFIG_API_ENV_VAR_SCRIPT,
-            TaskLogLevel::Info,
-        ),
-        (
-            "check remote API env",
-            REMOTE_API_ENV_PRESENT_SCRIPT,
-            TaskLogLevel::Warn,
-        ),
-        (
-            "check ~/.codex/skills",
-            "test -d \"$HOME/.codex/skills\" && printf yes || printf no",
-            TaskLogLevel::Info,
-        ),
-        (
-            "count ~/.codex/skills",
-            remote_skill_count_script,
-            TaskLogLevel::Info,
-        ),
+    let scripts = vec![
+        ("system", system_probe_group_script().to_string()),
+        ("codex", codex_probe_group_script()),
+        ("api", api_probe_group_script().to_string()),
+        ("skills", skills_probe_group_script()),
     ];
-
-    let mut outputs = Vec::new();
-    let first_probe_log = logs.len() + 1;
-    for (index, (label, script, failure_level)) in commands.iter().enumerate() {
-        let output = ssh::run_ssh_script(&alias, script, timeout).unwrap_or_else(|error| {
-            failed_command_output(
-                format!("ssh {alias} {label}"),
-                format!("Could not run ssh: {error}"),
-            )
-        });
-        let level = if output.success() {
-            TaskLogLevel::Info
-        } else {
-            (*failure_level).clone()
-        };
-        let message = if output.success() {
-            format!("{label} completed.")
-        } else if output.timed_out {
-            format!("{label} timed out after {timeout} ms.")
-        } else {
-            format!("{label} failed: {}", command_detail(&output))
-        };
-        logs.push(command_log(
-            &task_id,
-            first_probe_log + index,
-            level,
-            &message,
-            &output,
-        ));
-        outputs.push(output);
+    for (step_id, _) in &scripts {
+        persist_and_emit_step(
+            &progress,
+            step_id,
+            TaskStepStatus::Running,
+            format!("Running the {step_id} probe."),
+            None,
+        )?;
     }
 
-    let os = stdout_or_unknown(outputs.get(0));
-    let arch = stdout_or_unknown(outputs.get(1));
-    let shell = stdout_or_unknown(outputs.get(2));
-    let codex_path = outputs
-        .get(3)
-        .filter(|output| output.success())
-        .map(|output| output.stdout.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let codex_installed = codex_path.is_some();
-    let codex_command_available = outputs
-        .get(4)
-        .map(|output| output.success())
-        .unwrap_or(false);
-    let codex_version = if codex_installed {
-        outputs
-            .get(5)
-            .filter(|output| output.success())
-            .map(|output| output.stdout.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "unavailable".into())
-    } else {
-        "not installed".into()
-    };
-    let path = outputs
-        .get(6)
-        .filter(|output| output.success())
-        .map(|output| output.stdout.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let mut system_data = None;
+    let mut codex_data = None;
+    let mut api_data = None;
+    let mut skills_data = None;
+    let mut failed_groups = 0usize;
+    // Each logical probe owns one SSH process; the receiver closes cards in completion order.
+    let probe_result = run_parallel_completions(
+        scripts,
+        |step_id, script| probe_group_output(&alias, step_id, &script, timeout),
+        |step_id, output| -> Result<(), String> {
+            let parsed = if !output.success() {
+                Err(command_detail(&output))
+            } else {
+                match step_id {
+                    "system" => parse_system_probe(&output).map(|value| system_data = Some(value)),
+                    "codex" => parse_codex_probe(&output).map(|value| codex_data = Some(value)),
+                    "api" => parse_api_probe(&output).map(|value| api_data = Some(value)),
+                    "skills" => parse_skills_probe(&output).map(|value| skills_data = Some(value)),
+                    _ => Err(format!("Unknown probe group {step_id}.")),
+                }
+            };
+            let (status, message, level) = match parsed {
+                Ok(()) => (
+                    TaskStepStatus::Success,
+                    format!("The {step_id} probe completed."),
+                    TaskLogLevel::Info,
+                ),
+                Err(error) => {
+                    failed_groups += 1;
+                    (
+                        TaskStepStatus::Failed,
+                        format!("The {step_id} probe failed: {}", redact_error_text(&error)),
+                        TaskLogLevel::Error,
+                    )
+                }
+            };
+            let mut log = command_log(&task_id, logs.len() + 1, level, &message, &output);
+            log.step_id = Some(step_id.to_string());
+            logs.push(log.clone());
+            persist_and_emit_step(&progress, step_id, status, message, Some(log))?;
+            Ok(())
+        },
+    );
+    probe_result?;
+
+    let existing = state
+        .hosts
+        .lock()
+        .expect("hosts mutex poisoned")
+        .iter()
+        .find(|host| host.host_alias.eq_ignore_ascii_case(&alias))
+        .cloned();
+    let os = system_data
+        .as_ref()
+        .map(|data| data.os.clone())
+        .or_else(|| existing.as_ref().map(|host| host.os.clone()))
+        .unwrap_or_else(|| "Unknown".into());
+    let arch = system_data
+        .as_ref()
+        .map(|data| data.arch.clone())
+        .or_else(|| existing.as_ref().map(|host| host.arch.clone()))
+        .unwrap_or_else(|| "Unknown".into());
+    let shell = system_data
+        .as_ref()
+        .map(|data| data.shell.clone())
+        .or_else(|| existing.as_ref().map(|host| host.shell.clone()))
+        .unwrap_or_else(|| "Unknown".into());
+    let path = system_data
+        .as_ref()
+        .and_then(|data| data.path.clone())
+        .or_else(|| existing.as_ref().and_then(|host| host.path.clone()));
     let path_has_local_bin = path_has_local_bin(path.as_deref());
-    let config_exists = stdout_yes(outputs.get(7));
-    let remote_config_base_url = outputs
-        .get(8)
-        .filter(|output| output.success())
-        .map(|output| output.stdout.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let api_key_env_var = outputs
-        .get(9)
-        .filter(|output| output.success())
-        .map(|output| output.stdout.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let api_key_env_present = stdout_optional_yes(outputs.get(10));
-    let api_config_match =
-        classify_remote_api_config(app, state, config_exists, remote_config_base_url.as_deref());
-    let skills_exists = stdout_yes(outputs.get(11));
-    let skills_count = outputs
-        .get(12)
-        .and_then(|output| output.stdout.trim().parse::<u16>().ok())
+    let codex_path = codex_data.as_ref().and_then(|data| data.path.clone());
+    let codex_installed = codex_data
+        .as_ref()
+        .map(|data| data.installed)
+        .or_else(|| existing.as_ref().map(|host| host.codex_installed))
+        .unwrap_or(false);
+    let codex_command_available = codex_data
+        .as_ref()
+        .map(|data| data.command_available)
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|host| host.codex_command_available)
+        })
+        .unwrap_or(false);
+    let codex_version = codex_data
+        .as_ref()
+        .map(|data| data.version.clone())
+        .or_else(|| existing.as_ref().map(|host| host.codex_version.clone()))
+        .unwrap_or_else(|| "not installed".into());
+    let config_exists = api_data
+        .as_ref()
+        .map(|data| data.config_exists)
+        .or_else(|| existing.as_ref().and_then(|host| host.config_exists))
+        .unwrap_or(false);
+    let api_key_env_var = api_data
+        .as_ref()
+        .and_then(|data| data.env_var.clone())
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|host| host.api_key_env_var.clone())
+        });
+    let api_key_env_present = api_data
+        .as_ref()
+        .and_then(|data| data.env_present)
+        .or_else(|| existing.as_ref().and_then(|host| host.api_key_env_present));
+    let api_config_match = if let Some(data) = api_data.as_ref() {
+        classify_remote_api_config(app, state, data.config_exists, data.base_url.as_deref())
+    } else {
+        RemoteApiConfigMatch {
+            name: existing
+                .as_ref()
+                .and_then(|host| host.api_config_name.clone())
+                .unwrap_or_else(|| "Unknown config".into()),
+            source: existing
+                .as_ref()
+                .and_then(|host| host.api_config_source.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            profile_id: existing.as_ref().and_then(|host| host.profile_id.clone()),
+        }
+    };
+    let skills_exists = skills_data
+        .as_ref()
+        .map(|data| data.exists)
+        .or_else(|| existing.as_ref().and_then(|host| host.skills_exists))
+        .unwrap_or(false);
+    let skills_count = skills_data
+        .as_ref()
+        .map(|data| data.count)
+        .or_else(|| existing.as_ref().and_then(|host| host.skills_count))
         .unwrap_or(0);
     let mut readiness_notes = Vec::new();
     if codex_installed && !codex_command_available {
@@ -1038,22 +1521,32 @@ pub(crate) fn run_remote_probe(
         format!(" Warnings: {}.", readiness_notes.join("; "))
     };
     let summary = format!(
-        "Probe completed for {alias}: {os}/{arch}, Codex {}.{readiness_suffix}",
+        "Probe completed for {alias}: {os}/{arch}, Codex {}. {} group(s) failed.{readiness_suffix}",
         if codex_installed {
             codex_version.as_str()
         } else {
             "not installed"
-        }
+        },
+        failed_groups,
     );
     let mut task = TaskRun {
         id: task_id.clone(),
         host_id,
         host_name,
         action: "Probe remote system".into(),
-        status: TaskStatus::Success,
+        status: if failed_groups == 0 {
+            TaskStatus::Success
+        } else {
+            TaskStatus::Failed
+        },
         started_at,
         ended_at: Some(timestamp_label()),
         summary: summary.clone(),
+        steps: state
+            .task_store
+            .get(&task_id)?
+            .map(|task| task.steps)
+            .unwrap_or_default(),
         logs,
     };
 
@@ -1075,6 +1568,10 @@ pub(crate) fn run_remote_probe(
         api_key_env_present,
         skills_exists,
         skills_count,
+        system_data.is_some(),
+        codex_data.is_some(),
+        api_data.is_some(),
+        skills_data.is_some(),
     ) {
         let safe_error = redact_error_text(&error);
         task.status = TaskStatus::Failed;
@@ -1114,6 +1611,362 @@ pub(crate) fn run_remote_probe(
     })
 }
 
+fn run_bounded_ordered<I, O, F>(items: Vec<I>, operation: F) -> Vec<O>
+where
+    I: Send,
+    O: Send,
+    F: Fn(I) -> O + Sync,
+{
+    let item_count = items.len();
+    if item_count == 0 {
+        return Vec::new();
+    }
+    let queue = Arc::new(Mutex::new(
+        items
+            .into_iter()
+            .enumerate()
+            .collect::<std::collections::VecDeque<_>>(),
+    ));
+    let results = Arc::new(Mutex::new(
+        (0..item_count).map(|_| None).collect::<Vec<Option<O>>>(),
+    ));
+    let worker_count = item_count.min(HOST_OPERATION_MAX_CONCURRENCY);
+    std::thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&queue);
+            let results = Arc::clone(&results);
+            let operation = &operation;
+            scope.spawn(move || loop {
+                let Some((index, item)) = queue
+                    .lock()
+                    .expect("bounded operation queue mutex poisoned")
+                    .pop_front()
+                else {
+                    break;
+                };
+                let output = operation(item);
+                results
+                    .lock()
+                    .expect("bounded operation result mutex poisoned")[index] = Some(output);
+            });
+        }
+    });
+    let ordered = results
+        .lock()
+        .expect("bounded operation result mutex poisoned")
+        .iter_mut()
+        .map(|item| {
+            item.take()
+                .expect("bounded operation worker returned a result")
+        })
+        .collect();
+    ordered
+}
+
+fn run_parallel_completions<K, V, O, E, F, C>(
+    items: Vec<(K, V)>,
+    operation: F,
+    mut on_complete: C,
+) -> Result<(), E>
+where
+    K: Clone + Send,
+    V: Send,
+    O: Send,
+    F: Fn(&K, V) -> O + Sync,
+    C: FnMut(K, O) -> Result<(), E>,
+{
+    std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        for (key, value) in items {
+            let sender = sender.clone();
+            let operation = &operation;
+            scope.spawn(move || {
+                let output = operation(&key, value);
+                let _ = sender.send((key, output));
+            });
+        }
+        drop(sender);
+        for (key, output) in receiver {
+            on_complete(key, output)?;
+        }
+        Ok(())
+    })
+}
+
+fn run_with_parallel_latest<L, R, FL, FR>(latest: FL, batch: FR) -> (Result<L, String>, R)
+where
+    L: Send,
+    FL: FnOnce() -> L + Send,
+    FR: FnOnce() -> R,
+{
+    std::thread::scope(|scope| {
+        let latest = scope.spawn(latest);
+        let batch_result = batch();
+        let latest_result = latest
+            .join()
+            .map_err(|_| "Latest Codex version worker panicked.".to_string());
+        (latest_result, batch_result)
+    })
+}
+
+fn run_probe_batch_items(
+    app: &AppHandle,
+    state: &AppState,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: &str,
+) -> Vec<RemoteProbeBatchItem> {
+    run_bounded_ordered(host_aliases, |host_alias| {
+        match run_remote_probe(
+            app,
+            state,
+            host_alias.clone(),
+            timeout_ms,
+            Some(request_id.to_string()),
+        ) {
+            Ok(result) => RemoteProbeBatchItem {
+                host_alias,
+                ok: matches!(&result.task.status, TaskStatus::Success),
+                result: Some(result),
+                error: None,
+            },
+            Err(error) => RemoteProbeBatchItem {
+                host_alias,
+                ok: false,
+                result: None,
+                error: Some(redact_error_text(&error)),
+            },
+        }
+    })
+}
+
+pub(crate) fn run_batch_remote_probe_codex(
+    app: &AppHandle,
+    state: &AppState,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+) -> Result<RemoteProbeBatchResult, String> {
+    let request_id = host_operation_request_id(request_id, "batch-host-test");
+    let (latest_worker, results) = run_with_parallel_latest(
+        || run_refresh_latest_codex_version(state, true, timeout_ms),
+        || run_probe_batch_items(app, state, host_aliases, timeout_ms, &request_id),
+    );
+    let latest_codex_version = latest_worker
+        .and_then(|latest| latest)
+        .unwrap_or_else(|error| LatestCodexVersion {
+            version: None,
+            checked_at: None,
+            source: CODEX_LATEST_SOURCE.into(),
+            error: Some(redact_error_text(&error)),
+        });
+    Ok(RemoteProbeBatchResult {
+        request_id,
+        latest_codex_version,
+        results,
+    })
+}
+
+struct CodexStateChecks {
+    codex_path: ssh::SshCommandOutput,
+    current_command_available: ssh::SshCommandOutput,
+    login_command_available: ssh::SshCommandOutput,
+    version: ssh::SshCommandOutput,
+    shell_path: ssh::SshCommandOutput,
+}
+
+#[derive(Clone)]
+struct PreparationProbeData {
+    install_platform_ok: bool,
+    uninstall_platform_ok: bool,
+    sh_ok: bool,
+    install_write_ok: bool,
+    uninstall_write_ok: bool,
+    detail: String,
+}
+
+fn preparation_probe_script() -> &'static str {
+    r#"set -u
+os=$(uname -s 2>/dev/null || true)
+arch=$(uname -m 2>/dev/null || true)
+case "$os:$arch" in
+  Linux:x86_64 | Linux:amd64 | Linux:aarch64 | Linux:arm64) install_platform_ok=yes ;;
+  *) install_platform_ok=no ;;
+esac
+case "$os" in Linux | Darwin) uninstall_platform_ok=yes ;; *) uninstall_platform_ok=no ;; esac
+if command -v sh >/dev/null 2>&1; then sh_ok=yes; else sh_ok=no; fi
+if command -v tar >/dev/null 2>&1; then tar_ok=yes; else tar_ok=no; fi
+if command -v curl >/dev/null 2>&1; then curl_ok=yes; else curl_ok=no; fi
+if command -v wget >/dev/null 2>&1; then wget_ok=yes; else wget_ok=no; fi
+if command -v python3 >/dev/null 2>&1; then python_ok=yes; else python_ok=no; fi
+if command -v npm >/dev/null 2>&1; then npm_ok=yes; else npm_ok=no; fi
+install_write_ok=yes
+uninstall_write_ok=yes
+[ -n "${HOME:-}" ] && [ -d "$HOME" ] && [ -w "$HOME" ] || { install_write_ok=no; uninstall_write_ok=no; }
+for dir in "$HOME/.local" "$HOME/.local/bin" "$HOME/.codex"; do
+  if [ -e "$dir" ] && [ ! -w "$dir" ]; then install_write_ok=no; fi
+done
+for dir in "$HOME/.local" "$HOME/.codex" "$HOME/.codex-hub" "$HOME/.cache/codex" "$HOME/.config/codex" "$HOME/.local/share/codex" "$HOME/.local/state/codex"; do
+  if [ -e "$dir" ] && [ ! -w "$dir" ]; then uninstall_write_ok=no; fi
+done
+printf 'CODEXHUB_INSTALL_PLATFORM_OK=%s\n' "$install_platform_ok"
+printf 'CODEXHUB_UNINSTALL_PLATFORM_OK=%s\n' "$uninstall_platform_ok"
+printf 'CODEXHUB_SH_OK=%s\n' "$sh_ok"
+printf 'CODEXHUB_INSTALL_WRITE_OK=%s\n' "$install_write_ok"
+printf 'CODEXHUB_UNINSTALL_WRITE_OK=%s\n' "$uninstall_write_ok"
+printf 'CODEXHUB_PREPARATION_DETAIL=%s/%s; sh=%s; tar=%s; curl=%s; wget=%s; python3=%s; npm=%s; install-dirs-writable=%s; uninstall-dirs-writable=%s\n' "$os" "$arch" "$sh_ok" "$tar_ok" "$curl_ok" "$wget_ok" "$python_ok" "$npm_ok" "$install_write_ok" "$uninstall_write_ok"
+"#
+}
+
+fn parse_preparation_probe(output: &ssh::SshCommandOutput) -> Result<PreparationProbeData, String> {
+    Ok(PreparationProbeData {
+        install_platform_ok: parse_yes_marker(output, "CODEXHUB_INSTALL_PLATFORM_OK")?,
+        uninstall_platform_ok: parse_yes_marker(output, "CODEXHUB_UNINSTALL_PLATFORM_OK")?,
+        sh_ok: parse_yes_marker(output, "CODEXHUB_SH_OK")?,
+        install_write_ok: parse_yes_marker(output, "CODEXHUB_INSTALL_WRITE_OK")?,
+        uninstall_write_ok: parse_yes_marker(output, "CODEXHUB_UNINSTALL_WRITE_OK")?,
+        detail: marker_required(output, "CODEXHUB_PREPARATION_DETAIL")?,
+    })
+}
+
+fn install_prerequisites_ready(probe: &Result<PreparationProbeData, String>) -> bool {
+    probe
+        .as_ref()
+        .map(|data| data.install_platform_ok && data.sh_ok && data.install_write_ok)
+        .unwrap_or(false)
+}
+
+fn uninstall_prerequisites_ready(probe: &Result<PreparationProbeData, String>) -> bool {
+    probe
+        .as_ref()
+        .map(|data| data.uninstall_platform_ok && data.sh_ok && data.uninstall_write_ok)
+        .unwrap_or(false)
+}
+
+fn run_codex_state_checks_parallel(alias: &str, timeout: u64, phase: &str) -> CodexStateChecks {
+    fn run(alias: &str, label: &str, script: &str, timeout: u64) -> ssh::SshCommandOutput {
+        ssh::run_ssh_script(alias, script, timeout).unwrap_or_else(|error| {
+            failed_command_output(
+                format!("ssh {alias} {label}"),
+                format!("Could not run ssh: {error}"),
+            )
+        })
+    }
+    std::thread::scope(|scope| {
+        let path_script = codex_path_probe_script();
+        let version_script = codex_version_probe_script();
+        let path = scope.spawn(move || {
+            run(
+                alias,
+                &format!("resolve codex {phase}"),
+                &path_script,
+                timeout,
+            )
+        });
+        let current_available = scope.spawn(|| {
+            run(
+                alias,
+                &format!("check codex command in current shell {phase}"),
+                "command -v codex",
+                timeout,
+            )
+        });
+        let login_available = scope.spawn(|| {
+            run(
+                alias,
+                &format!("check codex command in login shell {phase}"),
+                r#"login_shell=${SHELL:-}
+[ -n "$login_shell" ] && [ -x "$login_shell" ] || exit 127
+"$login_shell" -lc 'command -v codex'"#,
+                timeout,
+            )
+        });
+        let version = scope.spawn(move || {
+            run(
+                alias,
+                &format!("codex --version {phase}"),
+                &version_script,
+                timeout,
+            )
+        });
+        let shell_path = scope.spawn(|| {
+            run(
+                alias,
+                &format!("echo PATH {phase}"),
+                "printf '%s\\n' \"$PATH\"",
+                timeout,
+            )
+        });
+        CodexStateChecks {
+            codex_path: path.join().unwrap_or_else(|_| {
+                failed_command_output("resolve codex".into(), "Codex path worker panicked.".into())
+            }),
+            current_command_available: current_available.join().unwrap_or_else(|_| {
+                failed_command_output(
+                    "check codex command in current shell".into(),
+                    "Current-shell Codex worker panicked.".into(),
+                )
+            }),
+            login_command_available: login_available.join().unwrap_or_else(|_| {
+                failed_command_output(
+                    "check codex command in login shell".into(),
+                    "Login-shell Codex worker panicked.".into(),
+                )
+            }),
+            version: version.join().unwrap_or_else(|_| {
+                failed_command_output(
+                    "codex --version".into(),
+                    "Codex version worker panicked.".into(),
+                )
+            }),
+            shell_path: shell_path.join().unwrap_or_else(|_| {
+                failed_command_output("echo PATH".into(), "Remote PATH worker panicked.".into())
+            }),
+        }
+    })
+}
+
+fn append_state_check_logs(
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    checks: &CodexStateChecks,
+    phase: &str,
+) {
+    for (label, output, failure_level) in [
+        ("resolve codex", &checks.codex_path, TaskLogLevel::Warn),
+        (
+            "check codex command in current shell",
+            &checks.current_command_available,
+            TaskLogLevel::Warn,
+        ),
+        (
+            "check codex command in login shell",
+            &checks.login_command_available,
+            TaskLogLevel::Warn,
+        ),
+        ("codex --version", &checks.version, TaskLogLevel::Warn),
+        ("echo PATH", &checks.shell_path, TaskLogLevel::Info),
+    ] {
+        let level = if output.success() {
+            TaskLogLevel::Info
+        } else {
+            failure_level
+        };
+        let message = if output.success() {
+            format!("{label} {phase} completed.")
+        } else {
+            format!("{label} {phase} failed: {}", command_detail(output))
+        };
+        logs.push(command_log(
+            task_id,
+            logs.len() + 1,
+            level,
+            &message,
+            output,
+        ));
+    }
+}
+
 pub(crate) fn run_remote_manage_codex(
     app: &AppHandle,
     state: &AppState,
@@ -1131,7 +1984,7 @@ pub(crate) fn run_remote_manage_codex(
     let host_name = host_name_for_alias(state, &alias);
     let host_id = host_id_for_alias(state, &alias);
     let action_label = remote_codex_action_label(&action);
-    let running = jobs::begin_task(
+    let mut running = jobs::begin_task(
         &state.task_store,
         state.task_event_sink.as_ref(),
         &task_id,
@@ -1139,14 +1992,40 @@ pub(crate) fn run_remote_manage_codex(
         &host_name,
         action_label,
     )?;
+    let definitions = match action {
+        RemoteCodexAction::Uninstall => UNINSTALL_STEP_IDS,
+        RemoteCodexAction::Install | RemoteCodexAction::Update => INSTALL_STEP_IDS,
+        RemoteCodexAction::CheckVersion => &[
+            ("preparation", "Preparing to inspect Codex."),
+            (
+                "final-verification",
+                "Waiting to inspect the current Codex state.",
+            ),
+        ],
+    };
+    initialize_operation_steps(state, &mut running, definitions)?;
+    let request_id = host_operation_request_id(request_id, "codex-operation");
     let progress = CodexProgressContext {
         app,
-        state,
-        task_id: &task_id,
-        request_id: request_id.as_deref(),
+        request_id: Some(&request_id),
         host_alias: &alias,
         action: &action,
     };
+    let host_progress = HostProgressContext {
+        app,
+        state,
+        task_id: &task_id,
+        request_id: &request_id,
+        host_alias: &alias,
+        operation: host_operation_kind(&action),
+    };
+    persist_and_emit_step(
+        &host_progress,
+        "preparation",
+        TaskStepStatus::Running,
+        format!("Preparing {alias} for {action_label}."),
+        None,
+    )?;
 
     emit_remote_codex_progress(
         Some(&progress),
@@ -1183,6 +2062,9 @@ pub(crate) fn run_remote_manage_codex(
         &check_message,
         &check_output,
     ));
+    if let Some(log) = logs.last_mut() {
+        log.step_id = Some("preparation".into());
+    }
     emit_remote_codex_progress_for_output(
         Some(&progress),
         "ssh-check",
@@ -1191,10 +2073,36 @@ pub(crate) fn run_remote_manage_codex(
         &check_output,
     );
 
+    if check_ok {
+        persist_and_emit_step(
+            &host_progress,
+            "preparation",
+            TaskStepStatus::Running,
+            check_message.clone(),
+            logs.last().cloned(),
+        )?;
+    }
+
     if !check_ok {
         update_host_check(state, &alias, false, check_output.duration_ms);
         let message = format!("{action_label} skipped because SSH check failed: {check_message}");
-        let task = codex_maintenance_task(
+        persist_and_emit_step(
+            &host_progress,
+            "preparation",
+            TaskStepStatus::Failed,
+            check_message.clone(),
+            logs.last().cloned(),
+        )?;
+        for (step_id, _) in definitions.iter().skip(1) {
+            persist_and_emit_step(
+                &host_progress,
+                step_id,
+                TaskStepStatus::Skipped,
+                "Not run because preparation failed.",
+                None,
+            )?;
+        }
+        let mut task = codex_maintenance_task(
             &task_id,
             &host_id,
             &host_name,
@@ -1203,6 +2111,11 @@ pub(crate) fn run_remote_manage_codex(
             &message,
             logs,
         );
+        task.steps = state
+            .task_store
+            .get(&task_id)?
+            .map(|task| task.steps)
+            .unwrap_or_default();
         emit_remote_codex_progress(
             Some(&progress),
             "summary",
@@ -1234,56 +2147,76 @@ pub(crate) fn run_remote_manage_codex(
     }
     update_host_check(state, &alias, true, check_output.duration_ms);
 
+    let preparation_log_start = logs.len();
+    let (before_checks, preparation_output) = std::thread::scope(|scope| {
+        let preparation = scope.spawn(|| {
+            probe_group_output(&alias, "preparation", preparation_probe_script(), timeout)
+        });
+        let before_checks = run_codex_state_checks_parallel(&alias, timeout, "before maintenance");
+        let preparation_output = preparation.join().unwrap_or_else(|_| {
+            failed_command_output(
+                "probe host preparation".into(),
+                "Host preparation worker panicked.".into(),
+            )
+        });
+        (before_checks, preparation_output)
+    });
+    append_state_check_logs(&task_id, &mut logs, &before_checks, "before maintenance");
+    let state_check_log_end = logs.len();
+    let preparation_data = if preparation_output.success() {
+        parse_preparation_probe(&preparation_output)
+    } else {
+        Err(command_detail(&preparation_output))
+    };
+    let preparation_message = match &preparation_data {
+        Ok(data) => format!("Host prerequisites checked: {}.", data.detail),
+        Err(error) => format!(
+            "Host prerequisite checks failed: {}",
+            redact_error_text(error)
+        ),
+    };
+    logs.push(command_log(
+        &task_id,
+        logs.len() + 1,
+        if preparation_data.is_ok() {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        &preparation_message,
+        &preparation_output,
+    ));
     let mut next_log_index = logs.len() + 1;
-    let before_path = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "resolve existing codex",
-        &codex_path_probe_script(),
-        timeout,
-        TaskLogLevel::Warn,
-        Some(&progress),
-    );
-    let before_command_available_output = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "check existing codex command in PATH",
-        CODEX_COMMAND_AVAILABLE_SCRIPT,
-        timeout,
-        TaskLogLevel::Warn,
-        Some(&progress),
-    );
-    let before_command_available = before_command_available_output.success();
-    let before_version_output = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "existing codex --version",
-        &codex_version_probe_script(),
-        timeout,
-        TaskLogLevel::Warn,
-        Some(&progress),
-    );
-    let before_version = output_trimmed(&before_version_output);
+    let before_command_available = before_checks.current_command_available.success()
+        || before_checks.login_command_available.success();
+    let before_version = output_trimmed(&before_checks.version);
 
     if action == RemoteCodexAction::CheckVersion {
-        let path_output = run_codex_step(
-            &alias,
-            &task_id,
-            &mut logs,
-            &mut next_log_index,
-            "echo $PATH",
-            "printf '%s\n' \"$PATH\"",
-            timeout,
-            TaskLogLevel::Info,
-            Some(&progress),
-        );
-        let codex_path = output_trimmed(&before_path);
+        persist_step_logs(
+            &host_progress,
+            "preparation",
+            &mut logs[state_check_log_end..],
+        )?;
+        persist_and_emit_step(
+            &host_progress,
+            "preparation",
+            TaskStepStatus::Success,
+            "SSH preparation completed.",
+            None,
+        )?;
+        persist_and_emit_step(
+            &host_progress,
+            "final-verification",
+            TaskStepStatus::Running,
+            "Inspecting the current Codex state.",
+            None,
+        )?;
+        persist_step_logs(
+            &host_progress,
+            "final-verification",
+            &mut logs[preparation_log_start..state_check_log_end],
+        )?;
+        let codex_path = output_trimmed(&before_checks.codex_path);
         let installed = codex_path.is_some() && before_version.is_some();
         let ok = installed && before_command_available;
         let version_label = before_version
@@ -1296,7 +2229,18 @@ pub(crate) fn run_remote_manage_codex(
         } else {
             format!("Codex is not available on {alias}.")
         };
-        let task = codex_maintenance_task(
+        persist_and_emit_step(
+            &host_progress,
+            "final-verification",
+            if ok {
+                TaskStepStatus::Success
+            } else {
+                TaskStepStatus::Failed
+            },
+            message.clone(),
+            None,
+        )?;
+        let mut task = codex_maintenance_task(
             &task_id,
             &host_id,
             &host_name,
@@ -1309,12 +2253,17 @@ pub(crate) fn run_remote_manage_codex(
             &message,
             logs,
         );
+        task.steps = state
+            .task_store
+            .get(&task_id)?
+            .map(|task| task.steps)
+            .unwrap_or_default();
         update_host_codex_status(
             state,
             &alias,
             installed,
             &version_label,
-            path_has_local_bin(output_trimmed(&path_output).as_deref()),
+            path_has_local_bin(output_trimmed(&before_checks.shell_path).as_deref()),
             before_command_available,
         );
         emit_remote_codex_progress(
@@ -1348,6 +2297,86 @@ pub(crate) fn run_remote_manage_codex(
     }
 
     if action == RemoteCodexAction::Uninstall {
+        persist_step_logs(
+            &host_progress,
+            "preparation",
+            &mut logs[preparation_log_start..],
+        )?;
+        if !uninstall_prerequisites_ready(&preparation_data) {
+            let message = match &preparation_data {
+                Ok(data) => format!(
+                    "{action_label} cannot start because uninstall prerequisites are not satisfied: {}.",
+                    data.detail
+                ),
+                Err(error) => format!(
+                    "{action_label} cannot start because host prerequisites could not be checked: {}",
+                    redact_error_text(error)
+                ),
+            };
+            persist_and_emit_step(
+                &host_progress,
+                "preparation",
+                TaskStepStatus::Failed,
+                message.clone(),
+                None,
+            )?;
+            for (step_id, _) in UNINSTALL_STEP_IDS.iter().skip(1) {
+                persist_and_emit_step(
+                    &host_progress,
+                    step_id,
+                    TaskStepStatus::Skipped,
+                    "Not run because uninstall prerequisites failed.",
+                    None,
+                )?;
+            }
+            let mut task = codex_maintenance_task(
+                &task_id,
+                &host_id,
+                &host_name,
+                action_label,
+                TaskStatus::Failed,
+                &message,
+                logs,
+            );
+            task.steps = state
+                .task_store
+                .get(&task_id)?
+                .map(|task| task.steps)
+                .unwrap_or_default();
+            record_task(state, task.clone())?;
+            let (result_before_version, result_after_version) =
+                retained_codex_versions(before_version);
+            return Ok(RemoteCodexMaintenanceResult {
+                host_alias: alias,
+                ok: false,
+                action,
+                before_version: result_before_version,
+                after_version: result_after_version,
+                codex_path: output_trimmed(&before_checks.codex_path),
+                codex_command_available: before_command_available,
+                install_method: None,
+                path_changed: false,
+                shell_config_path: None,
+                backup_path: None,
+                message,
+                task,
+            });
+        }
+        persist_and_emit_step(
+            &host_progress,
+            "preparation",
+            TaskStepStatus::Success,
+            "SSH and current Codex checks completed.",
+            None,
+        )?;
+        persist_and_emit_step(
+            &host_progress,
+            "uninstall",
+            TaskStepStatus::Running,
+            "Removing the managed Codex installation.",
+            None,
+        )?;
+        let uninstall_log_start = logs.len();
         let uninstall_output = run_codex_step(
             &alias,
             &task_id,
@@ -1359,59 +2388,56 @@ pub(crate) fn run_remote_manage_codex(
             TaskLogLevel::Error,
             Some(&progress),
         );
+        persist_step_logs(
+            &host_progress,
+            "uninstall",
+            &mut logs[uninstall_log_start..],
+        )?;
         let uninstall_method = marker_value(&uninstall_output.stdout, "CODEXHUB_UNINSTALL_METHOD")
             .filter(|value| value != "unsupported");
         let backup_path = marker_value(&uninstall_output.stdout, "CODEXHUB_BACKUP_PATH");
-        let after_path = run_codex_step(
-            &alias,
-            &task_id,
-            &mut logs,
-            &mut next_log_index,
-            "resolve codex after uninstall",
-            &codex_path_probe_script(),
-            timeout,
-            TaskLogLevel::Warn,
-            Some(&progress),
-        );
-        let after_command_available_output = run_codex_step(
-            &alias,
-            &task_id,
-            &mut logs,
-            &mut next_log_index,
-            "check codex command in PATH after uninstall",
-            CODEX_COMMAND_AVAILABLE_SCRIPT,
-            timeout,
-            TaskLogLevel::Warn,
-            Some(&progress),
-        );
-        let after_version_output = run_codex_step(
-            &alias,
-            &task_id,
-            &mut logs,
-            &mut next_log_index,
-            "codex --version after uninstall",
-            &codex_version_probe_script(),
-            timeout,
-            TaskLogLevel::Warn,
-            Some(&progress),
-        );
-        let path_output = run_codex_step(
-            &alias,
-            &task_id,
-            &mut logs,
-            &mut next_log_index,
-            "echo $PATH after uninstall",
-            "printf '%s\n' \"$PATH\"",
-            timeout,
-            TaskLogLevel::Info,
-            Some(&progress),
-        );
+        persist_and_emit_step(
+            &host_progress,
+            "uninstall",
+            if uninstall_output.success() {
+                TaskStepStatus::Success
+            } else {
+                TaskStepStatus::Failed
+            },
+            if uninstall_output.success() {
+                "The uninstall command completed."
+            } else {
+                "The uninstall command failed."
+            },
+            None,
+        )?;
+        persist_and_emit_step(
+            &host_progress,
+            "final-verification",
+            TaskStepStatus::Running,
+            "Verifying that Codex is no longer available.",
+            None,
+        )?;
+        let verification_log_start = logs.len();
+        let after_checks = run_codex_state_checks_parallel(&alias, timeout, "after uninstall");
+        append_state_check_logs(&task_id, &mut logs, &after_checks, "after uninstall");
+        persist_step_logs(
+            &host_progress,
+            "final-verification",
+            &mut logs[verification_log_start..],
+        )?;
 
-        let codex_path = output_trimmed(&after_path);
-        let codex_command_available = after_command_available_output.success();
-        let after_version = output_trimmed(&after_version_output);
+        let codex_path = output_trimmed(&after_checks.codex_path);
+        let codex_command_available = after_checks.current_command_available.success()
+            || after_checks.login_command_available.success();
+        let after_version = output_trimmed(&after_checks.version);
         let installed = codex_path.is_some() || after_version.is_some();
-        let ok = uninstall_output.success() && !installed && !codex_command_available;
+        let ok = uninstall_target_reached(
+            codex_path.is_some(),
+            after_version.is_some(),
+            after_checks.current_command_available.success(),
+            after_checks.login_command_available.success(),
+        );
         let version_label = after_version.clone().unwrap_or_else(|| {
             if codex_path.is_some() {
                 "unknown".into()
@@ -1419,19 +2445,35 @@ pub(crate) fn run_remote_manage_codex(
                 "not installed".into()
             }
         });
-        let message = if ok {
+        let message = if ok && uninstall_output.success() {
             format!("{action_label} completed on {alias}; Codex is no longer available.")
+        } else if ok {
+            format!(
+                "{action_label} reached its final target on {alias}; Codex is no longer available even though the uninstall command reported: {}",
+                command_detail(&uninstall_output)
+            )
         } else if uninstall_output.success() {
             format!(
                 "{action_label} completed on {alias}, but another Codex command is still available: {version_label}."
             )
         } else {
             format!(
-                "{action_label} failed on {alias}: {}",
-                command_detail(&uninstall_output)
+                "{action_label} failed on {alias}, and final verification still found Codex {version_label}: {}",
+                command_detail(&uninstall_output),
             )
         };
-        let task = codex_maintenance_task(
+        persist_and_emit_step(
+            &host_progress,
+            "final-verification",
+            if ok {
+                TaskStepStatus::Success
+            } else {
+                TaskStepStatus::Failed
+            },
+            message.clone(),
+            None,
+        )?;
+        let mut task = codex_maintenance_task(
             &task_id,
             &host_id,
             &host_name,
@@ -1444,12 +2486,17 @@ pub(crate) fn run_remote_manage_codex(
             &message,
             logs,
         );
+        task.steps = state
+            .task_store
+            .get(&task_id)?
+            .map(|task| task.steps)
+            .unwrap_or_default();
         update_host_codex_status(
             state,
             &alias,
             installed,
             &version_label,
-            path_has_local_bin(output_trimmed(&path_output).as_deref()),
+            path_has_local_bin(output_trimmed(&after_checks.shell_path).as_deref()),
             codex_command_available,
         );
         emit_remote_codex_progress(
@@ -1482,6 +2529,71 @@ pub(crate) fn run_remote_manage_codex(
         });
     }
 
+    let prerequisites_ready = install_prerequisites_ready(&preparation_data);
+    if !prerequisites_ready {
+        persist_step_logs(
+            &host_progress,
+            "preparation",
+            &mut logs[preparation_log_start..],
+        )?;
+        let message = match preparation_data {
+            Ok(data) => format!(
+                "{action_label} cannot start because host prerequisites are not satisfied: {}.",
+                data.detail
+            ),
+            Err(error) => format!(
+                "{action_label} cannot start because host prerequisites could not be checked: {}",
+                redact_error_text(&error)
+            ),
+        };
+        persist_and_emit_step(
+            &host_progress,
+            "preparation",
+            TaskStepStatus::Failed,
+            message.clone(),
+            None,
+        )?;
+        for (step_id, _) in INSTALL_STEP_IDS.iter().skip(1) {
+            persist_and_emit_step(
+                &host_progress,
+                step_id,
+                TaskStepStatus::Skipped,
+                "Not run because host prerequisites failed.",
+                None,
+            )?;
+        }
+        let mut task = codex_maintenance_task(
+            &task_id,
+            &host_id,
+            &host_name,
+            action_label,
+            TaskStatus::Failed,
+            &message,
+            logs,
+        );
+        task.steps = state
+            .task_store
+            .get(&task_id)?
+            .map(|task| task.steps)
+            .unwrap_or_default();
+        record_task(state, task.clone())?;
+        return Ok(RemoteCodexMaintenanceResult {
+            host_alias: alias,
+            ok: false,
+            action,
+            before_version,
+            after_version: None,
+            codex_path: output_trimmed(&before_checks.codex_path),
+            codex_command_available: before_command_available,
+            install_method: None,
+            path_changed: false,
+            shell_config_path: None,
+            backup_path: None,
+            message,
+            task,
+        });
+    }
+
     let path_repair_output = run_codex_step(
         &alias,
         &task_id,
@@ -1498,96 +2610,285 @@ pub(crate) fn run_remote_manage_codex(
         .unwrap_or(false);
     let shell_config_path = marker_value(&path_repair_output.stdout, "CODEXHUB_SHELL_CONFIG_PATH");
     let backup_path = marker_value(&path_repair_output.stdout, "CODEXHUB_BACKUP_PATH");
-
-    let mut install_output = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        action_label,
-        CODEX_INSTALL_SCRIPT,
-        timeout,
-        TaskLogLevel::Error,
-        Some(&progress),
-    );
-    if !install_output.success() {
-        install_output = run_local_upload_codex_fallback(
-            &state.paths,
-            &alias,
-            &task_id,
-            &mut logs,
-            &mut next_log_index,
-            timeout,
-            Some(&progress),
+    persist_step_logs(
+        &host_progress,
+        "preparation",
+        &mut logs[preparation_log_start..],
+    )?;
+    if !path_repair_output.success() {
+        let message = format!(
+            "{action_label} stopped because host preparation failed: {}",
+            command_detail(&path_repair_output)
         );
+        persist_and_emit_step(
+            &host_progress,
+            "preparation",
+            TaskStepStatus::Failed,
+            message.clone(),
+            None,
+        )?;
+        for (step_id, _) in INSTALL_STEP_IDS.iter().skip(1) {
+            persist_and_emit_step(
+                &host_progress,
+                step_id,
+                TaskStepStatus::Skipped,
+                "Not run because preparation failed.",
+                None,
+            )?;
+        }
+        let mut task = codex_maintenance_task(
+            &task_id,
+            &host_id,
+            &host_name,
+            action_label,
+            TaskStatus::Failed,
+            &message,
+            logs,
+        );
+        task.steps = state
+            .task_store
+            .get(&task_id)?
+            .map(|task| task.steps)
+            .unwrap_or_default();
+        record_task(state, task.clone())?;
+        return Ok(RemoteCodexMaintenanceResult {
+            host_alias: alias,
+            ok: false,
+            action,
+            before_version,
+            after_version: None,
+            codex_path: output_trimmed(&before_checks.codex_path),
+            codex_command_available: before_command_available,
+            install_method: None,
+            path_changed,
+            shell_config_path,
+            backup_path,
+            message,
+            task,
+        });
     }
-    let install_method = marker_value(&install_output.stdout, "CODEXHUB_INSTALL_METHOD")
-        .filter(|value| value != "failed");
+    persist_and_emit_step(
+        &host_progress,
+        "preparation",
+        TaskStepStatus::Success,
+        "SSH checks, current-state checks, and PATH preparation completed.",
+        None,
+    )?;
 
-    let after_path = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "resolve codex after maintenance",
-        &codex_path_probe_script(),
-        timeout,
-        TaskLogLevel::Error,
-        Some(&progress),
-    );
-    let after_command_available_output = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "check codex command in PATH after maintenance",
-        CODEX_COMMAND_AVAILABLE_SCRIPT,
-        timeout,
-        TaskLogLevel::Warn,
-        Some(&progress),
-    );
-    let after_version_output = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "codex --version after maintenance",
-        &codex_version_probe_script(),
-        timeout,
-        TaskLogLevel::Error,
-        Some(&progress),
-    );
-    let path_output = run_codex_step(
-        &alias,
-        &task_id,
-        &mut logs,
-        &mut next_log_index,
-        "echo $PATH after maintenance",
-        "printf '%s\n' \"$PATH\"",
-        timeout,
-        TaskLogLevel::Info,
-        Some(&progress),
-    );
+    let method_steps = [
+        "official-installer",
+        "remote-native-mirror",
+        "remote-npm-mirror",
+        "local-upload",
+    ];
+    let mut successful_install = None;
+    let mut installation_failure_summary = None;
+    let mut attempt_outcomes = Vec::new();
+    while let Some(method_index) = next_installation_method(&attempt_outcomes) {
+        let step_id = method_steps[method_index];
+        persist_and_emit_step(
+            &host_progress,
+            step_id,
+            TaskStepStatus::Running,
+            format!("Trying installation method: {step_id}."),
+            None,
+        )?;
+        let method_log_start = logs.len();
+        let output = match step_id {
+            "official-installer" => run_official_codex_installer(
+                &alias,
+                &task_id,
+                &mut logs,
+                &mut next_log_index,
+                timeout,
+                Some(&progress),
+            ),
+            "remote-native-mirror" => run_remote_native_mirror_install(
+                &alias,
+                &task_id,
+                &mut logs,
+                &mut next_log_index,
+                timeout,
+                Some(&progress),
+            ),
+            "remote-npm-mirror" => run_remote_npm_mirror_install(
+                &alias,
+                &task_id,
+                &mut logs,
+                &mut next_log_index,
+                timeout,
+                Some(&progress),
+            ),
+            "local-upload" => run_local_upload_codex_fallback(
+                &state.paths,
+                &alias,
+                &task_id,
+                &mut logs,
+                &mut next_log_index,
+                timeout,
+                Some(&progress),
+            ),
+            _ => unreachable!("stable installation step"),
+        };
+        let mut method_succeeded = output.success();
+        let mut validation_failure = None;
+        if method_succeeded {
+            let candidate_output = probe_group_output(
+                &alias,
+                &format!("{step_id}-candidate"),
+                &codex_probe_group_script(),
+                timeout,
+            );
+            let candidate = if candidate_output.success() {
+                parse_codex_probe(&candidate_output)
+            } else {
+                Err(command_detail(&candidate_output))
+            };
+            method_succeeded = candidate
+                .as_ref()
+                .map(|candidate| {
+                    candidate.installed
+                        && candidate.path.is_some()
+                        && !candidate.version.trim().is_empty()
+                        && candidate.version != "unavailable"
+                })
+                .unwrap_or(false);
+            let candidate_message = if method_succeeded {
+                format!("Resolved a working Codex candidate after {step_id}.")
+            } else {
+                let detail = candidate
+                    .err()
+                    .unwrap_or_else(|| "No versioned Codex candidate was found.".into());
+                validation_failure = Some(detail.clone());
+                format!(
+                    "Candidate validation after {step_id} failed: {}",
+                    redact_error_text(&detail)
+                )
+            };
+            logs.push(command_log(
+                &task_id,
+                next_log_index,
+                if method_succeeded {
+                    TaskLogLevel::Info
+                } else {
+                    TaskLogLevel::Error
+                },
+                &candidate_message,
+                &candidate_output,
+            ));
+            next_log_index += 1;
+        }
+        attempt_outcomes.push(method_succeeded);
+        if !method_succeeded {
+            installation_failure_summary = Some(
+                validation_failure
+                    .clone()
+                    .unwrap_or_else(|| command_detail(&output)),
+            );
+        }
+        persist_step_logs(&host_progress, step_id, &mut logs[method_log_start..])?;
+        if method_succeeded {
+            let method = marker_value(&output.stdout, "CODEXHUB_INSTALL_METHOD")
+                .filter(|value| value != "failed")
+                .unwrap_or_else(|| step_id.to_string());
+            persist_and_emit_step(
+                &host_progress,
+                step_id,
+                TaskStepStatus::Success,
+                format!("Installation method succeeded: {method}."),
+                None,
+            )?;
+            successful_install = Some(method);
+            for skipped in method_steps.iter().skip(method_index + 1) {
+                persist_and_emit_step(
+                    &host_progress,
+                    skipped,
+                    TaskStepStatus::Skipped,
+                    "Not needed because an earlier installation method succeeded.",
+                    None,
+                )?;
+            }
+            continue;
+        }
+        persist_and_emit_step(
+            &host_progress,
+            step_id,
+            TaskStepStatus::Failed,
+            validation_failure
+                .map(|error| {
+                    format!(
+                        "The method ran, but candidate validation failed: {}. Trying the next method.",
+                        redact_error_text(&error)
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "This installation method failed; trying the next method.".into()
+                }),
+            None,
+        )?;
+    }
+    let install_method = successful_install.clone();
 
-    let codex_path = output_trimmed(&after_path);
-    let codex_command_available = after_command_available_output.success();
-    let after_version = output_trimmed(&after_version_output);
-    let installed = install_output.success() && codex_path.is_some() && after_version.is_some();
-    let ok = installed && codex_command_available;
+    persist_and_emit_step(
+        &host_progress,
+        "final-verification",
+        TaskStepStatus::Running,
+        "Verifying the final Codex path, version, and shell availability.",
+        None,
+    )?;
+    let verification_log_start = logs.len();
+    let after_checks = run_codex_state_checks_parallel(&alias, timeout, "after maintenance");
+    append_state_check_logs(&task_id, &mut logs, &after_checks, "after maintenance");
+    persist_step_logs(
+        &host_progress,
+        "final-verification",
+        &mut logs[verification_log_start..],
+    )?;
+
+    let codex_path = output_trimmed(&after_checks.codex_path);
+    let current_command_available = after_checks.current_command_available.success();
+    let login_command_available = after_checks.login_command_available.success();
+    let codex_command_available = current_command_available && login_command_available;
+    let after_version = output_trimmed(&after_checks.version);
+    let installed = successful_install.is_some() && codex_path.is_some() && after_version.is_some();
+    let verification_failures = final_verification_failures(
+        successful_install.is_some(),
+        codex_path.is_some(),
+        after_version.is_some(),
+        current_command_available,
+        login_command_available,
+    );
+    let ok = verification_failures.is_empty();
     let version_label = after_version
         .clone()
         .unwrap_or_else(|| "not installed".into());
     let message = if ok {
         format!("{action_label} completed on {alias}: {version_label}.")
-    } else if installed {
-        format!("{action_label} installed Codex on {alias}: {version_label}, but `codex` is not available on the current shell PATH.")
+    } else if successful_install.is_none() {
+        format!(
+            "{action_label} failed on {alias}: no installation method produced a verifiable Codex candidate. Last failure: {}",
+            installation_failure_summary
+                .as_deref()
+                .unwrap_or("no method completed successfully")
+        )
     } else {
         format!(
-            "{action_label} failed on {alias}: {}",
-            command_detail(&install_output)
+            "{action_label} installed a candidate on {alias}, but final verification is missing: {}.",
+            verification_failures.join(", ")
         )
     };
-    let task = codex_maintenance_task(
+    persist_and_emit_step(
+        &host_progress,
+        "final-verification",
+        if ok {
+            TaskStepStatus::Success
+        } else {
+            TaskStepStatus::Failed
+        },
+        message.clone(),
+        None,
+    )?;
+    let mut task = codex_maintenance_task(
         &task_id,
         &host_id,
         &host_name,
@@ -1600,12 +2901,17 @@ pub(crate) fn run_remote_manage_codex(
         &message,
         logs,
     );
+    task.steps = state
+        .task_store
+        .get(&task_id)?
+        .map(|task| task.steps)
+        .unwrap_or_default();
     update_host_codex_status(
         state,
         &alias,
         installed,
         &version_label,
-        path_has_local_bin(output_trimmed(&path_output).as_deref()),
+        path_has_local_bin(output_trimmed(&after_checks.shell_path).as_deref()),
         codex_command_available,
     );
     emit_remote_codex_progress(
@@ -1636,6 +2942,53 @@ pub(crate) fn run_remote_manage_codex(
         backup_path,
         message,
         task,
+    })
+}
+
+pub(crate) fn run_batch_remote_update_codex(
+    app: &AppHandle,
+    state: &AppState,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+) -> Result<RemoteCodexBatchResult, String> {
+    let request_id = host_operation_request_id(request_id, "batch-codex-update");
+    let item_count = host_aliases.len();
+    if item_count == 0 {
+        return Ok(RemoteCodexBatchResult {
+            request_id,
+            action: RemoteCodexAction::Update,
+            results: Vec::new(),
+        });
+    }
+    // Workers pull the next host immediately after finishing, forming a sliding pool.
+    let results = run_bounded_ordered(host_aliases, |host_alias| {
+        match run_remote_manage_codex(
+            app,
+            state,
+            host_alias.clone(),
+            RemoteCodexAction::Update,
+            timeout_ms,
+            Some(request_id.clone()),
+        ) {
+            Ok(result) => RemoteCodexBatchItem {
+                host_alias,
+                ok: result.ok,
+                result: Some(result),
+                error: None,
+            },
+            Err(error) => RemoteCodexBatchItem {
+                host_alias,
+                ok: false,
+                result: None,
+                error: Some(redact_error_text(&error)),
+            },
+        }
+    });
+    Ok(RemoteCodexBatchResult {
+        request_id,
+        action: RemoteCodexAction::Update,
+        results,
     })
 }
 
@@ -1694,6 +3047,69 @@ pub(crate) fn run_codex_step(
     output
 }
 
+pub(crate) fn run_official_codex_installer(
+    alias: &str,
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    next_log_index: &mut usize,
+    timeout: u64,
+    progress: Option<&CodexProgressContext<'_>>,
+) -> ssh::SshCommandOutput {
+    run_codex_step(
+        alias,
+        task_id,
+        logs,
+        next_log_index,
+        "official Codex installer",
+        CODEX_OFFICIAL_INSTALL_SCRIPT,
+        timeout,
+        TaskLogLevel::Error,
+        progress,
+    )
+}
+
+pub(crate) fn run_remote_native_mirror_install(
+    alias: &str,
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    next_log_index: &mut usize,
+    timeout: u64,
+    progress: Option<&CodexProgressContext<'_>>,
+) -> ssh::SshCommandOutput {
+    run_codex_step(
+        alias,
+        task_id,
+        logs,
+        next_log_index,
+        "remote npmmirror native package",
+        CODEX_REMOTE_NATIVE_MIRROR_SCRIPT,
+        timeout,
+        TaskLogLevel::Error,
+        progress,
+    )
+}
+
+pub(crate) fn run_remote_npm_mirror_install(
+    alias: &str,
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    next_log_index: &mut usize,
+    timeout: u64,
+    progress: Option<&CodexProgressContext<'_>>,
+) -> ssh::SshCommandOutput {
+    run_codex_step(
+        alias,
+        task_id,
+        logs,
+        next_log_index,
+        "remote npm mirror installation",
+        CODEX_REMOTE_NPM_MIRROR_SCRIPT,
+        timeout,
+        TaskLogLevel::Error,
+        progress,
+    )
+}
+
 pub(crate) fn command_step_message(
     label: &str,
     output: &ssh::SshCommandOutput,
@@ -1725,23 +3141,6 @@ pub(crate) fn emit_remote_codex_progress(
         return;
     };
     let message = ssh::redact_sensitive(&message);
-    let level = match status {
-        "failed" => TaskLogLevel::Error,
-        "stderr" => TaskLogLevel::Warn,
-        _ => TaskLogLevel::Info,
-    };
-    if let Err(error) = jobs::append_message(
-        &progress.state.task_store,
-        progress.state.task_event_sink.as_ref(),
-        progress.task_id,
-        level,
-        &message,
-    ) {
-        eprintln!(
-            "Could not persist sanitized Codex progress: {}",
-            redact_error_text(&error)
-        );
-    }
     let Some(request_id) = progress.request_id else {
         return;
     };
@@ -1944,7 +3343,7 @@ pub(crate) fn run_local_upload_codex_fallback(
         }
     };
 
-    let (package, download_output) =
+    let (package, download_output, validation_output) =
         download_codex_native_package_locally(paths, &platform, &target, timeout, progress);
     push_command_step_log(
         task_id,
@@ -1955,8 +3354,19 @@ pub(crate) fn run_local_upload_codex_fallback(
         timeout,
         TaskLogLevel::Error,
     );
+    if let Some(validation_output) = validation_output.as_ref() {
+        push_command_step_log(
+            task_id,
+            logs,
+            next_log_index,
+            "validate downloaded Codex native package locally",
+            validation_output,
+            timeout.min(30_000),
+            TaskLogLevel::Error,
+        );
+    }
     let Some(package) = package else {
-        return download_output;
+        return validation_output.unwrap_or(download_output);
     };
 
     let remote_tarball = format!(
@@ -2052,7 +3462,11 @@ pub(crate) fn download_codex_native_package_locally(
     target: &str,
     timeout: u64,
     progress: Option<&CodexProgressContext<'_>>,
-) -> (Option<LocalCodexNativePackage>, ssh::SshCommandOutput) {
+) -> (
+    Option<LocalCodexNativePackage>,
+    ssh::SshCommandOutput,
+    Option<ssh::SshCommandOutput>,
+) {
     let temp_dir = paths
         .cache_file("codex-downloads")
         .join(format!("native-{}", timestamp_millis()));
@@ -2063,6 +3477,7 @@ pub(crate) fn download_codex_native_package_locally(
                 "create local Codex package temp directory".into(),
                 format!("Could not create local temp directory: {error}"),
             ),
+            None,
         );
     }
 
@@ -2077,7 +3492,7 @@ pub(crate) fn download_codex_native_package_locally(
     );
     if !metadata_output.success() {
         log_best_effort("clean temporary directory", fs::remove_dir_all(&temp_dir));
-        return (None, metadata_output);
+        return (None, metadata_output, None);
     }
 
     let metadata = match fs::read_to_string(&metadata_path) {
@@ -2090,6 +3505,7 @@ pub(crate) fn download_codex_native_package_locally(
                     "read local @openai/codex metadata".into(),
                     format!("Could not read downloaded npmmirror metadata: {error}"),
                 ),
+                None,
             );
         }
     };
@@ -2100,6 +3516,7 @@ pub(crate) fn download_codex_native_package_locally(
             return (
                 None,
                 failed_command_output("parse local @openai/codex metadata".into(), error),
+                None,
             );
         }
     };
@@ -2111,6 +3528,7 @@ pub(crate) fn download_codex_native_package_locally(
                 "validate local @openai/codex package version".into(),
                 format!("npmmirror returned an unsafe Codex package version: {version}"),
             ),
+            None,
         );
     }
 
@@ -2124,7 +3542,7 @@ pub(crate) fn download_codex_native_package_locally(
     );
     if !tarball_output.success() {
         log_best_effort("clean temporary directory", fs::remove_dir_all(&temp_dir));
-        return (None, tarball_output);
+        return (None, tarball_output, None);
     }
 
     let stdout = format!(
@@ -2139,6 +3557,13 @@ pub(crate) fn download_codex_native_package_locally(
         timed_out: false,
     };
 
+    let validation_output =
+        validate_local_codex_native_package(&tarball_path, target, timeout.min(30_000), progress);
+    if !validation_output.success() {
+        log_best_effort("clean temporary directory", fs::remove_dir_all(&temp_dir));
+        return (None, output, Some(validation_output));
+    }
+
     (
         Some(LocalCodexNativePackage {
             version,
@@ -2147,7 +3572,115 @@ pub(crate) fn download_codex_native_package_locally(
             temp_dir,
         }),
         output,
+        Some(validation_output),
     )
+}
+
+fn validate_local_codex_native_package(
+    tarball_path: &Path,
+    target: &str,
+    timeout: u64,
+    progress: Option<&CodexProgressContext<'_>>,
+) -> ssh::SshCommandOutput {
+    let timeout = timeout.clamp(5_000, 30_000);
+    let args = vec![
+        "-tzf".to_string(),
+        tarball_path.to_string_lossy().to_string(),
+    ];
+    let command = format!("tar -tzf {}", path_string(tarball_path));
+    emit_remote_codex_progress(
+        progress,
+        "validate downloaded Codex native package locally",
+        "running",
+        "Validating the downloaded archive before SCP upload.".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    let output = ssh::run_local_process("tar", &args, &command, timeout).unwrap_or_else(|error| {
+        failed_command_output(command, format!("Could not start local tar: {error}"))
+    });
+    let output = validate_local_tar_listing_output(output, target);
+    emit_remote_codex_progress_for_output(
+        progress,
+        "validate downloaded Codex native package locally",
+        if output.success() {
+            "success"
+        } else {
+            "failed"
+        },
+        &command_step_message(
+            "validate downloaded Codex native package locally",
+            &output,
+            timeout,
+        ),
+        &output,
+    );
+    output
+}
+
+fn validate_local_tar_listing_output(
+    mut output: ssh::SshCommandOutput,
+    target: &str,
+) -> ssh::SshCommandOutput {
+    if !output.success() {
+        return output;
+    }
+    match validate_codex_native_archive_listing(&output.stdout, target) {
+        Ok(entries) => {
+            output.stdout = format!(
+                "Validated {entries} archive entries; package/vendor/{target}/bin/codex is present.\n"
+            );
+        }
+        Err(error) => {
+            output.exit_code = Some(65);
+            output.stderr = error;
+        }
+    }
+    output
+}
+
+fn validate_codex_native_archive_listing(listing: &str, target: &str) -> Result<usize, String> {
+    if target.is_empty()
+        || !target
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err("The expected Codex native target is unsafe.".into());
+    }
+    let expected = format!("package/vendor/{target}/bin/codex");
+    let mut entry_count = 0usize;
+    let mut found_candidate = false;
+    for raw_entry in listing.lines() {
+        let entry = raw_entry.trim().trim_start_matches("./");
+        if entry.is_empty() {
+            continue;
+        }
+        entry_count += 1;
+        let bytes = entry.as_bytes();
+        let has_drive_prefix = bytes.len() >= 2 && bytes[1] == b':';
+        let has_parent = entry.split(['/', '\\']).any(|component| component == "..");
+        if entry.starts_with('/') || entry.starts_with('\\') || has_drive_prefix || has_parent {
+            return Err(format!(
+                "Downloaded Codex archive contains an unsafe path: {entry}"
+            ));
+        }
+        if entry == expected {
+            found_candidate = true;
+        }
+    }
+    if entry_count == 0 {
+        return Err("Downloaded Codex archive did not contain any entries.".into());
+    }
+    if !found_candidate {
+        return Err(format!(
+            "Downloaded Codex archive did not contain {expected}."
+        ));
+    }
+    Ok(entry_count)
 }
 
 pub(crate) fn run_refresh_latest_codex_version(
@@ -2589,6 +4122,437 @@ pub(crate) fn codex_maintenance_task(
         started_at: timestamp_label(),
         ended_at: Some(timestamp_label()),
         summary: summary.to_string(),
+        steps: Vec::new(),
         logs,
+    }
+}
+
+#[cfg(test)]
+mod host_operation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[test]
+    fn bounded_pool_limits_concurrency_refills_and_preserves_input_order() {
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let slow_finished = AtomicBool::new(false);
+        let replacement_started_before_slow_finished = AtomicBool::new(false);
+        let output = run_bounded_ordered((0usize..9).collect(), |item| {
+            let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(current, Ordering::SeqCst);
+            if item == 6 && !slow_finished.load(Ordering::SeqCst) {
+                replacement_started_before_slow_finished.store(true, Ordering::SeqCst);
+            }
+            if item == 0 {
+                std::thread::sleep(Duration::from_millis(60));
+                slow_finished.store(true, Ordering::SeqCst);
+            } else {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            active.fetch_sub(1, Ordering::SeqCst);
+            item
+        });
+
+        assert_eq!(output, (0usize..9).collect::<Vec<_>>());
+        assert!(peak.load(Ordering::SeqCst) <= HOST_OPERATION_MAX_CONCURRENCY);
+        assert_eq!(peak.load(Ordering::SeqCst), HOST_OPERATION_MAX_CONCURRENCY);
+        assert!(replacement_started_before_slow_finished.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn four_probe_groups_run_together_and_complete_fastest_first() {
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let barrier = std::sync::Barrier::new(4);
+        let mut completed = Vec::new();
+        run_parallel_completions(
+            vec![("slow", 50u64), ("medium", 25), ("quick", 12), ("fast", 2)],
+            |_, delay| {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                barrier.wait();
+                std::thread::sleep(Duration::from_millis(delay));
+            },
+            |key, ()| -> Result<(), ()> {
+                active.fetch_sub(1, Ordering::SeqCst);
+                completed.push(key);
+                Ok(())
+            },
+        )
+        .expect("run parallel probes");
+
+        assert_eq!(peak.load(Ordering::SeqCst), 4);
+        assert_eq!(completed.first(), Some(&"fast"));
+        assert_eq!(completed.last(), Some(&"slow"));
+    }
+
+    #[test]
+    fn batch_probe_refreshes_latest_version_exactly_once() {
+        let calls = AtomicUsize::new(0);
+        let (latest, hosts) = run_with_parallel_latest(
+            || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                "1.2.3"
+            },
+            || vec!["one", "two", "three"],
+        );
+        assert_eq!(latest.expect("latest worker"), "1.2.3");
+        assert_eq!(hosts.len(), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn installation_fallback_stops_only_after_validated_success() {
+        assert_eq!(next_installation_method(&[]), Some(0));
+        assert_eq!(next_installation_method(&[true]), None);
+        assert_eq!(next_installation_method(&[false]), Some(1));
+        assert_eq!(next_installation_method(&[false, true]), None);
+        assert_eq!(next_installation_method(&[false, false]), Some(2));
+        assert_eq!(next_installation_method(&[false, false, true]), None);
+        assert_eq!(next_installation_method(&[false, false, false]), Some(3));
+        assert_eq!(next_installation_method(&[false, false, false, true]), None);
+        assert_eq!(
+            next_installation_method(&[false, false, false, false]),
+            None
+        );
+
+        // An exit-zero command with failed candidate validation records false and advances.
+        let command_succeeded_but_candidate_failed = [false];
+        assert_eq!(
+            next_installation_method(&command_succeeded_but_candidate_failed),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn final_verification_requires_method_path_version_and_both_shells() {
+        assert!(final_verification_failures(true, true, true, true, true).is_empty());
+        let cases = [
+            (
+                false,
+                true,
+                true,
+                true,
+                true,
+                "verified installation method",
+            ),
+            (true, false, true, true, true, "Codex path"),
+            (true, true, false, true, true, "Codex version"),
+            (true, true, true, false, true, "current-shell command"),
+            (true, true, true, true, false, "login-shell command"),
+        ];
+        for (method, path, version, current, login, expected) in cases {
+            let failures = final_verification_failures(method, path, version, current, login);
+            assert!(failures.contains(&expected));
+        }
+    }
+
+    #[test]
+    fn concurrent_operation_ids_are_unique() {
+        let ids = Arc::new(Mutex::new(Vec::new()));
+        std::thread::scope(|scope| {
+            for _ in 0..32 {
+                let ids = Arc::clone(&ids);
+                scope.spawn(move || {
+                    ids.lock()
+                        .expect("ids mutex poisoned")
+                        .push(timestamp_millis());
+                });
+            }
+        });
+        let ids = ids.lock().expect("ids mutex poisoned");
+        assert_eq!(ids.len(), 32);
+        assert_eq!(
+            ids.iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            32
+        );
+    }
+
+    #[test]
+    fn structured_probe_treats_absent_optional_resources_as_valid() {
+        let output = ssh::SshCommandOutput {
+            command: "probe".into(),
+            stdout: "CODEXHUB_CODEX_INSTALLED=no\nCODEXHUB_CODEX_COMMAND_AVAILABLE=no\nCODEXHUB_CODEX_PATH=\nCODEXHUB_CODEX_VERSION=\n".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 1,
+            timed_out: false,
+        };
+        let codex = parse_codex_probe(&output).expect("parse absent Codex");
+        assert!(!codex.installed);
+        assert_eq!(codex.version, "not installed");
+
+        let api = ssh::SshCommandOutput {
+            stdout: "CODEXHUB_CONFIG_EXISTS=no\nCODEXHUB_API_BASE_URL=\nCODEXHUB_API_ENV_VAR=\nCODEXHUB_API_ENV_PRESENT=unknown\n".into(),
+            ..output.clone()
+        };
+        assert!(
+            !parse_api_probe(&api)
+                .expect("parse absent API config")
+                .config_exists
+        );
+        let skills = ssh::SshCommandOutput {
+            stdout: "CODEXHUB_SKILLS_EXISTS=no\nCODEXHUB_SKILLS_COUNT=0\n".into(),
+            ..output
+        };
+        let skills = parse_skills_probe(&skills).expect("parse absent skills");
+        assert!(!skills.exists);
+        assert_eq!(skills.count, 0);
+    }
+
+    #[test]
+    fn candidate_and_next_method_logs_use_distinct_ids() {
+        let output = ssh::SshCommandOutput {
+            command: "test".into(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 1,
+            timed_out: false,
+        };
+        let mut next = 3usize;
+        let candidate = command_log("task", next, TaskLogLevel::Info, "candidate", &output);
+        next += 1;
+        let method = command_log("task", next, TaskLogLevel::Info, "method", &output);
+        assert_ne!(candidate.id, method.id);
+    }
+
+    #[test]
+    fn local_native_archive_listing_requires_safe_paths_and_target_binary() {
+        let target = "x86_64-unknown-linux-musl";
+        let valid = format!(
+            "package/package.json\npackage/vendor/{target}/bin/codex\npackage/vendor/{target}/codex-path/rg\n"
+        );
+        assert_eq!(
+            validate_codex_native_archive_listing(&valid, target).expect("valid archive listing"),
+            3
+        );
+
+        for unsafe_listing in [
+            format!("/package/vendor/{target}/bin/codex\n"),
+            format!("package/vendor/../{target}/bin/codex\n"),
+            format!("C:/package/vendor/{target}/bin/codex\n"),
+            format!("..\\package\\vendor\\{target}\\bin\\codex\n"),
+        ] {
+            assert!(validate_codex_native_archive_listing(&unsafe_listing, target).is_err());
+        }
+        assert!(validate_codex_native_archive_listing("package/package.json\n", target).is_err());
+    }
+
+    #[test]
+    fn local_tar_command_failure_never_becomes_a_valid_archive() {
+        let failed = ssh::SshCommandOutput {
+            command: "tar -tzf broken.tgz".into(),
+            stdout: "package/vendor/x86_64-unknown-linux-musl/bin/codex\n".into(),
+            stderr: "gzip: invalid header".into(),
+            exit_code: Some(2),
+            duration_ms: 3,
+            timed_out: false,
+        };
+        let checked =
+            validate_local_tar_listing_output(failed.clone(), "x86_64-unknown-linux-musl");
+        assert_eq!(checked, failed);
+        assert!(!checked.success());
+    }
+
+    #[test]
+    fn local_tar_listing_validation_returns_a_compact_success_log() {
+        let output = ssh::SshCommandOutput {
+            command: "tar -tzf codex.tgz".into(),
+            stdout: "package/package.json\npackage/vendor/aarch64-unknown-linux-musl/bin/codex\n"
+                .into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 3,
+            timed_out: false,
+        };
+        let checked = validate_local_tar_listing_output(output, "aarch64-unknown-linux-musl");
+        assert!(checked.success());
+        assert!(checked.stdout.contains("Validated 2 archive entries"));
+        assert!(checked
+            .stdout
+            .contains("package/vendor/aarch64-unknown-linux-musl/bin/codex is present"));
+    }
+
+    #[test]
+    fn install_and_uninstall_prerequisites_use_operation_specific_gates() {
+        let linux_without_method_specific_tools = Ok(PreparationProbeData {
+            install_platform_ok: true,
+            uninstall_platform_ok: true,
+            sh_ok: true,
+            install_write_ok: true,
+            uninstall_write_ok: true,
+            detail: "Linux/x86_64; sh=yes; tar=no; npm=yes".into(),
+        });
+        assert!(install_prerequisites_ready(
+            &linux_without_method_specific_tools
+        ));
+        assert!(uninstall_prerequisites_ready(
+            &linux_without_method_specific_tools
+        ));
+
+        let darwin = Ok(PreparationProbeData {
+            install_platform_ok: false,
+            uninstall_platform_ok: true,
+            sh_ok: true,
+            install_write_ok: true,
+            uninstall_write_ok: true,
+            detail: "Darwin/arm64".into(),
+        });
+        assert!(!install_prerequisites_ready(&darwin));
+        assert!(uninstall_prerequisites_ready(&darwin));
+
+        let no_uninstall_write = Ok(PreparationProbeData {
+            uninstall_write_ok: false,
+            ..darwin.expect("Darwin probe")
+        });
+        assert!(!uninstall_prerequisites_ready(&no_uninstall_write));
+        assert!(!install_prerequisites_ready(&Err("probe failed".into())));
+        assert!(!uninstall_prerequisites_ready(&Err("probe failed".into())));
+    }
+
+    #[test]
+    fn uninstall_success_is_decided_by_final_absence_only() {
+        assert!(uninstall_target_reached(false, false, false, false));
+        assert!(!uninstall_target_reached(true, false, false, false));
+        assert!(!uninstall_target_reached(false, true, false, false));
+        assert!(!uninstall_target_reached(false, false, true, false));
+        assert!(!uninstall_target_reached(false, false, false, true));
+        let (before, after) = retained_codex_versions(Some("codex-cli 1.2.3".into()));
+        assert_eq!(before.as_deref(), Some("codex-cli 1.2.3"));
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn lifecycle_logs_are_assigned_to_the_first_structured_step() {
+        let mut task = TaskRun {
+            id: "task".into(),
+            host_id: "host".into(),
+            host_name: "Host".into(),
+            action: "Install Codex".into(),
+            status: TaskStatus::Running,
+            started_at: "now".into(),
+            ended_at: None,
+            summary: "running".into(),
+            steps: Vec::new(),
+            logs: vec![
+                basic_log("task", 1, TaskLogLevel::Info, "queued"),
+                basic_log("task", 2, TaskLogLevel::Info, "started"),
+            ],
+        };
+        assign_existing_logs_to_step(&mut task, "preparation");
+        assert!(task
+            .logs
+            .iter()
+            .all(|log| log.step_id.as_deref() == Some("preparation")));
+    }
+
+    #[test]
+    fn stable_step_ids_and_preparation_details_do_not_drift() {
+        assert_eq!(
+            PROBE_STEP_IDS.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            ["ssh-check", "system", "codex", "api", "skills"]
+        );
+        assert_eq!(
+            INSTALL_STEP_IDS
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>(),
+            [
+                "preparation",
+                "official-installer",
+                "remote-native-mirror",
+                "remote-npm-mirror",
+                "local-upload",
+                "final-verification"
+            ]
+        );
+        let script = preparation_probe_script();
+        for token in [
+            "sh=%s",
+            "tar=%s",
+            "curl=%s",
+            "wget=%s",
+            "python3=%s",
+            "npm=%s",
+            "CODEXHUB_INSTALL_PLATFORM_OK",
+            "CODEXHUB_UNINSTALL_PLATFORM_OK",
+        ] {
+            assert!(script.contains(token));
+        }
+    }
+
+    #[test]
+    fn failed_probe_groups_preserve_old_fields_while_successful_groups_update() {
+        let mut host = Host {
+            id: "host-1".into(),
+            name: "Host".into(),
+            host_alias: "lab".into(),
+            source: "manual".into(),
+            address: "lab".into(),
+            port: 22,
+            username: "user".into(),
+            auth_method: AuthMethod::SshKey,
+            status: HostStatus::Unknown,
+            os: "OldOS".into(),
+            arch: "old-arch".into(),
+            shell: "/bin/old".into(),
+            path: Some("/old/bin".into()),
+            path_has_local_bin: Some(false),
+            codex_command_available: Some(false),
+            codex_installed: false,
+            codex_version: "old-version".into(),
+            config_exists: Some(true),
+            api_config_name: Some("Old config".into()),
+            api_config_source: Some("profile".into()),
+            api_key_env_var: Some("OLD_KEY".into()),
+            api_key_env_present: Some(true),
+            skills_exists: Some(true),
+            skills_count: Some(1),
+            profile_id: Some("old-profile".into()),
+            skill_pack_ids: Vec::new(),
+            tags: Vec::new(),
+            last_seen: "old".into(),
+            latency_ms: None,
+        };
+        let api_match = RemoteApiConfigMatch {
+            name: "New config".into(),
+            source: "new".into(),
+            profile_id: Some("new-profile".into()),
+        };
+        apply_host_probe_group_updates(
+            &mut host,
+            "NewOS",
+            "new-arch",
+            "/bin/new",
+            Some("/new/bin".into()),
+            true,
+            true,
+            true,
+            "2.0.0",
+            false,
+            &api_match,
+            Some("NEW_KEY".into()),
+            Some(false),
+            false,
+            7,
+            false,
+            true,
+            false,
+            true,
+        );
+
+        assert_eq!(host.os, "OldOS");
+        assert_eq!(host.path.as_deref(), Some("/old/bin"));
+        assert_eq!(host.codex_version, "2.0.0");
+        assert!(host.codex_installed);
+        assert_eq!(host.api_config_name.as_deref(), Some("Old config"));
+        assert_eq!(host.profile_id.as_deref(), Some("old-profile"));
+        assert_eq!(host.skills_count, Some(7));
+        assert_eq!(host.skills_exists, Some(false));
     }
 }

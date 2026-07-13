@@ -85,6 +85,7 @@ pub(crate) fn record_frontend_error(
         started_at: timestamp_label(),
         ended_at: Some(timestamp_label()),
         summary: safe_message,
+        steps: Vec::new(),
         logs: vec![basic_log(
             &task_id,
             1,

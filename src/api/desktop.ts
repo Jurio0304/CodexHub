@@ -3,14 +3,15 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   CcSwitchDetection,
   HostDraft,
+  HostOperationProgressEvent,
   HostPatch,
   InstalledSkillRequest,
   ProfileDraft,
   ProfileImportExport,
   ProfilePatch,
   RemoteCodexAction,
+  RemoteCodexBatchResult,
   RemoteCodexMaintenanceResult,
-  RemoteCodexProgressEvent,
   SkillDetectionResult,
   SkillImportResult,
   SkillTargetOperationResult,
@@ -20,7 +21,8 @@ import type {
   SshBootstrapResult,
   SshConfigDeleteResult,
   SshHostDraft,
-  TaskRun
+  TaskRun,
+  RemoteProbeBatchResult
 } from "../models";
 import type { AppSettings, CloseButtonBehavior, SettingsSaveResult } from "../settings";
 import type {
@@ -62,8 +64,30 @@ import type {
 } from "../generated/rust-contracts";
 import { normalizeSettings, saveDesktopSettingsCache } from "../settings";
 import type { CodexHubApi } from "./contracts";
+import type { TauriCommand } from "./commands";
 import { assertTauriRuntime, requireHostAlias, requiredInvoke } from "./invoke";
 import { normalizeHost, normalizeProfile, normalizeProfileApplyPreview, normalizeProfileApplyResult } from "./normalize";
+
+async function runWithHostOperationProgress<T>(
+  command: TauriCommand,
+  requestId: string | undefined,
+  onProgress: ((event: HostOperationProgressEvent) => void) | undefined,
+  invoke: () => Promise<T>
+) {
+  let unlisten: UnlistenFn | null = null;
+  assertTauriRuntime(command);
+  if (requestId && onProgress) {
+    unlisten = await listen<HostOperationProgressEvent>("host-operation-progress", (event) => {
+      if (event.payload.requestId === requestId) onProgress(event.payload);
+    });
+  }
+
+  try {
+    return await invoke();
+  } finally {
+    unlisten?.();
+  }
+}
 
 export const desktopApi: CodexHubApi = {
   getHealth: () => requiredInvoke<HealthDto>("app_health"),
@@ -152,11 +176,36 @@ export const desktopApi: CodexHubApi = {
       password,
       timeoutMs
     }),
-  remoteProbeCodex: (hostAlias: string, timeoutMs = 10000) =>
-    requiredInvoke<RemoteProbeResultDto>("remote_probe_codex", {
+  remoteProbeCodex: async (
+    hostAlias: string,
+    timeoutMs = 10000,
+    requestId?: string,
+    onProgress?: (event: HostOperationProgressEvent) => void
+  ) => runWithHostOperationProgress(
+    "remote_probe_codex",
+    requestId,
+    onProgress,
+    () => requiredInvoke<RemoteProbeResultDto>("remote_probe_codex", {
       hostAlias: requireHostAlias("remote_probe_codex", hostAlias),
-      timeoutMs
-    }),
+      timeoutMs,
+      requestId
+    })
+  ),
+  batchRemoteProbeCodex: async (
+    hostAliases: string[],
+    timeoutMs = 10000,
+    requestId?: string,
+    onProgress?: (event: HostOperationProgressEvent) => void
+  ) => runWithHostOperationProgress(
+    "batch_remote_probe_codex",
+    requestId,
+    onProgress,
+    () => requiredInvoke<RemoteProbeBatchResult>("batch_remote_probe_codex", {
+      hostAliases: hostAliases.map((alias) => requireHostAlias("batch_remote_probe_codex", alias)),
+      timeoutMs,
+      requestId
+    })
+  ),
   sampleHostResources: (hostAliases: string[], timeoutMs = 8000, recordTask = true) =>
     requiredInvoke<HostResourceBatchResultDto>("sample_host_resources", {
       hostAliases: hostAliases.map((alias) => requireHostAlias("sample_host_resources", alias)),
@@ -168,28 +217,36 @@ export const desktopApi: CodexHubApi = {
     action: RemoteCodexAction,
     timeoutMs = 120000,
     requestId?: string,
-    onProgress?: (event: RemoteCodexProgressEvent) => void
+    onProgress?: (event: HostOperationProgressEvent) => void
   ): Promise<RemoteCodexMaintenanceResult> => {
     const alias = requireHostAlias("remote_manage_codex", hostAlias);
-    let unlisten: UnlistenFn | null = null;
-    assertTauriRuntime("remote_manage_codex");
-    if (requestId && onProgress) {
-      unlisten = await listen<RemoteCodexProgressEvent>("remote-codex-progress", (event) => {
-        if (event.payload.requestId === requestId) onProgress(event.payload);
-      });
-    }
-
-    try {
-      return await requiredInvoke<RemoteCodexMaintenanceResultDto>("remote_manage_codex", {
+    return runWithHostOperationProgress(
+      "remote_manage_codex",
+      requestId,
+      onProgress,
+      () => requiredInvoke<RemoteCodexMaintenanceResultDto>("remote_manage_codex", {
         hostAlias: alias,
         action,
         timeoutMs,
         requestId
-      });
-    } finally {
-      unlisten?.();
-    }
+      })
+    );
   },
+  batchRemoteUpdateCodex: async (
+    hostAliases: string[],
+    timeoutMs = 120000,
+    requestId?: string,
+    onProgress?: (event: HostOperationProgressEvent) => void
+  ) => runWithHostOperationProgress(
+    "batch_remote_update_codex",
+    requestId,
+    onProgress,
+    () => requiredInvoke<RemoteCodexBatchResult>("batch_remote_update_codex", {
+      hostAliases: hostAliases.map((alias) => requireHostAlias("batch_remote_update_codex", alias)),
+      timeoutMs,
+      requestId
+    })
+  ),
   listProfiles: () => requiredInvoke<ProfileDto[]>("list_profiles").then((profiles) => profiles.map(normalizeProfile)),
   createProfile: (draft: ProfileDraft) =>
     requiredInvoke<ProfileDto>("create_profile", { draft }).then(normalizeProfile),

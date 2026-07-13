@@ -10,6 +10,8 @@ const fail = (message) => {
 
 const commandsSource = read("src/api/commands.ts");
 const desktopSource = read("src/api/desktop.ts");
+const apiContractsSource = read("src/api/contracts.ts");
+const mockSource = read("src/api/mock.ts");
 const invokeSource = read("src/api/invoke.ts");
 const settingsSource = read("src/settings.ts");
 const appSource = read("src/App.tsx");
@@ -46,6 +48,28 @@ if (!/get_profile_api_key:\s*\{[^}]*sensitiveOutput:\s*true/.test(commandsSource
 }
 for (const command of desktopCommands) {
   if (!policyCommands.includes(command)) fail(`desktop command is missing policy: ${command}`);
+}
+for (const command of ["batch_remote_probe_codex", "batch_remote_update_codex"]) {
+  if (!policyCommands.includes(command)) fail(`batch host operation is missing command policy: ${command}`);
+  if (!rustCommands.includes(command)) fail(`batch host operation is missing Rust handler: ${command}`);
+  if (!desktopCommands.includes(command)) fail(`batch host operation must use the required desktop invoke path: ${command}`);
+}
+for (const token of [
+  "HostOperationProgressHandler",
+  "batchRemoteProbeCodex",
+  "batchRemoteUpdateCodex",
+  'listen<HostOperationProgressEvent>("host-operation-progress"',
+  "event.payload.requestId === requestId"
+]) {
+  if (!`${apiContractsSource}\n${desktopSource}`.includes(token)) {
+    fail(`structured host-operation API boundary is missing: ${token}`);
+  }
+}
+for (const token of ["batchRemoteProbeCodex:", "batchRemoteUpdateCodex:", "runMockConcurrencyPool", "concurrency = 6"]) {
+  if (!mockSource.includes(token)) fail(`Mock batch API boundary is missing: ${token}`);
+}
+if (desktopSource.includes('"remote-codex-progress"')) {
+  fail("desktop API must consume the unified host-operation-progress event");
 }
 for (const forbidden of ["safeInvoke", "mockApi", "./fallbacks", "fallbackHealth", "fallbackSshStatus"]) {
   if (desktopSource.includes(forbidden)) fail(`desktop API contains forbidden fallback token: ${forbidden}`);

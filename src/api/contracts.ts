@@ -7,6 +7,7 @@ import type {
   Health,
   Host,
   HostDraft,
+  HostOperationProgressEvent,
   HostPatch,
   HostResourceBatchResult,
   InstalledSkillDownloadResult,
@@ -22,9 +23,10 @@ import type {
   ProfileImportExport,
   ProfilePatch,
   RemoteCodexAction,
+  RemoteCodexBatchResult,
   RemoteCodexMaintenanceResult,
-  RemoteCodexProgressEvent,
   RemoteProbeResult,
+  RemoteProbeBatchResult,
   SkillDetectionResult,
   SkillInventoryStatus,
   SkillImportResult,
@@ -54,7 +56,8 @@ import type {
 } from "../generated/rust-contracts";
 
 export type SshBootstrapProgressHandler = (event: SshBootstrapProgressEvent) => void;
-export type RemoteCodexProgressHandler = (event: RemoteCodexProgressEvent) => void;
+export type HostOperationProgressHandler = (event: HostOperationProgressEvent) => void;
+export type RemoteCodexProgressHandler = HostOperationProgressHandler;
 export type TaskUpdatedHandler = (event: TaskEvent) => void;
 
 export type CodexHubApi = {
@@ -90,15 +93,32 @@ export type CodexHubApi = {
   ) => Promise<SshBootstrapResult>;
   bootstrapSshHost: (draft: SshHostDraft, password: string, timeoutMs?: number) => Promise<SshBootstrapResult>;
   bootstrapExistingSshHost: (hostAlias: string, password: string, timeoutMs?: number) => Promise<SshBootstrapResult>;
-  remoteProbeCodex: (hostAlias: string, timeoutMs?: number) => Promise<RemoteProbeResult>;
+  remoteProbeCodex: (
+    hostAlias: string,
+    timeoutMs?: number,
+    requestId?: string,
+    onProgress?: HostOperationProgressHandler
+  ) => Promise<RemoteProbeResult>;
+  batchRemoteProbeCodex: (
+    hostAliases: string[],
+    timeoutMs?: number,
+    requestId?: string,
+    onProgress?: HostOperationProgressHandler
+  ) => Promise<RemoteProbeBatchResult>;
   sampleHostResources: (hostAliases: string[], timeoutMs?: number, recordTask?: boolean) => Promise<HostResourceBatchResult>;
   remoteManageCodex: (
     hostAlias: string,
     action: RemoteCodexAction,
     timeoutMs?: number,
     requestId?: string,
-    onProgress?: RemoteCodexProgressHandler
+    onProgress?: HostOperationProgressHandler
   ) => Promise<RemoteCodexMaintenanceResult>;
+  batchRemoteUpdateCodex: (
+    hostAliases: string[],
+    timeoutMs?: number,
+    requestId?: string,
+    onProgress?: HostOperationProgressHandler
+  ) => Promise<RemoteCodexBatchResult>;
   listProfiles: () => Promise<Profile[]>;
   createProfile: (draft: ProfileDraft) => Promise<Profile>;
   updateProfile: (id: string, patch: ProfilePatch) => Promise<Profile>;

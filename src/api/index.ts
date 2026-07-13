@@ -7,6 +7,7 @@ export { apiMode } from "./runtime";
 export type { ApiMode } from "./runtime";
 export type {
   CodexHubApi,
+  HostOperationProgressHandler,
   RemoteCodexProgressHandler,
   SshBootstrapProgressHandler,
   TaskUpdatedHandler

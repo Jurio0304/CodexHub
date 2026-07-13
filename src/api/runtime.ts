@@ -1,14 +1,11 @@
+/// <reference types="vite/client" />
+
 export type ApiMode = "desktop" | "mock";
 
-type ImportMetaWithEnv = ImportMeta & {
-  env?: {
-    MODE?: string;
-  };
-};
-
 // Mock mode is a build-time choice. A missing desktop bridge never selects it.
-export function resolveApiMode(meta: ImportMetaWithEnv = import.meta as ImportMetaWithEnv): ApiMode {
-  return meta.env?.MODE === "mock" ? "mock" : "desktop";
+export function resolveApiMode(mode: string | undefined): ApiMode {
+  return mode === "mock" ? "mock" : "desktop";
 }
 
-export const apiMode: ApiMode = resolveApiMode();
+// Keep the env access direct so Vite can replace MODE in mock and desktop builds.
+export const apiMode: ApiMode = resolveApiMode(import.meta.env.MODE);

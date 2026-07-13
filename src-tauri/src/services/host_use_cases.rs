@@ -308,6 +308,7 @@ pub(crate) async fn execute_remote_probe_codex(
     app: AppHandle,
     host_alias: String,
     timeout_ms: Option<u64>,
+    request_id: Option<String>,
 ) -> Result<RemoteProbeResult, String> {
     ensure_task_storage_for_app(&app)?;
     {
@@ -316,7 +317,25 @@ pub(crate) async fn execute_remote_probe_codex(
     }
     run_blocking_command("remote_probe_codex", move || {
         let state = app.state::<AppState>();
-        run_remote_probe(&app, &state, host_alias, timeout_ms)
+        run_remote_probe(&app, &state, host_alias, timeout_ms, request_id)
+    })
+    .await?
+}
+
+pub(crate) async fn execute_batch_remote_probe_codex(
+    app: AppHandle,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+) -> Result<RemoteProbeBatchResult, String> {
+    ensure_task_storage_for_app(&app)?;
+    {
+        let state = app.state::<AppState>();
+        storage::ensure_stores_current(&state.paths, &["profiles", "hosts"])?;
+    }
+    run_blocking_command("batch_remote_probe_codex", move || {
+        let state = app.state::<AppState>();
+        run_batch_remote_probe_codex(&app, &state, host_aliases, timeout_ms, request_id)
     })
     .await?
 }
@@ -394,6 +413,20 @@ pub(crate) async fn execute_remote_manage_codex(
     run_blocking_command("remote_manage_codex", move || {
         let state = app.state::<AppState>();
         run_remote_manage_codex(&app, &state, host_alias, action, timeout_ms, request_id)
+    })
+    .await?
+}
+
+pub(crate) async fn execute_batch_remote_update_codex(
+    app: AppHandle,
+    host_aliases: Vec<String>,
+    timeout_ms: Option<u64>,
+    request_id: Option<String>,
+) -> Result<RemoteCodexBatchResult, String> {
+    ensure_task_storage_for_app(&app)?;
+    run_blocking_command("batch_remote_update_codex", move || {
+        let state = app.state::<AppState>();
+        run_batch_remote_update_codex(&app, &state, host_aliases, timeout_ms, request_id)
     })
     .await?
 }

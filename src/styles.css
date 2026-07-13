@@ -4367,6 +4367,349 @@ button:disabled {
   gap: 10px;
 }
 
+.operationProgressModal {
+  width: min(760px, 100%);
+}
+
+.operationProgressHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-right: 42px;
+}
+
+.operationProgressHeader > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.operationProgressHeader h2 {
+  margin: 0;
+  font-size: 1.28rem;
+}
+
+.operationOverallStatus {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  background: var(--surface-muted);
+}
+
+.operationOverallStatus[data-status="running"] {
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+  color: var(--blue);
+}
+
+.operationOverallStatus[data-status="success"] {
+  border-color: color-mix(in srgb, var(--green) 34%, var(--border));
+  color: var(--green);
+}
+
+.operationOverallStatus[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--red) 34%, var(--border));
+  color: var(--red);
+}
+
+.operationOverallStatus[data-status="partial"] {
+  border-color: color-mix(in srgb, var(--yellow) 40%, var(--border));
+  color: var(--yellow);
+}
+
+.operationProgressMessage {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.operationProgressPanel,
+.operationSelectedHost,
+.operationStepList {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.operationHostSelector {
+  display: flex;
+  gap: 8px;
+  padding: 2px 2px 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.operationHostTab {
+  display: inline-grid;
+  grid-template-columns: 8px minmax(max-content, 1fr) auto;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-width: 132px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+.operationHostTab[aria-selected="true"] {
+  border-color: color-mix(in srgb, var(--blue) 58%, var(--border));
+  color: var(--text);
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
+.operationHostTab span {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.operationHostTab small {
+  color: var(--text-faint);
+  font-size: 0.7rem;
+}
+
+.operationHostStatusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--gray);
+}
+
+.operationHostStatusDot[data-status="running"] { background: var(--blue); }
+.operationHostStatusDot[data-status="success"] { background: var(--green); }
+.operationHostStatusDot[data-status="failed"] { background: var(--red); }
+
+.operationSelectedHostHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.operationSelectedHostHeader strong {
+  color: var(--text);
+}
+
+.operationStepCard {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.operationStepCard[data-status="running"] {
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--border));
+}
+
+.operationStepCard[data-status="success"] {
+  border-color: color-mix(in srgb, var(--green) 28%, var(--border));
+}
+
+.operationStepCard[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--red) 34%, var(--border));
+}
+
+.operationStepSummary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 30px 18px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  padding: 12px 14px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+}
+
+.operationStepSummary:hover {
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.operationStepText {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.operationStepText strong {
+  font-size: 0.88rem;
+}
+
+.operationStepText small {
+  color: var(--text-muted);
+  font-size: 0.77rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.operationStepState {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.operationStepChevron {
+  color: var(--text-faint);
+  font-size: 1rem;
+  transition: transform 160ms ease;
+}
+
+.operationStepSummary[aria-expanded="true"] .operationStepChevron {
+  transform: rotate(180deg);
+}
+
+.operationStatusIcon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid color-mix(in srgb, var(--gray) 45%, var(--border));
+  border-radius: 999px;
+  color: var(--gray);
+  font-size: 1rem;
+  font-weight: 900;
+  background: var(--surface);
+}
+
+.operationStatusIcon[data-status="running"] {
+  border-color: color-mix(in srgb, var(--blue) 20%, var(--border));
+  color: var(--blue);
+}
+
+.operationStatusIcon[data-status="success"] {
+  border-color: color-mix(in srgb, var(--green) 30%, var(--border));
+  color: var(--green);
+}
+
+.operationStatusIcon[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--red) 30%, var(--border));
+  color: var(--red);
+}
+
+.operationStatusSpinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  border-top-color: var(--blue);
+  border-radius: 999px;
+  animation: spin 0.9s linear infinite;
+}
+
+.operationStatusDots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.operationStatusDots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.operationStepDetails {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding: 12px 14px 14px;
+  background: color-mix(in srgb, var(--surface-solid) 58%, transparent);
+}
+
+.operationStepDetailsTitle,
+.operationStepLog > p,
+.operationStepEmpty {
+  margin: 0;
+}
+
+.operationStepDetailsTitle,
+.operationStepMetaGrid span,
+.operationStepStreamGrid span {
+  color: var(--text-faint);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.operationStepLog {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.operationStepLog:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.operationStepLog > p,
+.operationStepEmpty {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.operationStepLog[data-level="error"] > p { color: var(--red); }
+.operationStepLog[data-level="warn"] > p { color: var(--yellow); }
+
+.operationStepMetaGrid,
+.operationStepStreamGrid {
+  display: grid;
+  gap: 8px;
+}
+
+.operationStepMetaGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.operationStepStreamGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.operationStepMetaGrid > div,
+.operationStepStreamGrid > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.operationStepMetaGrid code,
+.operationStepStreamGrid pre {
+  margin: 0;
+  color: var(--text-muted);
+  font: 0.72rem/1.45 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.operationStepStreamGrid pre {
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--bg-strong) 82%, black 6%);
+}
+
 .bootstrapLogCard {
   display: grid;
   gap: 12px;
@@ -4859,6 +5202,27 @@ td code {
 
   .codexOperationLogRow code {
     grid-column: auto;
+  }
+
+  .operationProgressHeader {
+    padding-right: 38px;
+  }
+
+  .operationStepSummary {
+    grid-template-columns: minmax(0, 1fr) 30px 18px;
+  }
+
+  .operationStepState {
+    display: none;
+  }
+
+  .operationStepDetails {
+    padding-left: 14px;
+  }
+
+  .operationStepMetaGrid,
+  .operationStepStreamGrid {
+    grid-template-columns: 1fr;
   }
 
   .setupGuideModal {

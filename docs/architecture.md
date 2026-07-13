@@ -1,6 +1,6 @@
 # CodexHub Architecture
 
-Date: 2026-07-10
+Date: 2026-07-13
 Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 plus arm64 Linux deb release-build support.
 
 ## Architecture Principle
@@ -48,7 +48,7 @@ flowchart LR
 
 `AppErrorBoundary -> FeedbackProvider -> App` is the root composition. Every notification starts closing within five seconds and uses a one-second transition: it enters with a short upward movement plus blur-to-sharp reveal, then exits with the inverse downward blur. Pointer, keyboard, touch, wheel, or scroll input starts the exit immediately. Information, warning, success, and failure use theme-aware pale blue, yellow, green, and red surfaces with stronger semantic borders and an elevated shadow. Detail actions are centered over the content pane; notifications launched from global dialogs are centered over the full app viewport. Durable writes, live SSH, remote probes, installs, updates, applies, syncs, migrations, recoveries, and partial failures still have a persistent task; form validation, copy confirmation, and pure UI actions stay transient.
 
-The Tasks page reads the authoritative retained SQLite history and displays at most 100 task records. Resource sampling creates a durable task only for the first monitor-page entry and explicit manual refreshes; scheduled auto-refresh updates the cards without writing task history. Sidebar success and failure dots use the same transient completion state and clear when the user enters or interacts with the owning page; durable failures remain available in Tasks without pinning a sidebar indicator.
+The Tasks page reads the authoritative retained SQLite history and displays at most 100 task records. Host tests and remote Codex maintenance use the same `OperationProgressPanel` for live progress and retained history: each durable `TaskStep` is a collapsed summary card, and command/stdout/stderr details are rendered only after the user expands that card. Legacy tasks without steps are presented as one synthetic history card without rewriting their stored rows. Resource sampling creates a durable task only for the first monitor-page entry and explicit manual refreshes; scheduled auto-refresh updates the cards without writing task history. Sidebar success and failure dots use the same transient completion state and clear when the user enters or interacts with the owning page; durable failures remain available in Tasks without pinning a sidebar indicator.
 
 All app modals use shared Radix Dialog/AlertDialog wrappers while retaining existing CSS variables. They trap Tab/Shift+Tab, choose form or Cancel initial focus, close through the same Esc path, prevent accidental backdrop closure, block closure while a write is busy, and restore focus to the real trigger or active navigation item. Live regions are scoped to the changed message, and `prefers-reduced-motion: reduce` disables animations/transitions without hiding static busy text.
 
@@ -60,8 +60,8 @@ The backend migration boundary is `commands -> services -> jobs -> storage/adapt
 
 - `commands/` contains thin Tauri entry points only: parse wire arguments, pass `AppState` to one domain use case, and return the existing public command shape. All public command names remain stable.
 - `services/` owns use-case sequencing and compensation. Hosts/SSH, Profiles/credentials, Skills, updater, related Host/Profile writes, and storage migration/restore are separated into use-case and operation modules.
-- `jobs.rs` persists queued/running/final task transitions and redacts every log surface before SQLite writes. SSH bootstrap and remote Codex progress lines are appended while the task is running and merged into the final record. Failure to persist a required transition fails the command; Tauri event delivery remains diagnostic because SQLite is authoritative.
-- `storage/` owns app-scoped paths, versioned JSON, atomic replacement, backup/recovery, multi-file compensation, and the SQLite `TaskStore` repository. Task history keeps at most the latest 100 task records. Before automatic retention or manual clearing deletes completed rows, the complete tasks and logs are serialized into a recovery JSON file and moved through the operating system recycle-bin API; task-level tombstones prevent stale async snapshots from restoring recycled records. Running and queued tasks are never recycled.
+- `jobs.rs` persists queued/running/final task transitions and redacts every step summary and log surface before SQLite writes. A step and its optional detail log are committed atomically before the task-update notification is emitted; monotonic merging prevents stale parallel snapshots from moving a durable running or terminal step back to pending. Failure to persist a required transition fails the command; Tauri event delivery remains diagnostic because SQLite is authoritative.
+- `storage/` owns app-scoped paths, versioned JSON, atomic replacement, backup/recovery, multi-file compensation, and the SQLite `TaskStore` repository. Task schema v4 adds `task_steps` plus `task_logs.step_id`; upgrades checkpoint WAL, create and validate a `VACUUM INTO` snapshot, then migrate transactionally. Startup marks queued/running tasks as interrupted, running steps as failed, and pending steps as skipped. Task history keeps at most the latest 100 task records. Before automatic retention or manual clearing deletes completed rows, complete tasks, steps, and logs are serialized into a recovery JSON file and moved through the operating system recycle-bin API; task-level tombstones prevent stale async snapshots from restoring recycled records. Running and queued tasks are never recycled.
 - `adapters/` isolates event delivery and OS credentials. Existing `ssh.rs`, `resource_monitor.rs`, and `updater.rs` remain compatibility adapters behind services.
 
 `src-tauri/src/lib.rs` contains module wiring and shared imports only; Tauri builder/lifecycle assembly lives in `app_runtime.rs`, wire/domain types in `domain.rs`, and backend characterization tests in `backend_tests.rs`.
@@ -84,8 +84,9 @@ The complete desktop/mock failure policy is documented in [Desktop Command Bound
 - `test_ssh_connection(host_id)` / `ssh_check(host_alias)`: run `ssh <HostAlias> echo ok` through system OpenSSH with timeout and redacted logs.
 - `bootstrap_ssh_host(draft, password, request_id)`: use a one-time password through the Rust SSH client to install the local public key, set permissions, write a managed SSH config block, and verify key login.
 - `bootstrap_existing_ssh_host(host_alias, password)`: run the same key setup for a discovered host without changing unmanaged blocks.
-- `remote_probe_codex(host_alias)`: check OS, arch, shell, PATH, `codex --version`, `~/.codex/config.toml`, and skills on the backend worker pool.
-- `remote_manage_codex(host_alias, action, timeout_ms)`: run single-host `check-version`, `install`, or `update` for the real remote `codex` command.
+- `remote_probe_codex(host_alias, timeout_ms, request_id)`: verify SSH, then check system, Codex, API-config, and skills groups in parallel while emitting durable step progress.
+- `remote_manage_codex(host_alias, action, timeout_ms, request_id)`: run single-host `check-version`, `install`, `update`, or `uninstall` for the real remote `codex` command with ordered stages.
+- `batch_remote_probe_codex(host_aliases, timeout_ms, request_id)` / `batch_remote_update_codex(host_aliases, timeout_ms, request_id)`: run user-triggered host tests or updates through a six-host sliding concurrency pool while preserving input order in the result.
 - `refresh_latest_codex_version()`: refresh/cache the latest known Codex CLI version.
 - `list_profiles()`, `create_profile()`, `update_profile()`, `delete_profile()`, `duplicate_profile()`, `import_profiles()`: manage local structured profile templates without exporting secret values.
 - `set_profile_api_key(profile_id, api_key)`, `get_profile_api_key(profile_id)`, `delete_profile_api_key(profile_id)`: store, explicitly retrieve, or delete a local OS credential-store value while profile JSON keeps only credential state. Retrieval is used only by the profile editor's reveal control, and the value is never logged or cached.
@@ -109,11 +110,11 @@ The complete desktop/mock failure policy is documented in [Desktop Command Bound
 
 ## Local Data Model
 
-Authoritative low-frequency settings, hosts, profiles, and skill metadata use versioned JSON. Searchable task runs/logs, acknowledgement, schema history, cross-file operation journals, and backup metadata use SQLite. Rebuildable Codex-version and skill-inventory data lives under the app cache directory. API key values remain only in the OS credential store.
+Authoritative low-frequency settings, hosts, profiles, and skill metadata use versioned JSON. Searchable task runs, steps, logs, acknowledgement, schema history, cross-file operation journals, and backup metadata use SQLite. Rebuildable Codex-version and skill-inventory data lives under the app cache directory. API key values remain only in the OS credential store.
 
 Durable JSON v1 is `{ schemaVersion, updatedAt, data }`. Legacy arrays/objects are readable as v0, but writes remain locked until the user previews and confirms a SHA-256 fingerprinted migration. Changed writes create timestamped backups and use same-directory flush/validate/atomic replacement; unchanged writes create no backup. Corrupt data never silently falls back to a backup.
 
-SQLite enables foreign keys, WAL, `synchronous=FULL`, and a busy timeout. Startup marks queued/running tasks as `interrupted`. Future schema upgrades checkpoint WAL, create a validated `VACUUM INTO` snapshot, and migrate transactionally.
+SQLite enables foreign keys, WAL, `synchronous=FULL`, and a busy timeout. Schema v4 stores ordered `TaskStep` rows and associates detailed `TaskLog` rows through optional `stepId`; old tasks load with an empty step list. Startup converges interrupted task and step states, and future schema upgrades retain the same validated-snapshot plus transactional-migration rule.
 
 ```ts
 type Server = {
@@ -219,26 +220,28 @@ The stable updater is pending until the release build injects `CODEXHUB_STABLE_U
 
 See [stable updater details](stable-updater.md).
 
-## Remote Codex CLI Maintenance
+## Remote Host Tests And Codex Maintenance
 
-Single-host install/update is implemented through plain SSH. CodexHub keeps the user-facing remote command as `codex`; profile apply may install a same-name CodexHub-managed launcher under `~/.local/bin/codex` only to source managed environment variables before execing the real Codex binary.
+Host tests and Codex install/update/uninstall are implemented through plain SSH. CodexHub keeps the user-facing remote command as `codex`; profile apply may install a same-name CodexHub-managed launcher under `~/.local/bin/codex` only to source managed environment variables before execing the real Codex binary.
 
-1. Verify SSH with `ssh <HostAlias> echo ok`.
-2. Record the current Codex path and `codex --version` using the resolver that also checks `~/.local/bin/codex`.
-3. Ensure `~/.local/bin` exists.
-4. Check whether the current remote shell can resolve `command -v codex`; this is stored separately from "installed" because the resolver can find `~/.local/bin/codex` even when the user's shell PATH cannot.
-5. Check `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`, create timestamped backups before writing, and add or replace a CodexHub-managed PATH block idempotently only when no existing `$HOME/.local/bin` entry is present.
-6. Run the official standalone installer from `https://chatgpt.com/codex/install.sh` with user-directory environment variables.
-7. If the official installer fails or cannot be reached, download the platform-native `@openai/codex` package from `https://registry.npmmirror.com` into `~/.codex/packages/standalone/releases/<version>` and symlink `~/.local/bin/codex`.
-8. If remote downloads are blocked or redirected but SSH/SCP still works, download the same npmmirror native package on the local Windows machine, upload it with `scp`, and install it into the same user-owned remote paths.
-9. If the native package fallback is not available, run `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`.
-10. Re-run the resolver, `command -v codex`, and `codex --version`, then store the complete task log.
+A host test first runs `ssh-check`, then runs the `system`, `codex`, `api`, and `skills` probe groups concurrently. Each group uses one structured remote script. A missing Codex installation, API config, or skills directory is a successful negative result; transport, command, timeout, parse, or persistence errors fail only the affected group and do not overwrite previously trusted fields.
 
-For long install/update runs, the Rust backend executes the blocking SSH/curl/scp work off the window-responsive command path and emits `remote-codex-progress` events keyed by a frontend `requestId`. The compact progress modal consumes these events to show step changes, streamed stdout/stderr lines, and heartbeat messages before the final `TaskRun` is returned.
+Install and update keep this strict per-host order:
+
+1. `preparation`: verify SSH and the current Codex/platform/tool state, then prepare user-owned directories and PATH files with backups where needed.
+2. `official-installer`: run `https://chatgpt.com/codex/install.sh` with strict TLS and user-directory environment variables.
+3. `remote-native-mirror`: fetch and validate the matching npmmirror native package remotely; the narrowly scoped insecure-TLS retry remains inside this stage.
+4. `remote-npm-mirror`: use remote npm with the npmmirror registry and a user-owned prefix.
+5. `local-upload`: download and validate the native package locally, upload it with SCP, then install it remotely.
+6. `final-verification`: resolve the final binary and verify version plus current/login-shell PATH visibility.
+
+Fallback methods on one host are always sequential. The first successful method skips the remaining methods, and overall success requires final verification. Uninstall uses `preparation`, `uninstall`, and `final-verification`; Codex being absent after removal is a successful verification result.
+
+The Rust backend executes blocking SSH/curl/scp work off the window-responsive command path and emits `host-operation-progress` events keyed by `requestId`, task, host, operation, and durable `TaskStep`. Heartbeats remain transient and are not stored as task logs. The shared progress panel shows summaries by default and reveals the associated commands, exit status, duration, stdout, and stderr only when a card is expanded. Batch host tests and updates use a fixed six-host sliding pool; hosts run concurrently, each host keeps its own ordered workflow, and returned results remain in input order. A batch host test refreshes the latest Codex version once in parallel with the host queue and returns that shared comparison value separately from per-host results.
 
 The remote script must not use `sudo`, `/usr/local/bin`, `chown`, or a root-owned install path. Repeat runs should not duplicate the PATH block and should not create a backup when no shell config write is needed.
 
-The primary UI entry is a compact all-host readiness list on the Profiles / 配置 page. Dashboard may expose the same single-host actions as shortcuts, while Host pages stay focused on SSH details, probes, and diagnostics.
+The primary UI entry is the host table on the Hosts / 主机 page, which owns single-host and batch maintenance actions plus the shared progress modal. Profiles / 配置 remains focused on profile editing and apply workflows.
 
 ## Remote Write Algorithm
 

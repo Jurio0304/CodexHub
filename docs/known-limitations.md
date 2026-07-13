@@ -1,6 +1,6 @@
 # CodexHub Known Limitations
 
-Date: 2026-07-12
+Date: 2026-07-13
 
 ## macOS
 
@@ -37,15 +37,17 @@ If Codex App supports a public documented SSH deep link on the tester's machine,
 
 The documented Codex App remote flow targets Linux remote machines with SSH access, POSIX-compatible shell behavior, writable home directory, and `scp` support. Windows remote hosts are not an MVP target.
 
-Remote Codex install/update also expects a writable `~/.local/bin` and `~/.codex`. The first install path needs `curl` or `wget` for the official standalone installer. If the official endpoint is unreachable, CodexHub falls back to the npmmirror native package path, which currently needs `python3`, `tar`, and a supported Linux CPU architecture (`x86_64` or `aarch64`). If that fallback is unavailable, CodexHub tries `npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com`. If remote downloads are blocked or redirected but SSH/SCP still works, CodexHub can download the npmmirror native package on the local Windows machine, upload the tarball with `scp`, and install it into the same user-owned remote paths.
+Remote Codex install/update also expects a writable `~/.local/bin` and `~/.codex`. CodexHub tries four methods sequentially on each host: the strict-TLS official standalone installer, a validated remote npmmirror native package, remote npm with the npmmirror registry and user-owned prefix, then a locally downloaded and validated native package uploaded with SCP. The mirror-native methods need `python3`, `tar`, and a supported Linux CPU architecture (`x86_64` or `aarch64`); the npm method needs remote npm; the local-upload fallback still needs working SSH/SCP. A method-level success is provisional until final path/version/shell verification passes.
 
 Some SSH non-interactive shells do not read user startup files, so a plain `ssh <HostAlias> 'codex --version'` may still miss the repaired PATH until the next login or interactive shell. CodexHub repairs `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`; the resolver also checks `~/.local/bin/codex` directly, and probes run `command -v codex` in both the current shell and the configured login shell before showing a PATH warning.
 
-If a remote host's CA bundle rejects HTTPS downloads with a self-signed certificate error, the safer long-term fix is to repair that host's trust store. For first-run recovery, CodexHub keeps the official installer strict but may retry npmmirror native package downloads with certificate checks disabled, limited to npmmirror URLs and marked as `npm-mirror-native-insecure-tls` in the task log. If the insecure retry returns HTML instead of package metadata, CodexHub reports the likely captive portal or network authentication issue and then attempts the local-download plus `scp` upload fallback.
+If a remote host's CA bundle rejects HTTPS downloads with a self-signed certificate error, the safer long-term fix is to repair that host's trust store. For first-run recovery, CodexHub keeps the official installer strict but may retry npmmirror native package downloads with certificate checks disabled, limited to npmmirror URLs and marked as `npm-mirror-native-insecure-tls` in the task log. If the insecure retry returns HTML instead of package metadata, CodexHub reports the likely captive portal or network authentication issue and continues through the remaining npm-mirror and local-upload fallbacks.
 
-The Profiles / 配置 page owns local profile editing, import/export, API env-var selection, single-host apply, selected-host batch apply, and the compact Codex readiness/actions list. Host pages stay focused on SSH identity, remote probes, and diagnostics.
+The Hosts / 主机 page owns SSH identity, diagnostics, host tests, and Codex install/update/uninstall actions. Profiles / 配置 owns local profile editing, import/export, API env-var selection, single-host apply, and selected-host batch apply.
 
-Long SSH, probe, install, and update operations are dispatched through backend blocking workers so the WebView remains responsive. They are still bounded by per-step timeouts, and a full install/update can take longer than a single timeout because official download, mirror fallback, local download, upload, install, and verification are separate steps.
+Long SSH, probe, install, update, and uninstall operations are dispatched through backend blocking workers so the WebView remains responsive. They are still bounded by per-step timeouts, and a full install/update can take longer than a single timeout because preparation, four fallback methods, and final verification are separate stages.
+
+User-triggered batch Test and Update use a fixed maximum of six concurrent hosts. The limit is not configurable, per-host results are independent rather than transactional across the batch, and install/uninstall remain single-host actions. Hiding a progress dialog keeps the backend task running; detailed command output is retained under collapsed step cards in Tasks rather than streamed into the main UI by default.
 
 ## Skills Path Drift
 

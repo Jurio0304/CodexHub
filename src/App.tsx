@@ -9,6 +9,8 @@ import type {
   DeleteOperationResult,
   Health,
   Host,
+  HostOperationKind,
+  HostOperationProgressEvent,
   HostResourceBatchResult,
   HostResourceSnapshot,
   HostStatus,
@@ -25,7 +27,6 @@ import type {
   CcSwitchDetection,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
-  RemoteCodexProgressEvent,
   RemoteSkill,
   SkillDetectionResult,
   SkillInventoryStatus,
@@ -46,6 +47,7 @@ import type {
   SshKeyInfo,
   SshStatus,
   TaskRun,
+  TaskStep,
   TaskStatus
 } from "./models";
 import type { ApiErrorCode, StorageHealth, StorageMigrationPlan, StorageRestorePlan } from "./generated/rust-contracts";
@@ -66,6 +68,17 @@ import { AlertModalFrame } from "./ui/AlertModalFrame";
 import { useFeedback } from "./ui/feedback";
 import type { FeedbackPlacement, FeedbackTone } from "./ui/feedback";
 import { ModalFrame } from "./ui/ModalFrame";
+import {
+  OperationProgressModal,
+  OperationProgressPanel,
+  finalizeOperationProgressHost,
+  mergeOperationProgressHost,
+  settleOperationStepsAfterFailure,
+  type OperationOverallStatus,
+  type OperationProgressCopy,
+  type OperationProgressHost,
+  type OperationStepPresentation
+} from "./ui/OperationProgress";
 
 type SectionId = "dashboard" | "hosts" | "profiles" | "skills" | "monitor" | "tasks" | "settings";
 type NavIconId = SectionId;
@@ -104,6 +117,7 @@ type HostProbeOptions = {
   includeLatestVersion?: boolean;
   notifyCompletion?: boolean;
   refreshCatalog?: boolean;
+  showProgressModal?: boolean;
 };
 type ResourceRefreshTrigger = "initial" | "manual" | "auto";
 const MAX_VISIBLE_TASKS = 100;
@@ -115,14 +129,12 @@ export function shouldRecordResourceSample(trigger: ResourceRefreshTrigger) {
 
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
-  hostAlias: string;
-  hostName: string;
-  action: RemoteCodexAction;
-  status: CodexOperationModalStatus;
-  logs: RemoteCodexProgressEvent[];
-  task?: TaskRun;
-  message?: string;
-  error?: string;
+  requestId: string;
+  action: HostOperationKind;
+  status: OperationOverallStatus;
+  hosts: OperationProgressHost[];
+  message: string;
+  hasTasks: boolean;
 };
 type CodexUninstallConfirmState = {
   hostAlias: string;
@@ -599,18 +611,49 @@ export const uiCopy = {
     },
     codexOperation: {
       title: "Codex maintenance",
+      hostTestTitle: "Test host",
+      batchHostTestTitle: "Test hosts",
+      batchUpdateTitle: "Update Codex on hosts",
       running: "Running",
       success: "Completed",
       failed: "Failed",
+      partial: "Partially completed",
+      pending: "Waiting",
+      skipped: "Not required",
       progress: "Progress",
       summary: "Summary",
       latestLog: "Latest log",
       started: "Started remote maintenance.",
+      testStarted: "Testing this host and its remote Codex environment.",
+      batchTestStarted: (count: number) => `Testing ${count} hosts with up to six running at once.`,
+      batchUpdateStarted: (count: number) => `Updating Codex on ${count} hosts with up to six running at once.`,
       waiting: "Waiting for remote output...",
-      installHint: "Install can try official download, mirror fallback, local upload, then version check.",
-      updateHint: "Update can try official download, mirror fallback, local upload, then version check.",
+      installHint: "Install tries the official installer, remote native mirror, remote npm mirror, local upload, then final verification.",
+      updateHint: "Update tries the official installer, remote native mirror, remote npm mirror, local upload, then final verification.",
       uninstallHint: "Uninstall permanently deletes remote Codex files, config, and CodexHub-managed env/API key files.",
       noLogs: "No task log returned yet.",
+      technicalDetails: "Technical details",
+      hostSelector: "Host progress",
+      skippedSummary: "This step did not need to run.",
+      fallbackFailedSummary: "This method was unavailable; the next method will be tried.",
+      historyStep: "Historical details",
+      historyStepSummary: "Open this card to review the retained technical log.",
+      unassignedStep: "Other diagnostics",
+      unassignedStepSummary: "Additional details recorded outside a named step.",
+      steps: {
+        "ssh-check": ["SSH connection", "Confirm that this host is reachable before remote checks start."],
+        system: ["System environment", "Read the operating system, architecture, shell, and PATH."],
+        codex: ["Codex status", "Check the Codex executable, command availability, and installed version."],
+        api: ["API configuration", "Check remote Codex configuration and credential environment readiness."],
+        skills: ["Skills", "Check the remote Codex skills directory and inventory."],
+        preparation: ["Preparation", "Check SSH, the current Codex state, platform, tools, and user paths."],
+        "official-installer": ["Official installer", "Try the official Codex installer with strict TLS verification."],
+        "remote-native-mirror": ["Remote native mirror package", "Download and verify the matching native package on the host."],
+        "remote-npm-mirror": ["Remote npm mirror", "Install Codex into the user directory through the configured npm mirror."],
+        "local-upload": ["Local download and upload", "Download and verify locally, upload with SCP, then install remotely."],
+        uninstall: ["Uninstall Codex", "Remove the scoped remote Codex installation and managed files."],
+        "final-verification": ["Final verification", "Verify the final path, version, shell availability, and PATH state."]
+      } as Record<string, readonly [string, string]>,
       hide: "Hide",
       close: "Close",
       viewTasks: "View Tasks"
@@ -1322,18 +1365,49 @@ export const uiCopy = {
     },
     codexOperation: {
       title: "Codex 维护",
+      hostTestTitle: "测试主机",
+      batchHostTestTitle: "批量测试主机",
+      batchUpdateTitle: "批量更新 Codex",
       running: "运行中",
       success: "已完成",
       failed: "失败",
+      partial: "部分完成",
+      pending: "等待中",
+      skipped: "无需执行",
       progress: "进程",
       summary: "摘要",
       latestLog: "简要日志",
       started: "已开始远端维护。",
+      testStarted: "正在测试主机及其远端 Codex 环境。",
+      batchTestStarted: (count: number) => `正在测试 ${count} 台主机，同时最多运行 6 台。`,
+      batchUpdateStarted: (count: number) => `正在更新 ${count} 台主机的 Codex，同时最多运行 6 台。`,
       waiting: "正在等待远端输出...",
-      installHint: "安装会尝试官方下载、镜像兜底、本地上传，然后检查版本。",
-      updateHint: "更新会尝试官方下载、镜像兜底、本地上传，然后检查版本。",
+      installHint: "安装会依次尝试官方安装器、远端原生镜像、远端 npm 镜像、本地上传，然后最终验证。",
+      updateHint: "更新会依次尝试官方安装器、远端原生镜像、远端 npm 镜像、本地上传，然后最终验证。",
       uninstallHint: "卸载会永久删除远端 Codex 文件、配置以及 CodexHub 管理的 env/API key 文件。",
       noLogs: "尚未返回任务日志。",
+      technicalDetails: "技术详情",
+      hostSelector: "主机进度",
+      skippedSummary: "当前步骤无需执行。",
+      fallbackFailedSummary: "当前方式不可用，将继续尝试下一种方式。",
+      historyStep: "历史详细日志",
+      historyStepSummary: "展开卡片后查看保留的完整技术日志。",
+      unassignedStep: "其他诊断信息",
+      unassignedStepSummary: "查看未归属到具体步骤的补充诊断信息。",
+      steps: {
+        "ssh-check": ["SSH 连接", "确认主机可访问，再开始远端检查。"],
+        system: ["系统环境", "读取操作系统、架构、Shell 和 PATH。"],
+        codex: ["Codex 状态", "检查 Codex 路径、命令可用性和已安装版本。"],
+        api: ["API 配置", "检查远端 Codex 配置及凭据环境是否就绪。"],
+        skills: ["Skills", "检查远端 Codex skills 目录和技能数量。"],
+        preparation: ["前期准备", "检查 SSH、当前 Codex、平台、必要工具和用户目录。"],
+        "official-installer": ["官方安装器", "使用严格 TLS 校验尝试官方 Codex 安装器。"],
+        "remote-native-mirror": ["远端镜像原生包", "在主机上下载并校验匹配架构的原生包。"],
+        "remote-npm-mirror": ["远端 npm 镜像", "通过 npm 镜像将 Codex 安装到用户目录。"],
+        "local-upload": ["本地下载并上传", "在本机下载校验，通过 SCP 上传后在远端安装。"],
+        uninstall: ["执行卸载", "删除指定范围内的远端 Codex 安装及受管理文件。"],
+        "final-verification": ["最终验证", "验证最终路径、版本、Shell 命令可用性和 PATH。"]
+      } as Record<string, readonly [string, string]>,
       hide: "隐藏",
       close: "关闭",
       viewTasks: "查看任务"
@@ -2940,7 +3014,8 @@ function App() {
     const {
       includeLatestVersion = true,
       notifyCompletion = true,
-      refreshCatalog = true
+      refreshCatalog = true,
+      showProgressModal = true
     } = options;
     const run = async () => {
       const blockedStore = storageHealth.find((item) =>
@@ -2953,11 +3028,24 @@ function App() {
       }
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
       const hostAlias = target?.hostAlias ?? idOrAlias;
+      const hostName = target?.name ?? hostAlias;
+      const requestId = showProgressModal ? `host-test-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
       setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
+      if (requestId) {
+        setCodexOperationModal(createOperationModalState(
+          requestId,
+          "host-test",
+          [{ hostAlias, hostName }],
+          copy.codexOperation.testStarted
+        ));
+        await waitForNextFrame();
+      }
 
       try {
-        const probe = api.remoteProbeCodex(hostAlias);
+        const probe = api.remoteProbeCodex(hostAlias, 10000, requestId, requestId ? (event) => {
+          setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
+        } : undefined);
         const result = includeLatestVersion
           ? (await Promise.all([
               probe,
@@ -3006,12 +3094,27 @@ function App() {
           setProfiles(refreshedProfiles);
         }
         setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
+        if (requestId) {
+          setCodexOperationModal((current) => finalizeOperationHost(
+            current,
+            requestId,
+            hostAlias,
+            result.task,
+            result.sshStatus === "online" && result.task.status === "success",
+            result.task.summary
+          ));
+        }
         if (notifyCompletion) {
           const message = `${target?.name ?? hostAlias}: ${localizeTaskSummary(result.task, copy)}`;
           if (result.task.status === "success") setNotice(message);
           else setErrorNotice(message, result.task.id);
         }
         return { ...result, ok: result.sshStatus === "online" && result.task.status === "success" };
+      } catch (error) {
+        if (requestId) {
+          setCodexOperationModal((current) => failOperationHost(current, requestId, hostAlias, formatError(error)));
+        }
+        throw error;
       } finally {
         setHostBusy((current) => {
           const next = { ...current };
@@ -3035,53 +3138,78 @@ function App() {
       if (blockedStore) {
         throw new Error(storageWriteBlockerError(blockedStore));
       }
-      const latestCodexProbe = refreshLatestCodex(true).catch((error): LatestCodexVersion => {
-        const latest = {
-          version: null,
-          checkedAt: null,
-          source: "npm",
-          error: formatError(error)
-        };
-        setLatestCodexVersion(latest);
-        return latest;
+      const aliases = Array.from(new Set(sshConfigHosts.map((host) => host.alias).filter(Boolean)));
+      if (aliases.length === 0) return { ok: true };
+      const requestId = `batch-host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const targets = aliases.map((hostAlias) => ({
+        hostAlias,
+        hostName: hosts.find((host) => host.hostAlias === hostAlias)?.name ?? hostAlias
+      }));
+      setCodexOperationModal(createOperationModalState(
+        requestId,
+        "host-test",
+        targets,
+        copy.codexOperation.batchTestStarted(aliases.length)
+      ));
+      setHostBusy((current) => {
+        const next = { ...current };
+        for (const alias of aliases) next[alias] = "test";
+        return next;
       });
-      const [, results] = await Promise.all([
-        latestCodexProbe,
-        Promise.allSettled(
-          sshConfigHosts.map((host) => handleTestHost(host.alias, null, {
-            includeLatestVersion: false,
-            notifyCompletion: false,
-            refreshCatalog: false
-          }))
-        )
-      ]);
-      const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
-      setHosts(refreshedHosts);
-      setProfiles(refreshedProfiles);
-      const successful = results.filter((result) => result.status === "fulfilled" && result.value.ok).length;
-      const ok = successful === results.length;
-      if (ok) setNotice(copy.hosts.testedAllResult(successful, results.length));
-      else setErrorNotice(copy.hosts.testedAllFailed(successful, results.length));
-      return { ok };
+      setHosts((current) => current.map((host) => aliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host));
+      await waitForNextFrame();
+      try {
+        const result = await api.batchRemoteProbeCodex(aliases, 10000, requestId, (event) => {
+          setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
+        });
+        setLatestCodexVersion(result.latestCodexVersion);
+        for (const item of result.results) {
+          if (item.result) {
+            setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(item.result!.task)], current));
+            setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.task.summary));
+          } else {
+            setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
+          }
+        }
+        const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
+        setHosts(refreshedHosts);
+        setProfiles(refreshedProfiles);
+        const successful = result.results.filter((item) => item.ok).length;
+        const ok = successful === result.results.length;
+        const message = ok
+          ? copy.hosts.testedAllResult(successful, result.results.length)
+          : copy.hosts.testedAllFailed(successful, result.results.length);
+        setCodexOperationModal((current) => current?.requestId === requestId
+          ? { ...current, status: aggregateOperationStatus(current.hosts), message }
+          : current);
+        if (ok) setNotice(message);
+        else setErrorNotice(message);
+        return { ok };
+      } catch (error) {
+        const message = formatError(error);
+        setCodexOperationModal((current) => failRemainingOperationHosts(
+          current,
+          requestId,
+          message,
+          Boolean(taskIdForError(error))
+        ));
+        setHosts((current) => current.map((host) => aliases.includes(host.hostAlias) ? { ...host, status: "unknown" } : host));
+        throw error;
+      } finally {
+        setHostBusy((current) => {
+          const next = { ...current };
+          for (const alias of aliases) delete next[alias];
+          return next;
+        });
+      }
     });
   };
 
   const applyRemoteCodexResult = (result: RemoteCodexMaintenanceResult, action: RemoteCodexAction) => {
-    const resolvedVersion = action === "uninstall" ? result.afterVersion : result.afterVersion ?? result.beforeVersion;
-    const nextVersion = resolvedVersion ?? "not installed";
-    const sshCheckFailed = result.message.toLowerCase().includes("ssh check failed");
     setHosts((current) =>
       current.map((host) =>
         host.hostAlias === result.hostAlias
-          ? {
-              ...host,
-              status: sshCheckFailed ? "offline" : "online",
-              codexInstalled: Boolean(resolvedVersion),
-              codexVersion: nextVersion,
-              pathHasLocalBin: action === "check-version" ? host.pathHasLocalBin : result.ok || result.pathChanged ? true : host.pathHasLocalBin,
-              codexCommandAvailable: result.codexCommandAvailable,
-              lastSeen: sshCheckFailed ? host.lastSeen : copy.common.justNow
-            }
+          ? applyRemoteCodexResultToHost(host, result, action, copy.common.justNow)
           : host
       )
     );
@@ -3099,57 +3227,39 @@ function App() {
       setHostBusy((current) => ({ ...current, [hostAlias]: action }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
       if (showProgressModal) {
-        setCodexOperationModal({
-          hostAlias,
-          hostName,
-          action,
-          status: "running",
-          logs: []
-        });
+        setCodexOperationModal(createOperationModalState(
+          requestId as string,
+          codexOperationKind(action),
+          [{ hostAlias, hostName }],
+          copy.codexOperation.started
+        ));
         await waitForNextFrame();
       }
 
       try {
         const result = await api.remoteManageCodex(hostAlias, action, 120000, requestId, (event) => {
-          setCodexOperationModal((current) => {
-            if (!current || current.hostAlias !== event.hostAlias || current.action !== event.action) return current;
-            return {
-              ...current,
-              message: event.step === "summary" ? event.message : current.message,
-              logs: appendCodexProgressLog(current.logs, event).slice(-80)
-            };
-          });
+          setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
         });
         applyRemoteCodexResult(result, action);
         if (result.ok) setNotice(`${hostName}: ${result.message}`);
         else setErrorNotice(`${hostName}: ${result.message}`, result.task.id);
         void refreshLatestCodex(true);
         if (showProgressModal) {
-          setCodexOperationModal((current) =>
-            current && current.hostAlias === hostAlias && current.action === action
-              ? {
-                  ...current,
-                  status: result.ok ? "success" : "failed",
-                  task: result.task,
-                  message: result.message
-                }
-              : current
-          );
+          setCodexOperationModal((current) => finalizeOperationHost(
+            current,
+            requestId,
+            hostAlias,
+            result.task,
+            result.ok,
+            result.message
+          ));
         }
         return result;
       } catch (error) {
         const errorMessage = formatError(error);
         setErrorNotice(`${hostName}: ${errorMessage}`, taskIdForError(error));
         if (showProgressModal) {
-          setCodexOperationModal((current) =>
-            current && current.hostAlias === hostAlias && current.action === action
-              ? {
-                  ...current,
-                  status: "failed",
-                  error: errorMessage
-                }
-              : current
-          );
+          setCodexOperationModal((current) => failOperationHost(current, requestId, hostAlias, errorMessage));
         }
         setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "offline" } : host)));
         return { ok: false, message: errorMessage };
@@ -3190,22 +3300,54 @@ function App() {
         return next;
       });
       setHosts((current) => current.map((host) => (uniqueAliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host)));
+      const requestId = `batch-codex-update-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setCodexOperationModal(createOperationModalState(
+        requestId,
+        "codex-update",
+        uniqueAliases.map((hostAlias) => ({
+          hostAlias,
+          hostName: hosts.find((host) => host.hostAlias === hostAlias)?.name ?? hostAlias
+        })),
+        copy.codexOperation.batchUpdateStarted(uniqueAliases.length)
+      ));
       await waitForNextFrame();
 
       try {
-        const results = await Promise.allSettled(uniqueAliases.map((alias) => api.remoteManageCodex(alias, "update", 120000)));
-        const fulfilled = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
-        const rejectedAliases = results.flatMap((result, index) => (result.status === "rejected" ? [uniqueAliases[index]] : []));
-        for (const result of fulfilled) applyRemoteCodexResult(result, "update");
-        if (rejectedAliases.length > 0) {
-          setHosts((current) => current.map((host) => (rejectedAliases.includes(host.hostAlias) ? { ...host, status: "offline" } : host)));
+        const result = await api.batchRemoteUpdateCodex(uniqueAliases, 120000, requestId, (event) => {
+          setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
+        });
+        const failedAliases: string[] = [];
+        for (const item of result.results) {
+          if (item.result) {
+            applyRemoteCodexResult(item.result, "update");
+            setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.message));
+          } else {
+            failedAliases.push(item.hostAlias);
+            setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
+          }
         }
-        const successCount = fulfilled.filter((result) => result.ok).length;
+        if (failedAliases.length > 0) {
+          setHosts((current) => current.map((host) => failedAliases.includes(host.hostAlias) ? { ...host, status: "offline" } : host));
+        }
+        const successCount = result.results.filter((item) => item.ok).length;
         const message = copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length);
+        setCodexOperationModal((current) => current?.requestId === requestId
+          ? { ...current, status: aggregateOperationStatus(current.hosts), message }
+          : current);
         if (successCount === uniqueAliases.length) setNotice(message);
         else setErrorNotice(message);
         void refreshLatestCodex(true);
         return { ok: successCount === uniqueAliases.length };
+      } catch (error) {
+        const message = formatError(error);
+        setCodexOperationModal((current) => failRemainingOperationHosts(
+          current,
+          requestId,
+          message,
+          Boolean(taskIdForError(error))
+        ));
+        setHosts((current) => current.map((host) => uniqueAliases.includes(host.hostAlias) ? { ...host, status: "unknown" } : host));
+        throw error;
       } finally {
         setHostBusy((current) => {
           const next = { ...current };
@@ -3886,7 +4028,7 @@ function App() {
     <PlatformAppearanceContext.Provider value={effectivePlatform}>
       <div className="desktopFrame" data-os={runtimePlatform} data-custom-titlebar={usesCustomTitleBar}>
         {usesCustomTitleBar ? <AppTitleBar copy={copy} onCloseRequest={handleTitleBarCloseRequest} /> : null}
-        <div className="appShell">
+        <div className="appShell" data-api-mode={apiMode}>
       <aside className="sidebar" aria-label={copy.common.primaryNavigation}>
         <div className="brandBlock">
           <img className="appIcon" src={appLogoUrl} alt="" aria-hidden="true" />
@@ -3975,14 +4117,18 @@ function App() {
         />
       ) : null}
       {codexOperationModal ? (
-        <CodexOperationModal
-          copy={copy}
-          operation={codexOperationModal}
+        <OperationProgressModal
+          copy={operationProgressCopy(copy)}
+          hosts={codexOperationModal.hosts}
+          message={codexOperationModal.message}
+          overallStatus={codexOperationModal.status}
+          resolveStep={(step) => operationStepPresentation(copy, step)}
+          title={operationModalTitle(copy, codexOperationModal.action, codexOperationModal.hosts.length)}
           onClose={() => setCodexOperationModal(null)}
-          onViewTasks={() => {
+          onViewTasks={codexOperationModal.hasTasks ? () => {
             setActiveSection("tasks");
             setCodexOperationModal(null);
-          }}
+          } : undefined}
         />
       ) : null}
       {appUpdateFailureTask ? (
@@ -4343,108 +4489,6 @@ function CodexUninstallConfirmModal({
           </button>
         </ModalActions>
       </AlertModalFrame>
-  );
-}
-
-function CodexOperationModal({
-  copy,
-  operation,
-  onClose,
-  onViewTasks
-}: {
-  copy: UICopy;
-  operation: CodexOperationModalState;
-  onClose: () => void;
-  onViewTasks: () => void;
-}) {
-  const actionLabel = remoteCodexButtonLabel(copy, undefined, operation.action);
-  const statusTone = operation.status === "success" ? "green" : operation.status === "failed" ? "red" : "yellow";
-  const progressLogs = operation.logs.slice(-20);
-  const taskLogs = operation.task?.logs.slice(-6) ?? [];
-  const taskLogCount = operation.task?.logs.length ?? 0;
-  const logRowsRef = useRef<HTMLDivElement | null>(null);
-  const runningLogs = [
-    { level: "info" as const, message: copy.codexOperation.started, detail: operation.hostAlias },
-    { level: "info" as const, message: copy.codexOperation.waiting, detail: actionLabel },
-    {
-      level: "warn" as const,
-      message: codexOperationHint(copy, operation.action),
-      detail: ""
-    }
-  ];
-
-  useEffect(() => {
-    const logRows = logRowsRef.current;
-    if (!logRows) return;
-    logRows.scrollTop = logRows.scrollHeight;
-  }, [operation.logs.length, operation.status, taskLogCount]);
-
-  return (
-    <div className="modalBackdrop" role="presentation">
-      <ModalFrame className="codexOperationModal" titleId="codex-operation-modal-title">
-        <ModalHeader
-          className="codexOperationHeader"
-          titleId="codex-operation-modal-title"
-          title={actionLabel}
-          icon="terminal"
-          badge={<Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>}
-          closeAriaLabel={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
-          onClose={onClose}
-        />
-
-        <div className="codexOperationSummary">
-          <span>{copy.codexOperation.summary}</span>
-          <strong>{operation.message ?? operation.error ?? (operation.status === "running" ? copy.codexOperation.waiting : copy.codexOperation.noLogs)}</strong>
-        </div>
-
-        <div className="codexOperationLog">
-          <div className="codexOperationLogTitle">
-            <span>{copy.codexOperation.latestLog}</span>
-            {operation.status === "running" ? <i aria-hidden="true" /> : null}
-          </div>
-          <div className="codexOperationLogRows" ref={logRowsRef}>
-            {progressLogs.length > 0
-              ? progressLogs.map((log, index) => (
-                  <div className="codexOperationLogRow" data-level={progressLogLevel(log)} key={`${log.step}-${log.status}-${index}`}>
-                    <strong>{progressLogLabel(copy, log)}</strong>
-                    <span>{log.message}</span>
-                  </div>
-                ))
-              : operation.status === "running"
-                ? runningLogs.map((log, index) => (
-                  <div className="codexOperationLogRow" data-level={log.level} key={`${log.message}-${index}`}>
-                    <strong>{copy.status.log[log.level]}</strong>
-                    <span>{log.message}</span>
-                  </div>
-                ))
-                : taskLogs.length > 0
-                  ? taskLogs.map((log) => (
-                    <div className="codexOperationLogRow" data-level={log.level} key={log.id}>
-                      <strong>{copy.status.log[log.level]}</strong>
-                      <span>{log.message}</span>
-                    </div>
-                  ))
-                  : (
-                    <div className="codexOperationLogRow" data-level={operation.status === "failed" ? "error" : "info"}>
-                      <strong>{operation.status === "failed" ? copy.status.log.error : copy.status.log.info}</strong>
-                      <span>{operation.error ?? copy.codexOperation.noLogs}</span>
-                    </div>
-                  )}
-          </div>
-        </div>
-
-        <ModalActions className="codexOperationActions">
-          {operation.task ? (
-            <button className="secondaryButton" type="button" onClick={onViewTasks}>
-              {copy.codexOperation.viewTasks}
-            </button>
-          ) : null}
-          <button className="primaryButton" type="button" onClick={onClose}>
-            {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
-          </button>
-        </ModalActions>
-      </ModalFrame>
-    </div>
   );
 }
 
@@ -8370,6 +8414,7 @@ function TaskLogModal({
   footer?: ReactNode;
 }) {
   const statusTone = task.status === "success" ? "green" : task.status === "failed" ? "red" : task.status === "running" ? "yellow" : "gray";
+  const operationHost = taskOperationHost(task, copy);
   return (
     <div className="modalBackdrop" role="presentation">
       <ModalFrame className="codexOperationModal taskLogDetailModal" titleId="task-log-modal-title">
@@ -8387,57 +8432,11 @@ function TaskLogModal({
           <strong>{localizeTaskSummary(task, copy)}</strong>
           <small>{`${copy.tasks.host}: ${task.hostName} | ${copy.tasks.started}: ${formatTaskTimestamp(task, copy, now)}`}</small>
         </div>
-        <div className="codexOperationLog">
-          <div className="codexOperationLogTitle">
-            <span>{copy.codexOperation.latestLog}</span>
-            {task.status === "running" ? <i aria-hidden="true" /> : null}
-          </div>
-          <div className="codexOperationLogRows taskLogFlowRows">
-            {task.logs.length > 0 ? task.logs.map((log) => (
-              <details className="taskLogFlowRow" data-level={log.level} key={log.id} open={task.status === "failed" && log.level === "error"}>
-                <summary className="codexOperationLogRow" data-level={log.level}>
-                  <strong>{copy.status.log[log.level]}</strong>
-                  <span>{log.message}</span>
-                </summary>
-                <div className="taskLogFlowDetails">
-                  <div className="taskLogMetaGrid">
-                    <div>
-                      <span>{copy.tasks.command}</span>
-                      <code>{log.command ?? "-"}</code>
-                    </div>
-                    <div>
-                      <span>{copy.tasks.exitCode}</span>
-                      <code>{log.exitCode ?? "-"}</code>
-                    </div>
-                    <div>
-                      <span>{copy.tasks.duration}</span>
-                      <code>{typeof log.durationMs === "number" ? `${log.durationMs} ms` : "-"}</code>
-                    </div>
-                    <div>
-                      <span>{copy.tasks.timedOut}</span>
-                      <code>{log.timedOut ? copy.hosts.yes : copy.hosts.no}</code>
-                    </div>
-                  </div>
-                  <div className="taskLogStreamGrid">
-                    <div>
-                      <span>{copy.tasks.stdout}</span>
-                      <pre>{log.stdout || copy.tasks.noOutput}</pre>
-                    </div>
-                    <div>
-                      <span>{copy.tasks.stderr}</span>
-                      <pre>{log.stderr || copy.tasks.noOutput}</pre>
-                    </div>
-                  </div>
-                </div>
-              </details>
-            )) : (
-              <div className="codexOperationLogRow" data-level="info">
-                <strong>{copy.status.log.info}</strong>
-                <span>{copy.tasks.noLogs}</span>
-              </div>
-            )}
-          </div>
-        </div>
+        <OperationProgressPanel
+          copy={operationProgressCopy(copy)}
+          hosts={[operationHost]}
+          resolveStep={(step) => operationStepPresentation(copy, step)}
+        />
         {footer}
       </ModalFrame>
     </div>
@@ -9106,35 +9105,275 @@ function remoteCodexButtonLabel(copy: UICopy, busy: HostBusyAction | undefined, 
   return copy.hosts.updateCodex;
 }
 
-function codexOperationHint(copy: UICopy, action: RemoteCodexAction) {
-  if (action === "install") return copy.codexOperation.installHint;
-  if (action === "uninstall") return copy.codexOperation.uninstallHint;
-  return copy.codexOperation.updateHint;
+const hostOperationStepIds: Record<HostOperationKind, string[]> = {
+  "host-test": ["ssh-check", "system", "codex", "api", "skills"],
+  "codex-install": ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "final-verification"],
+  "codex-update": ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "final-verification"],
+  "codex-uninstall": ["preparation", "uninstall", "final-verification"]
+};
+
+function createOperationModalState(
+  requestId: string,
+  action: HostOperationKind,
+  targets: Array<{ hostAlias: string; hostName: string }>,
+  message: string
+): CodexOperationModalState {
+  return {
+    requestId,
+    action,
+    status: "running",
+    message,
+    hasTasks: false,
+    hosts: targets.map(({ hostAlias, hostName }, hostIndex) => {
+      const taskRunId = `pending:${requestId}:${hostAlias}`;
+      return {
+        hostAlias,
+        hostName,
+        status: hostIndex < 6 ? "running" : "pending",
+        steps: hostOperationStepIds[action].map((stepId, sequence) => ({
+          taskRunId,
+          stepId,
+          sequence,
+          status: sequence === 0 && hostIndex < 6 ? "running" : "pending",
+          summary: "",
+          startedAt: null,
+          endedAt: null
+        })),
+        logs: []
+      };
+    })
+  };
 }
 
-function progressLogLevel(log: RemoteCodexProgressEvent): "info" | "warn" | "error" {
-  if (log.status === "failed" || log.status === "stderr") return "error";
-  return "info";
+export function applyRemoteCodexResultToHost(
+  host: Host,
+  result: RemoteCodexMaintenanceResult,
+  action: RemoteCodexAction,
+  justNow: string
+): Host {
+  const uninstallSucceeded = action === "uninstall" && result.ok;
+  const reportedVersion = result.afterVersion ?? result.beforeVersion;
+  const preserveUnknownUninstall = action === "uninstall" && !result.ok && reportedVersion === null;
+  const resolvedVersion = uninstallSucceeded
+    ? null
+    : action === "uninstall"
+      ? reportedVersion
+      : result.afterVersion ?? result.beforeVersion;
+  const sshCheckFailed = result.message.toLowerCase().includes("ssh check failed");
+  return {
+    ...host,
+    status: sshCheckFailed ? "offline" : "online",
+    codexInstalled: preserveUnknownUninstall ? host.codexInstalled : Boolean(resolvedVersion),
+    codexVersion: preserveUnknownUninstall ? host.codexVersion : resolvedVersion ?? "not installed",
+    pathHasLocalBin: preserveUnknownUninstall
+      ? host.pathHasLocalBin
+      : action === "check-version"
+        ? host.pathHasLocalBin
+        : result.ok || result.pathChanged
+          ? true
+          : host.pathHasLocalBin,
+    codexCommandAvailable: preserveUnknownUninstall ? host.codexCommandAvailable : result.codexCommandAvailable,
+    lastSeen: sshCheckFailed ? host.lastSeen : justNow
+  };
 }
 
-function progressLogLabel(copy: UICopy, log: RemoteCodexProgressEvent) {
-  return copy.status.log[progressLogLevel(log)];
-}
-
-function appendCodexProgressLog(
-  logs: RemoteCodexProgressEvent[],
-  event: RemoteCodexProgressEvent
+function applyHostOperationProgressEvent(
+  current: CodexOperationModalState | null,
+  event: HostOperationProgressEvent
 ) {
-  if (event.status !== "heartbeat" || logs.length === 0) {
-    return [...logs, event];
+  if (!current || current.requestId !== event.requestId || current.action !== event.operation) return current;
+  // 步骤与整体状态分开更新，回退方式失败时任务仍保持运行。
+  const hosts = current.hosts.map((host) => {
+    if (host.hostAlias !== event.hostAlias) return host;
+    return mergeOperationProgressHost(host, current.action, event.step, event.log);
+  });
+  return { ...current, hosts, hasTasks: true };
+}
+
+function finalizeOperationHost(
+  current: CodexOperationModalState | null,
+  requestId: string | undefined,
+  hostAlias: string,
+  task: TaskRun,
+  ok: boolean,
+  message: string
+) {
+  if (!current || !requestId || current.requestId !== requestId) return current;
+  const hosts = current.hosts.map((host) => host.hostAlias === hostAlias
+    ? finalizeOperationProgressHost(host, task, ok, message)
+    : host);
+  return {
+    ...current,
+    hosts,
+    status: aggregateOperationStatus(hosts),
+    message: hosts.length === 1 ? message : current.message,
+    hasTasks: true
+  };
+}
+
+function failOperationHost(
+  current: CodexOperationModalState | null,
+  requestId: string | undefined,
+  hostAlias: string,
+  message: string
+) {
+  if (!current || !requestId || current.requestId !== requestId) return current;
+  const hosts = current.hosts.map((host) => {
+    if (host.hostAlias !== hostAlias) return host;
+    const steps = settleOperationStepsAfterFailure(host.steps, message);
+    return { ...host, status: "failed" as const, steps, message, finalized: true };
+  });
+  return { ...current, hosts, status: aggregateOperationStatus(hosts), message };
+}
+
+function failRemainingOperationHosts(
+  current: CodexOperationModalState | null,
+  requestId: string,
+  message: string,
+  hasTask: boolean
+) {
+  if (!current || current.requestId !== requestId) return current;
+  let settled: CodexOperationModalState | null = current;
+  for (const host of current.hosts) {
+    if (host.status === "running" || host.status === "pending") {
+      settled = failOperationHost(settled, requestId, host.hostAlias, message);
+    }
+  }
+  return settled ? { ...settled, message, hasTasks: settled.hasTasks || hasTask } : settled;
+}
+
+function aggregateOperationStatus(hosts: OperationProgressHost[]): OperationOverallStatus {
+  if (hosts.some((host) => host.status === "running" || host.status === "pending")) return "running";
+  const successful = hosts.filter((host) => host.status === "success").length;
+  if (successful === hosts.length) return "success";
+  if (successful === 0) return "failed";
+  return "partial";
+}
+
+function codexOperationKind(action: RemoteCodexAction): HostOperationKind {
+  if (action === "install") return "codex-install";
+  if (action === "uninstall") return "codex-uninstall";
+  return "codex-update";
+}
+
+function operationProgressCopy(copy: UICopy): OperationProgressCopy {
+  return {
+    close: copy.codexOperation.close,
+    hide: copy.codexOperation.hide,
+    viewTasks: copy.codexOperation.viewTasks,
+    hostSelector: copy.codexOperation.hostSelector,
+    progress: copy.codexOperation.progress,
+    details: copy.codexOperation.technicalDetails,
+    noLogs: copy.codexOperation.noLogs,
+    noOutput: copy.tasks.noOutput,
+    command: copy.tasks.command,
+    exitCode: copy.tasks.exitCode,
+    duration: copy.tasks.duration,
+    timedOut: copy.tasks.timedOut,
+    stdout: copy.tasks.stdout,
+    stderr: copy.tasks.stderr,
+    yes: copy.hosts.yes,
+    no: copy.hosts.no,
+    status: {
+      pending: copy.codexOperation.pending,
+      running: copy.codexOperation.running,
+      success: copy.codexOperation.success,
+      failed: copy.codexOperation.failed,
+      skipped: copy.codexOperation.skipped
+    },
+    overallStatus: {
+      running: copy.codexOperation.running,
+      success: copy.codexOperation.success,
+      failed: copy.codexOperation.failed,
+      partial: copy.codexOperation.partial
+    }
+  };
+}
+
+function operationStepPresentation(copy: UICopy, step: TaskStep): OperationStepPresentation {
+  if (step.stepId === "legacy-history") {
+    return { title: copy.codexOperation.historyStep, summary: copy.codexOperation.historyStepSummary };
+  }
+  if (step.stepId === "unassigned-diagnostics") {
+    return { title: copy.codexOperation.unassignedStep, summary: copy.codexOperation.unassignedStepSummary };
+  }
+  const known = copy.codexOperation.steps[step.stepId];
+  const title = known?.[0] ?? step.stepId.replace(/[-_]+/g, " ");
+  let summary = known?.[1] ?? step.summary;
+  if (step.status === "skipped") summary = copy.codexOperation.skippedSummary;
+  if (step.status === "failed" && ["official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload"].includes(step.stepId)) {
+    summary = copy.codexOperation.fallbackFailedSummary;
+  }
+  return { title, summary };
+}
+
+function operationModalTitle(copy: UICopy, action: HostOperationKind, hostCount: number) {
+  if (action === "host-test") return hostCount > 1 ? copy.codexOperation.batchHostTestTitle : copy.codexOperation.hostTestTitle;
+  if (action === "codex-update" && hostCount > 1) return copy.codexOperation.batchUpdateTitle;
+  if (action === "codex-install") return copy.hosts.installCodex;
+  if (action === "codex-uninstall") return copy.hosts.uninstallCodex;
+  return copy.hosts.updateCodex;
+}
+
+function taskOperationHost(task: TaskRun, copy: UICopy): OperationProgressHost {
+  const taskSteps = task.steps ?? [];
+  if (taskSteps.length === 0) {
+    const stepId = "legacy-history";
+    return {
+      hostAlias: task.hostId || task.hostName,
+      hostName: task.hostName,
+      status: taskOperationHostStatus(task.status),
+      steps: [{
+        taskRunId: task.id,
+        stepId,
+        sequence: 0,
+        status: taskStepStatus(task.status),
+        summary: copy.codexOperation.historyStepSummary,
+        startedAt: task.startedAt,
+        endedAt: task.endedAt
+      }],
+      logs: task.logs.map((log) => ({ ...log, stepId })),
+      message: localizeTaskSummary(task, copy)
+    };
   }
 
-  const last = logs[logs.length - 1];
-  if (last.status === "heartbeat" && last.step === event.step) {
-    return [...logs.slice(0, -1), event];
-  }
+  const unassigned = task.logs.filter((log) => !log.stepId || !taskSteps.some((step) => step.stepId === log.stepId));
+  const steps = unassigned.length > 0
+    ? [...taskSteps, {
+        taskRunId: task.id,
+        stepId: "unassigned-diagnostics",
+        sequence: Math.max(...taskSteps.map((step) => step.sequence), 0) + 1,
+        status: taskStepStatus(task.status),
+        summary: copy.codexOperation.unassignedStepSummary,
+        startedAt: task.startedAt,
+        endedAt: task.endedAt
+      }]
+    : taskSteps;
+  const logs = task.logs.map((log) => log.stepId && taskSteps.some((step) => step.stepId === log.stepId)
+    ? log
+    : { ...log, stepId: "unassigned-diagnostics" });
+  return {
+    hostAlias: task.hostId || task.hostName,
+    hostName: task.hostName,
+    status: taskOperationHostStatus(task.status),
+    steps,
+    logs,
+    message: localizeTaskSummary(task, copy)
+  };
+}
 
-  return [...logs, event];
+function taskOperationHostStatus(status: TaskStatus): OperationProgressHost["status"] {
+  if (status === "queued") return "pending";
+  if (status === "running") return "running";
+  if (status === "success") return "success";
+  return "failed";
+}
+
+function taskStepStatus(status: TaskStatus): TaskStep["status"] {
+  if (status === "queued") return "pending";
+  if (status === "running") return "running";
+  if (status === "success") return "success";
+  return "failed";
 }
 
 function waitForNextFrame() {

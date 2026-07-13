@@ -35,6 +35,7 @@ pub(crate) fn apply_profile_to_hosts(
             started_at: running.started_at,
             ended_at: Some(timestamp_label()),
             summary: "No matching hosts were selected for profile apply.".into(),
+            steps: Vec::new(),
             logs,
         };
         record_task(state, task.clone())?;
@@ -963,6 +964,7 @@ pub(crate) fn profile_apply_task(
         started_at: timestamp_label(),
         ended_at: Some(timestamp_label()),
         summary: summary.to_string(),
+        steps: Vec::new(),
         logs,
     }
 }
@@ -1352,6 +1354,56 @@ pub(crate) fn update_host_check(state: &AppState, alias: &str, ok: bool, duratio
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_host_probe_group_updates(
+    host: &mut Host,
+    os: &str,
+    arch: &str,
+    shell: &str,
+    path: Option<String>,
+    path_has_local_bin: bool,
+    codex_command_available: bool,
+    codex_installed: bool,
+    codex_version: &str,
+    config_exists: bool,
+    api_config_match: &RemoteApiConfigMatch,
+    api_key_env_var: Option<String>,
+    api_key_env_present: Option<bool>,
+    skills_exists: bool,
+    skills_count: u16,
+    system_probe_ok: bool,
+    codex_probe_ok: bool,
+    api_probe_ok: bool,
+    skills_probe_ok: bool,
+) {
+    host.status = HostStatus::Online;
+    if system_probe_ok {
+        host.os = os.to_string();
+        host.arch = arch.to_string();
+        host.shell = shell.to_string();
+        host.path = path;
+        host.path_has_local_bin = Some(path_has_local_bin);
+    }
+    if codex_probe_ok {
+        host.codex_command_available = Some(codex_command_available);
+        host.codex_installed = codex_installed;
+        host.codex_version = codex_version.to_string();
+    }
+    if api_probe_ok {
+        host.config_exists = Some(config_exists);
+        host.api_config_name = Some(api_config_match.name.clone());
+        host.api_config_source = Some(api_config_match.source.clone());
+        host.api_key_env_var = api_key_env_var;
+        host.api_key_env_present = api_key_env_present;
+        host.profile_id = api_config_match.profile_id.clone();
+    }
+    if skills_probe_ok {
+        host.skills_exists = Some(skills_exists);
+        host.skills_count = Some(skills_count);
+    }
+    host.last_seen = "just now".into();
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_host_probe(
     app: &AppHandle,
     state: &AppState,
@@ -1370,6 +1422,10 @@ pub(crate) fn update_host_probe(
     api_key_env_present: Option<bool>,
     skills_exists: bool,
     skills_count: u16,
+    system_probe_ok: bool,
+    codex_probe_ok: bool,
+    api_probe_ok: bool,
+    skills_probe_ok: bool,
 ) -> Result<storage::RelatedWriteResult, String> {
     let _write_guard = services::profile_links::acquire_write_lock(state)?;
     let mut probed_host_id = None;
@@ -1378,32 +1434,37 @@ pub(crate) fn update_host_probe(
         .iter_mut()
         .find(|host| host.host_alias.eq_ignore_ascii_case(alias))
     {
-        host.status = HostStatus::Online;
-        host.os = os.to_string();
-        host.arch = arch.to_string();
-        host.shell = shell.to_string();
-        host.path = path;
-        host.path_has_local_bin = Some(path_has_local_bin);
-        host.codex_command_available = Some(codex_command_available);
-        host.codex_installed = codex_installed;
-        host.codex_version = codex_version.to_string();
-        host.config_exists = Some(config_exists);
-        host.api_config_name = Some(api_config_match.name.clone());
-        host.api_config_source = Some(api_config_match.source.clone());
-        host.api_key_env_var = api_key_env_var;
-        host.api_key_env_present = api_key_env_present;
-        host.profile_id = api_config_match.profile_id.clone();
-        host.skills_exists = Some(skills_exists);
-        host.skills_count = Some(skills_count);
-        host.last_seen = "just now".into();
+        apply_host_probe_group_updates(
+            host,
+            os,
+            arch,
+            shell,
+            path,
+            path_has_local_bin,
+            codex_command_available,
+            codex_installed,
+            codex_version,
+            config_exists,
+            api_config_match,
+            api_key_env_var,
+            api_key_env_present,
+            skills_exists,
+            skills_count,
+            system_probe_ok,
+            codex_probe_ok,
+            api_probe_ok,
+            skills_probe_ok,
+        );
         probed_host_id = Some(host.id.clone());
     }
     let mut profiles = load_profiles(app, state)?;
-    if let Some(host_id) = probed_host_id {
-        if let Some(profile_id) = api_config_match.profile_id.as_deref() {
-            sync_profile_host_ids(&mut profiles, profile_id, &host_id, alias);
-        } else {
-            clear_profile_host_ids(&mut profiles, &host_id, alias);
+    if api_probe_ok {
+        if let Some(host_id) = probed_host_id {
+            if let Some(profile_id) = api_config_match.profile_id.as_deref() {
+                sync_profile_host_ids(&mut profiles, profile_id, &host_id, alias);
+            } else {
+                clear_profile_host_ids(&mut profiles, &host_id, alias);
+            }
         }
     }
     services::profile_links::save(
@@ -1479,6 +1540,7 @@ pub(crate) fn command_log(
     TaskLog {
         id: format!("{task_id}-log-{index}"),
         task_run_id: task_id.to_string(),
+        step_id: None,
         level,
         timestamp: "now".into(),
         message: message.to_string(),
@@ -1500,6 +1562,7 @@ pub(crate) fn basic_log(
     TaskLog {
         id: format!("{task_id}-log-{index}"),
         task_run_id: task_id.to_string(),
+        step_id: None,
         level,
         timestamp: "now".into(),
         message: message.to_string(),
@@ -1556,21 +1619,6 @@ pub(crate) fn command_detail(output: &ssh::SshCommandOutput) -> String {
         Some(code) => format!("exit code {code}"),
         None => "process did not start".into(),
     }
-}
-
-pub(crate) fn stdout_or_unknown(output: Option<&ssh::SshCommandOutput>) -> String {
-    output
-        .filter(|item| item.success())
-        .map(|item| item.stdout.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Unknown".into())
-}
-
-pub(crate) fn stdout_yes(output: Option<&ssh::SshCommandOutput>) -> bool {
-    output
-        .filter(|item| item.success())
-        .map(|item| item.stdout.trim().eq_ignore_ascii_case("yes"))
-        .unwrap_or(false)
 }
 
 pub(crate) fn stdout_optional_yes(output: Option<&ssh::SshCommandOutput>) -> Option<bool> {

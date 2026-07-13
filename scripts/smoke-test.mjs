@@ -30,6 +30,7 @@ const requiredFiles = [
   "src/ui/ConfirmDialog.tsx",
   "src/ui/AppErrorBoundary.tsx",
   "src/ui/feedback.tsx",
+  "src/ui/OperationProgress.tsx",
   "src/api.ts",
   "src/api/contracts.ts",
   "src/api/desktop.ts",
@@ -302,16 +303,21 @@ const requiredText = [
   [architecture, "closeButtonBehavior"],
   [architecture, "close-button-behavior-requested"],
   [architecture, "Stable Updater Foundation"],
+  [architecture, "Task schema v4"],
+  [architecture, "host-operation-progress"],
+  [architecture, "fixed six-host sliding pool"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
   [mvp, "Window 6: single-card local skill library"],
   [mvp, "selected host's `~/.codex-hub/env`"],
+  [mvp, "fixed six-host sliding concurrency pool"],
   [mvp, "Writing local credential-store key names or API key values into remote Codex config"],
   [limitations, "Profiles /"],
   [limitations, "Linux desktop support targets Ubuntu/Debian x86_64 and arm64"],
   [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "CodexHub writes the value only to the selected host's `~/.codex-hub/env`"],
   [limitations, "CodexHub must not write Codex App private state"],
+  [limitations, "fixed maximum of six concurrent hosts"],
   [security, "CodexHub-managed remote `~/.codex-hub/env`"],
   [macosSupport, "Menu bar/status item restore behavior"],
   [macosSupport, "Real Mac Validation Status"],
@@ -409,6 +415,7 @@ const rustBackend = [
   "src-tauri/src/storage/transaction.rs"
 ].map(read).join("\n");
 const rustHostUseCases = read("src-tauri/src/services/host_use_cases.rs");
+const rustHostOperations = read("src-tauri/src/services/host_operations.rs");
 const rustSkillOperations = read("src-tauri/src/services/skill_operations.rs");
 const rustProfileOperations = read("src-tauri/src/services/profile_operations.rs");
 const sshRs = read("src-tauri/src/ssh.rs");
@@ -425,8 +432,86 @@ const macosUpdaterFeedScript = read("scripts/create-macos-updater-feed.mjs");
 for (const token of ["sidebar_completion_indicators", "sidebar_completion_indicators: true", "#[serde(default = \"default_true\")]"]) {
   if (!rustBackend.includes(token)) fail(`missing sidebar completion settings Rust token: ${token}`);
 }
-for (const token of ["CODEX_NATIVE_PLATFORM_SCRIPT", "npm-mirror-native-local-upload", "parse_npmmirror_native_metadata", "remote-codex-progress", "RemoteCodexProgressEvent", "run_ssh_script_streaming"]) {
+for (const token of [
+  "CODEX_NATIVE_PLATFORM_SCRIPT",
+  "npm-mirror-native-local-upload",
+  "parse_npmmirror_native_metadata",
+  "run_ssh_script_streaming",
+  "validate_local_codex_native_package",
+  "validate_codex_native_archive_listing",
+  "package/vendor/{target}/bin/codex",
+  "return validation_output.unwrap_or(download_output)"
+]) {
   if (!rustBackend.includes(token)) fail(`missing local upload Codex fallback token: ${token}`);
+}
+for (const token of [
+  "CURRENT_TASK_SCHEMA_VERSION: i64 = 4",
+  "CREATE TABLE IF NOT EXISTS task_steps",
+  "ALTER TABLE task_logs ADD COLUMN step_id TEXT",
+  "backup_before_schema_upgrade",
+  "VACUUM INTO",
+  "TaskStepStatus",
+  "pub(crate) steps: Vec<TaskStep>",
+  "pub(crate) step_id: Option<String>"
+]) {
+  if (!rustBackend.includes(token)) fail(`missing task-step schema v4 token: ${token}`);
+}
+for (const token of [
+  "HostOperationProgressEvent",
+  "host-operation-progress",
+  "persist_step_update",
+  "pub(crate) const HOST_OPERATION_MAX_CONCURRENCY: usize = 6;",
+  "run_official_codex_installer",
+  "run_remote_native_mirror_install",
+  "run_remote_npm_mirror_install",
+  "run_local_upload_codex_fallback",
+  "CODEX_OFFICIAL_INSTALL_SCRIPT",
+  "CODEX_REMOTE_NATIVE_MIRROR_SCRIPT",
+  "CODEX_REMOTE_NPM_MIRROR_SCRIPT"
+]) {
+  if (!rustBackend.includes(token)) fail(`missing structured host-operation token: ${token}`);
+}
+for (const token of [
+  "std::collections::VecDeque",
+  "worker_count = item_count.min(HOST_OPERATION_MAX_CONCURRENCY)",
+  ".pop_front()",
+  "[index] = Some(output)"
+]) {
+  if (!rustBackend.includes(token)) fail(`batch host operations must use the six-worker sliding pool: ${token}`);
+}
+const parallelLatestHelper = rustHostOperations.match(
+  /fn run_with_parallel_latest[\s\S]*?std::thread::scope\(\|scope\| \{[\s\S]*?let latest = scope\.spawn\(latest\);[\s\S]*?let batch_result = batch\(\);[\s\S]*?latest[\s\S]*?\.join\(\)/
+);
+if (!parallelLatestHelper) {
+  fail("batch host tests must start exactly one latest-version worker before running the host pool");
+}
+if (!/run_with_parallel_latest\(\s*\|\| run_refresh_latest_codex_version\(state, true, timeout_ms\),\s*\|\| run_probe_batch_items/.test(rustHostOperations)) {
+  fail("batch host tests must run the single latest-version query in parallel with the bounded host pool");
+}
+for (const stepId of [
+  "ssh-check",
+  "system",
+  "codex",
+  "api",
+  "skills",
+  "preparation",
+  "official-installer",
+  "remote-native-mirror",
+  "remote-npm-mirror",
+  "local-upload",
+  "final-verification",
+  "uninstall"
+]) {
+  if (!rustBackend.includes(`"${stepId}"`)) fail(`missing stable host-operation stepId: ${stepId}`);
+}
+const codexStreamEmitter = rustHostOperations.match(
+  /pub\(crate\) fn emit_remote_codex_stream_event[\s\S]*?pub\(crate\) fn emit_remote_codex_progress_for_output/
+)?.[0] ?? "";
+if (!codexStreamEmitter.includes("ProcessStreamKind::Heartbeat")) {
+  fail("remote Codex streaming must retain transient heartbeat events");
+}
+for (const forbidden of ["persist_step_update", "append_message", "task_store.upsert"]) {
+  if (codexStreamEmitter.includes(forbidden)) fail(`heartbeat/stream events must not be persisted: ${forbidden}`);
 }
 for (const command of [
   "app_health",
@@ -452,8 +537,10 @@ for (const command of [
   "bootstrap_ssh_host",
   "bootstrap_existing_ssh_host",
   "remote_probe_codex",
+  "batch_remote_probe_codex",
   "sample_host_resources",
   "remote_manage_codex",
+  "batch_remote_update_codex",
   "refresh_latest_codex_version",
   "get_local_codex_status",
   "list_profiles",
@@ -526,7 +613,9 @@ for (const asyncCommand of [
   "async fn list_ssh_config_hosts",
   "async fn ssh_check",
   "async fn remote_probe_codex",
+  "async fn batch_remote_probe_codex",
   "async fn remote_manage_codex",
+  "async fn batch_remote_update_codex",
   "async fn refresh_latest_codex_version",
   "async fn detect_installed_skills",
   "async fn download_github_skill",
@@ -872,15 +961,17 @@ if (!reconcileHostsMatch) fail("missing reconcile_hosts_with_profile_links funct
 if (reconcileHostsMatch[0].includes("host.config_exists = Some(true)") || reconcileHostsMatch[0].includes("host.api_config_name = Some(profile.name.clone())")) {
   fail("profile host-link reconcile must not promote local links into confirmed remote API config facts");
 }
-for (const token of ["api_config_name", "api_config_source", "classify_remote_api_config", "normalize_base_url_key", "read ~/.codex/config.toml base URL"]) {
+for (const token of ["api_config_name", "api_config_source", "classify_remote_api_config", "normalize_base_url_key", "api_probe_group_script", "CODEXHUB_API_BASE_URL"]) {
   if (!rustBackend.includes(token)) fail(`missing remote API config probe token: ${token}`);
 }
 for (const token of [
   "codex_command_available",
   "CODEX_COMMAND_AVAILABLE_SCRIPT",
-  "check codex command in PATH",
-  "REMOTE_API_ENV_PRESENT_SCRIPT",
-  "check remote API env",
+  "codex_probe_group_script",
+  "check codex command in current shell",
+  "check codex command in login shell",
+  "api_probe_group_script",
+  "CODEXHUB_API_ENV_PRESENT",
   "api_key_env_present",
   "check_profile_api_env",
   "configure_profile_remote_api_key",
@@ -913,6 +1004,7 @@ for (const token of [
 
 const app = read("src/App.tsx");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
+const operationProgressSource = read("src/ui/OperationProgress.tsx");
 const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
 for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
@@ -1147,14 +1239,28 @@ for (const token of [
 ]) {
   if (app.includes(token)) fail(`dashboard home polish should remove old token: ${token}`);
 }
-if (!app.includes("CodexOperationModal")) fail("Install/update should show a compact Codex operation progress modal");
-if (!app.includes("codexOperationModal")) fail("Codex operation modal state should be wired in App");
-if (!app.includes("RemoteCodexProgressEvent")) fail("Codex operation modal should consume real progress events");
+if (!app.includes("OperationProgressModal")) fail("Host operations should use the shared step progress modal");
+if (!app.includes("HostOperationProgressEvent")) fail("Host operations should consume structured progress events");
 if (!app.includes("CodexUninstallConfirmModal") || !app.includes("uninstallCodexConfirmBody") || !app.includes('runRemoteCodexAction(target.hostAlias, "uninstall")')) fail("Remote Codex uninstall should require an explicit confirmation modal before execution");
-if (app.includes('event.status === "success" ? "success"') || app.includes('event.status === "failed" ? "failed"')) fail("Codex operation modal status should only change from the final result or catch path");
-if (!app.includes("logRowsRef") || !app.includes("logRows.scrollTop = logRows.scrollHeight") || !app.includes("ref={logRowsRef}")) fail("Codex operation log should auto-scroll to the latest row");
-if (app.includes("<code>{compactProgressLogDetail") || app.includes("<code>{compactTaskLogDetail") || app.includes("{log.detail ? <code>")) fail("Codex operation modal should show compact log summaries without console-style detail rows");
-if (app.includes('<div className="eyebrow">{copy.codexOperation.title}</div>') || app.includes("{operation.hostName} · {operation.hostAlias}")) fail("Codex operation header should only keep the title and status badge");
+for (const token of [
+  "OperationProgressModal",
+  "OperationProgressPanel",
+  "OperationStepCard",
+  "OperationStatusIcon",
+  "useState(false)",
+  "aria-expanded={expanded}",
+  "{expanded ? (",
+  "logsForStep(selectedHost.logs, step.stepId)",
+  'role="tablist"',
+  'role="tab"',
+  "aria-selected={selected}",
+  "hosts.some((host) => host.hostAlias === selectedHostAlias)"
+]) {
+  if (!operationProgressSource.includes(token)) fail(`missing shared operation progress behavior: ${token}`);
+}
+if (operationProgressSource.includes("useState(step.status") || operationProgressSource.includes('step.status === "failed" && expanded')) {
+  fail("failed operation steps must stay collapsed until the user expands them");
+}
 if (app.includes("profileCard")) fail("Profiles page should use a compact table list instead of profile cards");
 if (!app.includes("function ProfilesView(")) fail("Profiles page should be implemented");
 for (const token of [
@@ -1307,7 +1413,7 @@ for (const token of [
   "isCodexVersionBehind",
   "codexVersionTone",
   "latencyTone(host?.latencyMs, hosts)",
-  "const latestCodexProbe = refreshLatestCodex(true)",
+  "setLatestCodexVersion(result.latestCodexVersion)",
   "api.refreshLatestCodexVersion(true)",
   "api.refreshLatestCodexVersion(false)",
   "next.setHours(4, 0, 0, 0)"
@@ -1315,14 +1421,16 @@ for (const token of [
   if (!app.includes(token)) fail(`missing latest/relative Codex UI token: ${token}`);
 }
 for (const token of [
-  "Promise.allSettled(",
-  "includeLatestVersion: false",
-  "notifyCompletion: false",
-  "refreshCatalog: false",
+  "api.batchRemoteProbeCodex(aliases, 10000, requestId",
+  "api.batchRemoteUpdateCodex(uniqueAliases, 120000, requestId",
+  "applyHostOperationProgressEvent(current, event)",
+  "aggregateOperationStatus(current.hosts)",
+  'status: hostIndex < 6 ? "running" : "pending"',
   "copy.hosts.testedAllResult",
-  "copy.hosts.testedAllFailed"
+  "copy.hosts.testedAllFailed",
+  "copy.hosts.updatedOutdatedCodex"
 ]) {
-  if (!app.includes(token)) fail(`missing parallel host-test orchestration token: ${token}`);
+  if (!app.includes(token)) fail(`missing backend-batched host-operation UI token: ${token}`);
 }
 if (app.includes("TaskDrawer")) fail("global Task drawer should be removed while the Tasks page remains available");
 if (!app.includes('apiMode === "mock" ? copy.common.mockMode : copy.common.backendMode')) {
@@ -1428,7 +1536,7 @@ for (const token of [
 if (!app.includes('onManageCodex(sshHost.alias, "install")') || !app.includes('onManageCodex(sshHost.alias, "update")') || !app.includes('onManageCodex(sshHost.alias, "uninstall")')) fail("SSH Hosts table should expose remote Codex install/update/uninstall actions");
 if (!rustBackend.includes('remove_path "$CODEX_HOME"') || !rustBackend.includes('remove_path "$hub_dir"') || rustBackend.includes("codexhub.uninstall.bak")) fail("Remote Codex uninstall should directly delete Codex config/env paths without backups");
 if (!app.includes('installCodex: "安装"') || !app.includes('updateCodex: "更新"') || !app.includes('uninstallCodex: "卸载"')) fail("SSH Hosts Codex buttons should use short install/update/uninstall labels");
-for (const token of ["onUpdateOutdatedCodexHosts", "handleUpdateOutdatedCodexHosts", "Promise.allSettled", "outdatedCodexAliases", "copy.hosts.updateOutdatedCodex"]) {
+for (const token of ["onUpdateOutdatedCodexHosts", "handleUpdateOutdatedCodexHosts", "api.batchRemoteUpdateCodex", "outdatedCodexAliases", "copy.hosts.updateOutdatedCodex", "copy.codexOperation.batchUpdateStarted"]) {
   if (!app.includes(token)) fail(`missing one-click outdated Codex update token: ${token}`);
 }
 if (!app.includes('className="sshHostsTable"') || !app.includes("sshHostsActionsCol") || !app.includes("sshHostsCodexCol")) fail("SSH Hosts table should use the compact responsive table layout");
@@ -1449,8 +1557,20 @@ if (app.includes("window.setTimeout(onClose")) fail("SSH Host modal should stay 
 if (!app.includes('placeholder="127.0.0.1"') || !app.includes('placeholder="Username"')) fail("SSH Host modal should use generic placeholders");
 if (!app.includes("id_ed25519 detected") || app.includes("value={hasIdentityFile ? defaultIdentityFile")) fail("SSH Host modal must not display full IdentityFile paths");
 if (app.includes("<p>输入一次远端密码") || app.includes("<span>{message}</span>")) fail("SSH Host modal should not show intro or bottom helper copy");
-for (const token of ["TaskLogModal", "taskLogDetailModal", "taskLogFlowRow", "taskLogMetaGrid", "taskLogStreamGrid", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs", "open={task.status === \"failed\" && log.level === \"error\"}"]) {
+for (const token of ["TaskLogModal", "taskLogDetailModal", "taskDetailsCol", "copy.tasks.details", "copy.tasks.logs"]) {
   if (!app.includes(token)) fail(`missing task-history log modal token: ${token}`);
+}
+for (const token of [
+  "taskOperationHost(task, copy)",
+  'stepId = "legacy-history"',
+  'stepId: "unassigned-diagnostics"',
+  "<OperationProgressPanel",
+  "operationStepPresentation(copy, step)"
+]) {
+  if (!app.includes(token)) fail(`Tasks history must reuse step-card progress UI: ${token}`);
+}
+if (app.includes('open={task.status === "failed" && log.level === "error"}')) {
+  fail("failed task details must not expand automatically");
 }
 for (const token of ["MAX_VISIBLE_TASKS = 100", "onClearTaskHistory", "api.clearTaskHistory()", "copy.tasks.clearHistory", "copy.tasks.historyCleared", "clearHistoryOpen"]) {
   if (!app.includes(token)) fail(`missing task-history retention or page clear token: ${token}`);
@@ -1490,7 +1610,7 @@ if (!api.includes('checkStableUpdate: () => requiredInvoke<AppUpdateStatusDto>("
 for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior", "onCloseButtonBehaviorRequested", "close-button-behavior-requested", "requiredInvoke<AppSettings>"]) {
   if (!api.includes(token)) fail(`missing close-button API token: ${token}`);
 }
-for (const token of ["connectSshHost", "ssh-bootstrap-progress", "remote-codex-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex"]) {
+for (const token of ["connectSshHost", "ssh-bootstrap-progress", "host-operation-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex", "batchRemoteProbeCodex", "batchRemoteUpdateCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
 for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "mockSampleHostResources", "recordTask?: boolean", "recordTask = true", "gpuUuid", "processes"]) {
@@ -1585,7 +1705,7 @@ const models = [read("src/models.ts"), read("src/generated/rust-contracts.ts")].
 for (const token of ["AppUpdateStatus", "AppUpdateState", "pending-configuration", "up-to-date", "installing", "feedConfigured", "signingConfigured"]) {
   if (!models.includes(token)) fail(`missing stable updater model token: ${token}`);
 }
-for (const token of ["SshBootstrapProgressEvent", "RemoteCodexProgressEvent", "RemoteCodexMaintenanceResult", "check-version", "password_login", "verify_alias_login"]) {
+for (const token of ["SshBootstrapProgressEvent", "HostOperationProgressEvent", "TaskStep", "TaskStepStatus", "RemoteCodexMaintenanceResult", "RemoteProbeBatchResult", "RemoteCodexBatchResult", "check-version", "password_login", "verify_alias_login"]) {
   if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
 for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileApiKeyResult", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
@@ -1842,11 +1962,21 @@ const detailGridBadgeStyle = styles.match(/\.detailGrid \.badge\s*\{[^}]*\}/)?.[
 for (const token of ["white-space: normal", "overflow-wrap: anywhere", "word-break: break-word"]) {
   if (!detailGridBadgeStyle.includes(token)) fail(`missing host detail badge wrapping style token: ${token}`);
 }
-const codexLogRowsStyle = styles.match(/\.codexOperationLogRows\s*\{[^}]*\}/)?.[0] ?? "";
-if (!codexLogRowsStyle.includes("border: 1px solid var(--border)") || !codexLogRowsStyle.includes("background: var(--surface-muted)")) fail("Codex operation logs should render inside one unified panel");
-const codexLogCodeStyle = styles.match(/\.codexOperationLogRow code\s*\{[^}]*\}/)?.[0] ?? "";
-if (!codexLogCodeStyle.includes("overflow-wrap: anywhere") || !codexLogCodeStyle.includes("white-space: pre-wrap")) fail("Codex operation log detail should wrap long output");
-if (codexLogCodeStyle.includes("text-overflow") || codexLogCodeStyle.includes("white-space: nowrap")) fail("Codex operation log detail should not be ellipsized or forced onto one line");
+for (const token of [
+  ".operationProgressModal",
+  ".operationHostSelector",
+  ".operationHostTab",
+  ".operationStepList",
+  ".operationStepCard",
+  ".operationStepSummary",
+  ".operationStatusIcon",
+  ".operationStepDetails",
+  '.operationStatusIcon[data-status="running"]',
+  '.operationStatusIcon[data-status="success"]',
+  '.operationStatusIcon[data-status="failed"]'
+]) {
+  if (!styles.includes(token)) fail(`missing shared operation progress style: ${token}`);
+}
 for (const token of ["taskLogModal", "taskLogModalMeta", "taskDetailsCol", "taskTableWrap", "tasksTable", "copyPublicKeyButton", 'data-success="true"', "max-width: var(--app-content-max)"]) {
   if (!styles.includes(token)) fail(`missing simplified UI style token: ${token}`);
 }

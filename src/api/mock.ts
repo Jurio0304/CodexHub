@@ -2,6 +2,7 @@ import type {
   CcSwitchDetection,
   Host,
   HostDraft,
+  HostOperationProgressEvent,
   HostPatch,
   HostResourceBatchResult,
   InstalledSkillDownloadResult,
@@ -14,8 +15,9 @@ import type {
   ProfileImportExport,
   ProfilePatch,
   RemoteCodexAction,
+  RemoteCodexBatchResult,
   RemoteCodexMaintenanceResult,
-  RemoteCodexProgressEvent,
+  RemoteProbeBatchResult,
   RemoteProbeResult,
   SkillDetectionResult,
   SkillInventoryStatus,
@@ -29,7 +31,10 @@ import type {
   SshCheckResult,
   SshConfigDeleteResult,
   SshHostDraft,
-  TaskRun
+  TaskLog,
+  TaskRun,
+  TaskStep,
+  TaskStepStatus
 } from "../models";
 import { getCodexSkillsPath, getPlatform } from "../platform";
 import type { AppSettings, CloseButtonBehavior } from "../settings";
@@ -84,6 +89,7 @@ function mockTaskRun(hostId: string, hostName: string, action: string, summary: 
     startedAt: timestamp,
     endedAt: timestamp,
     summary,
+    steps: [],
     logs: [
       {
         id: `${taskId}-log-1`,
@@ -300,6 +306,7 @@ function mockApplyProfile(profileId: string, hostIds: string[]): ProfileApplyBat
       summary: noChange
         ? `${profile.name} already matches ${host.name}; no remote backup needed.`
         : `${profile.name} rendered to ~/.codex/config.toml with mock backup.`,
+      steps: [],
       logs: [
         {
           id: `mock-apply-log-${host.id}-${Date.now()}`,
@@ -404,6 +411,7 @@ function mockSshCheck(hostAlias: string): SshCheckResult {
     startedAt: "now",
     endedAt: "now",
     summary: ok ? `Mock SSH connection to ${host.hostAlias} returned ok.` : `Mock SSH connection to ${host.hostAlias} timed out.`,
+    steps: [],
     logs: [
       {
         id: `mock-ssh-log-${Date.now()}`,
@@ -441,6 +449,7 @@ function mockSshBootstrapHost(draft: SshHostDraft): SshBootstrapResult {
     startedAt: "now",
     endedAt: "now",
     summary: message,
+    steps: [],
     logs: [
       {
         id: `mock-bootstrap-log-${Date.now()}`,
@@ -486,6 +495,64 @@ const bootstrapStepOrder: Array<{ step: SshBootstrapProgressEvent["step"]; messa
 
 const delay = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
+function mockOperationLog(
+  taskRunId: string,
+  stepId: string,
+  level: TaskLog["level"],
+  message: string,
+  command: string,
+  stdout = "",
+  stderr = "",
+  exitCode = 0
+): TaskLog {
+  return {
+    id: `${taskRunId}-${stepId}-${Math.random().toString(36).slice(2)}`,
+    taskRunId,
+    stepId,
+    level,
+    timestamp: new Date().toISOString(),
+    message,
+    command,
+    stdout,
+    stderr,
+    exitCode,
+    durationMs: 24,
+    timedOut: false
+  };
+}
+
+function mockOperationEmitter(
+  requestId: string | undefined,
+  taskId: string,
+  hostAlias: string,
+  operation: HostOperationProgressEvent["operation"],
+  onProgress?: (event: HostOperationProgressEvent) => void
+) {
+  return (step: TaskStep, log?: TaskLog) => {
+    if (!requestId || !onProgress) return;
+    onProgress({ requestId, taskId, hostAlias, operation, step, log });
+  };
+}
+
+async function runMockConcurrencyPool<T, R>(
+  values: T[],
+  worker: (value: T, index: number) => Promise<R>,
+  concurrency = 6
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  // 滑动并发池在一个任务完成后立即领取下一项，同时保持结果输入顺序。
+  const runners = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(values[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 async function mockSshBootstrapHostWithProgress(
   draft: SshHostDraft,
   requestId: string,
@@ -524,21 +591,36 @@ async function mockSshBootstrapHostWithProgress(
   return mockSshBootstrapHost(draft);
 }
 
-function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
+function buildMockRemoteProbe(hostAlias: string): RemoteProbeResult {
   const host = fallbackHostForAlias(hostAlias);
+  const taskId = `mock-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const timestamp = new Date().toISOString();
+  const probeFailed = hostAlias.toLowerCase().includes("fail-probe") || hostAlias.toLowerCase().includes("offline");
   const task: TaskRun = {
-    id: `mock-probe-${Date.now()}`,
+    id: taskId,
     hostId: host.id,
     hostName: host.name,
     action: "Probe remote system",
-    status: "success",
-    startedAt: "now",
-    endedAt: "now",
-    summary: `Mock probe completed for ${host.hostAlias}.`,
-    logs: [
+    status: probeFailed ? "failed" : "success",
+    startedAt: timestamp,
+    endedAt: timestamp,
+    summary: probeFailed ? `Mock SSH probe failed for ${host.hostAlias}.` : `Mock probe completed for ${host.hostAlias}.`,
+    steps: ["ssh-check", "system", "codex", "api", "skills"].map((stepId, sequence) => ({
+      taskRunId: taskId,
+      stepId,
+      sequence,
+      status: probeFailed ? (sequence === 0 ? "failed" as const : "skipped" as const) : "success" as const,
+      summary: probeFailed ? (sequence === 0 ? "Mock SSH connection failed." : "Skipped because SSH was unavailable.") : `Mock ${stepId} probe completed.`,
+      startedAt: sequence === 0 || !probeFailed ? timestamp : null,
+      endedAt: timestamp
+    })),
+    logs: probeFailed ? [
+      mockOperationLog(taskId, "ssh-check", "error", "Mock SSH connection failed.", `ssh ${host.hostAlias} echo ok`, "", "mock connection refused", 255)
+    ] : [
       {
         id: `mock-probe-log-${Date.now()}`,
-        taskRunId: "mock-probe",
+        taskRunId: taskId,
+        stepId: "system",
         level: "info",
         timestamp: "now",
         message: "uname -s completed.",
@@ -551,7 +633,8 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
       },
       {
         id: `mock-probe-log-${Date.now()}-path`,
-        taskRunId: "mock-probe",
+        taskRunId: taskId,
+        stepId: "system",
         level: "info",
         timestamp: "now",
         message: "echo $PATH completed.",
@@ -561,31 +644,60 @@ function mockRemoteProbe(hostAlias: string): RemoteProbeResult {
         exitCode: 0,
         durationMs: 12,
         timedOut: false
-      }
+      },
+      mockOperationLog(taskId, "ssh-check", "info", "SSH connection returned ok.", `ssh ${host.hostAlias} echo ok`, "ok"),
+      mockOperationLog(taskId, "codex", "info", "Codex status probe completed.", `ssh ${host.hostAlias} codex-probe`, host.codexVersion),
+      mockOperationLog(taskId, "api", "info", "API configuration probe completed.", `ssh ${host.hostAlias} api-config-probe`, host.configExists ? "configured" : "not configured"),
+      mockOperationLog(taskId, "skills", "info", "Skills inventory probe completed.", `ssh ${host.hostAlias} skills-probe`, String(host.skillsCount ?? 0))
     ]
   };
   return {
     hostAlias: host.hostAlias,
-    sshStatus: "online",
-    latencyMs: host.latencyMs,
-    os: host.os,
-    arch: host.arch,
-    shell: host.shell,
-    path: host.path,
-    pathHasLocalBin: Boolean(host.pathHasLocalBin),
-    codexCommandAvailable: host.codexCommandAvailable ?? Boolean(host.pathHasLocalBin && host.codexInstalled),
-    codexInstalled: host.codexInstalled,
-    codexPath: host.codexInstalled ? "/usr/local/bin/codex" : null,
-    codexVersion: host.codexVersion,
-    configExists: Boolean(host.configExists),
-    apiConfigName: host.configExists ? host.apiConfigName ?? "Unknown config" : "No config",
-    apiConfigSource: host.configExists ? host.apiConfigSource ?? "unknown" : "none",
-    apiKeyEnvVar: host.apiKeyEnvVar ?? (host.configExists ? "OPENAI_API_KEY" : null),
-    apiKeyEnvPresent: host.apiKeyEnvPresent ?? (host.configExists ? true : null),
-    skillsExists: Boolean(host.skillsExists),
-    skillsCount: host.skillsCount ?? 0,
+    sshStatus: probeFailed ? "offline" : "online",
+    latencyMs: probeFailed ? null : host.latencyMs,
+    os: probeFailed ? "Unknown" : host.os,
+    arch: probeFailed ? "Unknown" : host.arch,
+    shell: probeFailed ? "Unknown" : host.shell,
+    path: probeFailed ? null : host.path,
+    pathHasLocalBin: !probeFailed && Boolean(host.pathHasLocalBin),
+    codexCommandAvailable: !probeFailed && (host.codexCommandAvailable ?? Boolean(host.pathHasLocalBin && host.codexInstalled)),
+    codexInstalled: !probeFailed && host.codexInstalled,
+    codexPath: !probeFailed && host.codexInstalled ? "/usr/local/bin/codex" : null,
+    codexVersion: probeFailed ? "unknown" : host.codexVersion,
+    configExists: !probeFailed && Boolean(host.configExists),
+    apiConfigName: !probeFailed && host.configExists ? host.apiConfigName ?? "Unknown config" : "No config",
+    apiConfigSource: !probeFailed && host.configExists ? host.apiConfigSource ?? "unknown" : "none",
+    apiKeyEnvVar: probeFailed ? null : host.apiKeyEnvVar ?? (host.configExists ? "OPENAI_API_KEY" : null),
+    apiKeyEnvPresent: probeFailed ? null : host.apiKeyEnvPresent ?? (host.configExists ? true : null),
+    skillsExists: !probeFailed && Boolean(host.skillsExists),
+    skillsCount: probeFailed ? 0 : host.skillsCount ?? 0,
     task
   };
+}
+
+async function mockRemoteProbeWithProgress(
+  hostAlias: string,
+  requestId?: string,
+  onProgress?: (event: HostOperationProgressEvent) => void
+) {
+  const result = buildMockRemoteProbe(hostAlias);
+  const emit = mockOperationEmitter(requestId, result.task.id, result.hostAlias, "host-test", onProgress);
+  const [sshStep, ...probeSteps] = result.task.steps;
+  emit({ ...sshStep, status: "running", endedAt: null });
+  await delay(35);
+  emit(sshStep, result.task.logs.find((log) => log.stepId === sshStep.stepId));
+  if (sshStep.status === "success") {
+    // 四组只读探测先同时进入运行态，再独立完成。
+    for (const step of probeSteps) emit({ ...step, status: "running", endedAt: null });
+    await Promise.all(probeSteps.map(async (step, index) => {
+      await delay(45 + index * 12);
+      emit(step, result.task.logs.find((log) => log.stepId === step.stepId));
+    }));
+  } else {
+    for (const step of probeSteps) emit(step);
+  }
+  recordMockTask(result.task);
+  return clone(result);
 }
 
 function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourceBatchResult["snapshots"][number] {
@@ -694,6 +806,7 @@ function mockSampleHostResources(hostAliases: string[], recordTask = true): Host
 
 function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
   const host = fallbackHostForAlias(hostAlias);
+  const maintenanceFailed = action !== "check-version" && hostAlias.toLowerCase().includes("fail");
   const actionLabel =
     action === "check-version"
       ? "Check Codex version"
@@ -702,45 +815,87 @@ function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): Re
         : action === "update"
           ? "Update Codex"
           : "Uninstall Codex";
-  const nextVersion =
-    action === "uninstall" ? null : host.codexInstalled && action === "check-version" ? host.codexVersion : "codex-cli 0.32.0";
+  const beforeVersion = host.codexInstalled
+    ? host.codexVersion
+    : action === "uninstall"
+      ? "codex-cli 0.31.0"
+      : null;
+  const nextVersion = action === "uninstall"
+    ? (maintenanceFailed ? beforeVersion : null)
+    : maintenanceFailed
+      ? (action === "update" && host.codexInstalled ? host.codexVersion : null)
+      : host.codexInstalled && action === "check-version"
+        ? host.codexVersion
+        : "codex-cli 0.32.0";
   const versionLabel = nextVersion ?? "not installed";
   const message = `Mock ${actionLabel.toLowerCase()} completed for ${host.hostAlias}: ${versionLabel}.`;
+  const taskId = `mock-codex-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const timestamp = new Date().toISOString();
+  const installStepIds = ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "final-verification"];
+  const uninstallStepIds = ["preparation", "uninstall", "final-verification"];
+  const stepIds = action === "uninstall" ? uninstallStepIds : action === "check-version" ? ["codex"] : installStepIds;
+  const statusForStep = (stepId: string): TaskStepStatus => {
+    if (action === "uninstall" && maintenanceFailed) {
+      return stepId === "preparation" ? "success" : "failed";
+    }
+    if (action === "install" || action === "update") {
+      if (maintenanceFailed && stepId !== "preparation") return "failed";
+      if (stepId === "official-installer" || stepId === "remote-native-mirror") return "failed";
+      if (stepId === "local-upload") return "skipped";
+    }
+    return "success";
+  };
+  const steps = stepIds.map((stepId, sequence): TaskStep => ({
+    taskRunId: taskId,
+    stepId,
+    sequence,
+    status: statusForStep(stepId),
+    summary: statusForStep(stepId) === "failed"
+      ? action === "uninstall"
+        ? stepId === "uninstall"
+          ? "Mock uninstall command failed; Codex remains installed."
+          : "Mock final verification found Codex still installed."
+        : `Mock ${stepId} was unavailable; continuing to the next method.`
+      : statusForStep(stepId) === "skipped"
+        ? `Mock ${stepId} was not required after an earlier method succeeded.`
+        : `Mock ${stepId} completed.`,
+    startedAt: statusForStep(stepId) === "skipped" ? null : timestamp,
+    endedAt: timestamp
+  }));
+  const logs = steps.flatMap((step) => step.status === "skipped" ? [] : [mockOperationLog(
+    taskId,
+    step.stepId,
+    step.status === "failed" ? "error" : "info",
+    step.summary,
+    `ssh ${host.hostAlias} codex-maintenance ${action} ${step.stepId}`,
+    step.status === "success" ? (step.stepId === "final-verification" ? versionLabel : "ok") : "",
+    step.status === "failed"
+      ? action === "uninstall" ? "mock uninstall failed; Codex is still present" : "mock method unavailable"
+      : "",
+    step.status === "failed" ? 1 : 0
+  )]);
   const task: TaskRun = {
-    id: `mock-codex-${Date.now()}`,
+    id: taskId,
     hostId: host.id,
     hostName: host.name,
     action: actionLabel,
-    status: "success",
-    startedAt: "now",
-    endedAt: "now",
-    summary: message,
-    logs: [
-      {
-        id: `mock-codex-log-${Date.now()}`,
-        taskRunId: "mock-codex",
-        level: "info",
-        timestamp: "now",
-        message: "Mock remote Codex maintenance command completed.",
-        command: `ssh ${host.hostAlias} codex maintenance ${action}`,
-        stdout: versionLabel,
-        stderr: "",
-        exitCode: 0,
-        durationMs: 48,
-        timedOut: false
-      }
-    ]
+    status: maintenanceFailed ? "failed" : "success",
+    startedAt: timestamp,
+    endedAt: timestamp,
+    summary: maintenanceFailed ? `Mock ${actionLabel.toLowerCase()} failed for ${host.hostAlias}.` : message,
+    steps,
+    logs
   };
   return {
     hostAlias: host.hostAlias,
-    ok: true,
+    ok: !maintenanceFailed,
     action,
-    beforeVersion: host.codexInstalled ? host.codexVersion : null,
+    beforeVersion,
     afterVersion: nextVersion,
-    codexPath: action === "uninstall" ? null : "$HOME/.local/bin/codex",
-    codexCommandAvailable: action !== "uninstall",
-    installMethod: action === "check-version" ? null : "mock",
-    pathChanged: action !== "check-version" && action !== "uninstall" && !host.pathHasLocalBin,
+    codexPath: (action === "uninstall" && !maintenanceFailed) || (maintenanceFailed && action === "install") ? null : "$HOME/.local/bin/codex",
+    codexCommandAvailable: !(action === "uninstall" && !maintenanceFailed) && !(maintenanceFailed && action === "install"),
+    installMethod: action === "check-version" || action === "uninstall" || maintenanceFailed ? null : "remote-npm-mirror",
+    pathChanged: !maintenanceFailed && action !== "check-version" && action !== "uninstall" && !host.pathHasLocalBin,
     shellConfigPath: action === "check-version" || action === "uninstall" ? null : "$HOME/.bashrc",
     backupPath:
       action === "check-version"
@@ -748,7 +903,7 @@ function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): Re
         : action === "uninstall"
           ? null
           : "$HOME/.bashrc.codexhub.bak.mock",
-    message,
+    message: maintenanceFailed ? `Mock ${actionLabel.toLowerCase()} failed for ${host.hostAlias}.` : message,
     task
   };
 }
@@ -757,40 +912,60 @@ async function mockRemoteManageCodexWithProgress(
   hostAlias: string,
   action: RemoteCodexAction,
   requestId?: string,
-  onProgress?: (event: RemoteCodexProgressEvent) => void
+  onProgress?: (event: HostOperationProgressEvent) => void
 ): Promise<RemoteCodexMaintenanceResult> {
-  const host = fallbackHostForAlias(hostAlias);
-  const emit = (step: string, status: RemoteCodexProgressEvent["status"], message: string, line?: string) => {
-    if (!requestId || !onProgress) return;
-    onProgress({
-      requestId,
-      hostAlias: host.hostAlias,
-      action,
-      step,
-      status,
-      message,
-      detail: step,
-      stdout: status === "stdout" ? line ?? message : null,
-      stderr: status === "stderr" ? line ?? message : null,
-      exitCode: status === "success" ? 0 : null,
-      durationMs: 24,
-      timedOut: false
-    });
-  };
-
-  emit("ssh-check", "running", `Checking SSH connection to ${host.hostAlias}.`);
-  await delay(80);
-  emit("ssh-check", "success", `SSH connection to ${host.hostAlias} returned ok.`);
-  const operationStep = action === "install" ? "Install Codex" : action === "update" ? "Update Codex" : "Uninstall Codex";
-  emit(operationStep, "running", "Starting remote Codex maintenance.");
-  await delay(100);
-  emit(operationStep, "stdout", action === "uninstall" ? "Removing Codex package." : "Downloading Codex package.", action === "uninstall" ? "Removing Codex package." : "Downloading Codex package.");
-  await delay(100);
-  emit("codex --version after maintenance", action === "uninstall" ? "failed" : "stdout", action === "uninstall" ? "codex not installed" : "codex-cli 0.32.0", action === "uninstall" ? "codex not installed" : "codex-cli 0.32.0");
-  await delay(60);
   const result = mockRemoteManageCodex(hostAlias, action);
-  emit("summary", result.ok ? "success" : "failed", result.message);
-  return result;
+  if (action !== "check-version") {
+    const operation = action === "install" ? "codex-install" : action === "update" ? "codex-update" : "codex-uninstall";
+    const emit = mockOperationEmitter(requestId, result.task.id, result.hostAlias, operation, onProgress);
+    for (const step of result.task.steps) {
+      if (step.status === "skipped") {
+        emit(step);
+        continue;
+      }
+      emit({ ...step, status: "running", endedAt: null });
+      await delay(45);
+      emit(step, result.task.logs.find((log) => log.stepId === step.stepId));
+    }
+  }
+  recordMockTask(result.task);
+  return clone(result);
+}
+
+async function mockBatchRemoteProbeCodex(
+  hostAliases: string[],
+  requestId: string,
+  onProgress?: (event: HostOperationProgressEvent) => void
+): Promise<RemoteProbeBatchResult> {
+  const results = await runMockConcurrencyPool(hostAliases, async (hostAlias): Promise<RemoteProbeBatchResult["results"][number]> => {
+    try {
+      const result = await mockRemoteProbeWithProgress(hostAlias, requestId, onProgress);
+      return { hostAlias, ok: result.task.status === "success", result };
+    } catch (error) {
+      return { hostAlias, ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  return {
+    requestId,
+    latestCodexVersion: { ...fallbackLatestCodexVersion, checkedAt: new Date().toISOString() },
+    results
+  };
+}
+
+async function mockBatchRemoteUpdateCodex(
+  hostAliases: string[],
+  requestId: string,
+  onProgress?: (event: HostOperationProgressEvent) => void
+): Promise<RemoteCodexBatchResult> {
+  const results = await runMockConcurrencyPool(hostAliases, async (hostAlias): Promise<RemoteCodexBatchResult["results"][number]> => {
+    try {
+      const result = await mockRemoteManageCodexWithProgress(hostAlias, "update", requestId, onProgress);
+      return { hostAlias, ok: result.ok, result };
+    } catch (error) {
+      return { hostAlias, ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  return { requestId, action: "update", results };
 }
 
 function mockImportSkill(path: string): SkillImportResult {
@@ -1224,7 +1399,10 @@ export const mockApi: CodexHubApi = {
       user: "codex",
       identityFile: fallbackSshStatus().preferredIdentityFile
     }),
-  remoteProbeCodex: async (hostAlias: string) => mockRemoteProbe(hostAlias),
+  remoteProbeCodex: async (hostAlias: string, _timeoutMs = 10000, requestId?: string, onProgress?: (event: HostOperationProgressEvent) => void) =>
+    mockRemoteProbeWithProgress(hostAlias, requestId, onProgress),
+  batchRemoteProbeCodex: async (hostAliases: string[], _timeoutMs = 10000, requestId = `mock-batch-probe-${Date.now()}`, onProgress?: (event: HostOperationProgressEvent) => void) =>
+    mockBatchRemoteProbeCodex(hostAliases, requestId, onProgress),
   sampleHostResources: async (hostAliases: string[], _timeoutMs = 8000, recordTask = true) =>
     mockSampleHostResources(hostAliases, recordTask),
   remoteManageCodex: async (
@@ -1232,8 +1410,10 @@ export const mockApi: CodexHubApi = {
     action: RemoteCodexAction,
     _timeoutMs = 120000,
     requestId?: string,
-    onProgress?: (event: RemoteCodexProgressEvent) => void
+    onProgress?: (event: HostOperationProgressEvent) => void
   ) => mockRemoteManageCodexWithProgress(hostAlias, action, requestId, onProgress),
+  batchRemoteUpdateCodex: async (hostAliases: string[], _timeoutMs = 120000, requestId = `mock-batch-update-${Date.now()}`, onProgress?: (event: HostOperationProgressEvent) => void) =>
+    mockBatchRemoteUpdateCodex(hostAliases, requestId, onProgress),
   listProfiles: async () => clone(mockProfiles).map(normalizeProfile),
   createProfile: async (draft: ProfileDraft) => {
     const profile = createMockProfile(draft);

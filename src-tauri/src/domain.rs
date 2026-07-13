@@ -2,6 +2,8 @@ use crate::*;
 
 pub(crate) const CODEX_NPM_REGISTRY_URL: &str = "https://registry.npmjs.org/@openai/codex";
 pub(crate) const CODEX_LATEST_SOURCE: &str = "npm";
+/// Bounds SSH fan-out so batch actions remain responsive without flooding a host fleet.
+pub(crate) const HOST_OPERATION_MAX_CONCURRENCY: usize = 6;
 pub(crate) const CODEX_LATEST_REFRESH_HOUR: u32 = 4;
 pub(crate) const STABLE_UPDATE_ENDPOINT_ENV: &str = "CODEXHUB_STABLE_UPDATE_ENDPOINT";
 pub(crate) const STABLE_UPDATER_PUBKEY_ENV: &str = "CODEXHUB_STABLE_UPDATER_PUBKEY";
@@ -705,6 +707,30 @@ pub(crate) enum RemoteCodexAction {
     Uninstall,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "HostOperationKindDto")]
+pub(crate) enum HostOperationKind {
+    HostTest,
+    CodexInstall,
+    CodexUpdate,
+    CodexUninstall,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "HostOperationProgressEventDto")]
+pub(crate) struct HostOperationProgressEvent {
+    pub(crate) request_id: String,
+    pub(crate) task_id: String,
+    pub(crate) host_alias: String,
+    pub(crate) operation: HostOperationKind,
+    pub(crate) step: crate::tasks::TaskStep,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub(crate) log: Option<crate::tasks::TaskLog>,
+}
+
 #[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "RemoteCodexMaintenanceResultDto")]
@@ -722,6 +748,52 @@ pub(crate) struct RemoteCodexMaintenanceResult {
     pub(crate) backup_path: Option<String>,
     pub(crate) message: String,
     pub(crate) task: TaskRun,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "RemoteProbeBatchItemDto")]
+pub(crate) struct RemoteProbeBatchItem {
+    pub(crate) host_alias: String,
+    pub(crate) ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub(crate) result: Option<RemoteProbeResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "RemoteProbeBatchResultDto")]
+pub(crate) struct RemoteProbeBatchResult {
+    pub(crate) request_id: String,
+    pub(crate) latest_codex_version: LatestCodexVersion,
+    pub(crate) results: Vec<RemoteProbeBatchItem>,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "RemoteCodexBatchItemDto")]
+pub(crate) struct RemoteCodexBatchItem {
+    pub(crate) host_alias: String,
+    pub(crate) ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub(crate) result: Option<RemoteCodexMaintenanceResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "RemoteCodexBatchResultDto")]
+pub(crate) struct RemoteCodexBatchResult {
+    pub(crate) request_id: String,
+    pub(crate) action: RemoteCodexAction,
+    pub(crate) results: Vec<RemoteCodexBatchItem>,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -745,8 +817,6 @@ pub(crate) struct RemoteCodexProgressEvent {
 
 pub(crate) struct CodexProgressContext<'a> {
     pub(crate) app: &'a AppHandle,
-    pub(crate) state: &'a AppState,
-    pub(crate) task_id: &'a str,
     pub(crate) request_id: Option<&'a str>,
     pub(crate) host_alias: &'a str,
     pub(crate) action: &'a RemoteCodexAction,
@@ -986,39 +1056,6 @@ printf 'no\n'
 exit 1
 "#;
 
-pub(crate) const REMOTE_CONFIG_API_ENV_VAR_SCRIPT: &str = r#"if [ -f "$HOME/.codex/config.toml" ]; then
-  sed -n -E 's/^[[:space:]]*(env_key|apiKeyEnvVar)[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p' "$HOME/.codex/config.toml" 2>/dev/null | head -n 1
-fi
-"#;
-
-pub(crate) const REMOTE_API_ENV_PRESENT_SCRIPT: &str = r#"if [ ! -f "$HOME/.codex/config.toml" ]; then
-  printf 'unknown\n'
-  exit 0
-fi
-api_env=$(sed -n -E 's/^[[:space:]]*(env_key|apiKeyEnvVar)[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p' "$HOME/.codex/config.toml" 2>/dev/null | head -n 1)
-case "$api_env" in
-  "" | [0-9]* | *[!A-Za-z0-9_]*)
-    printf 'unknown\n'
-    exit 0
-    ;;
-esac
-if printenv "$api_env" >/dev/null 2>&1; then
-  printf 'yes\n'
-  exit 0
-fi
-if [ -f "$HOME/.codex-hub/env" ]; then
-  set -a
-  . "$HOME/.codex-hub/env" >/dev/null 2>&1 || true
-  set +a
-  if printenv "$api_env" >/dev/null 2>&1; then
-    printf 'yes\n'
-    exit 0
-  fi
-fi
-printf 'no\n'
-exit 1
-"#;
-
 pub(crate) fn remote_skill_count_script() -> &'static str {
     r#"count=0
 count_skill_dir() {
@@ -1162,7 +1199,33 @@ printf 'CODEXHUB_SHELL_CONFIG_PATH=%s\n' "$checked_paths"
 printf 'CODEXHUB_BACKUP_PATH=%s\n' "$backup_paths"
 "##;
 
-pub(crate) const CODEX_INSTALL_SCRIPT: &str = r##"set -u
+pub(crate) const CODEX_OFFICIAL_INSTALL_SCRIPT: &str = r##"set -eu
+export CODEX_INSTALL_DIR="$HOME/.local/bin"
+export CODEX_HOME="$HOME/.codex"
+export CODEX_NON_INTERACTIVE=1
+export PATH="$HOME/.local/bin:$PATH"
+mkdir -p "$CODEX_INSTALL_DIR" "$CODEX_HOME"
+tmp_dir="${TMPDIR:-/tmp}/codexhub-official-install.$$"
+mkdir -p "$tmp_dir"
+trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL --connect-timeout 15 --max-time 45 "https://chatgpt.com/codex/install.sh" -o "$tmp_dir/install.sh"
+elif command -v wget >/dev/null 2>&1; then
+  wget --timeout=45 --tries=1 -qO "$tmp_dir/install.sh" "https://chatgpt.com/codex/install.sh"
+else
+  printf 'curl or wget is not available for the official Codex installer.\n' >&2
+  exit 127
+fi
+if command -v timeout >/dev/null 2>&1; then
+  timeout 75 sh "$tmp_dir/install.sh"
+else
+  sh "$tmp_dir/install.sh"
+fi
+printf 'CODEXHUB_INSTALL_METHOD=official\n'
+"##;
+
+pub(crate) const CODEX_REMOTE_NATIVE_MIRROR_SCRIPT: &str = r##"set -u
 export CODEX_INSTALL_DIR="$HOME/.local/bin"
 export CODEX_HOME="$HOME/.codex"
 export CODEX_NON_INTERACTIVE=1
@@ -1305,51 +1368,6 @@ print("CODEXHUB_NATIVE_TARBALL=" + tarball)
 PY
 }
 
-official_status=127
-printf '[CodexHub] Trying official Codex installer download.\n'
-if command -v curl >/dev/null 2>&1; then
-  if curl -fsSL --connect-timeout 15 --max-time 45 "https://chatgpt.com/codex/install.sh" -o "$tmp_dir/install.sh" 2>"$tmp_dir/official.err"; then
-    printf '[CodexHub] Official installer downloaded; starting installer.\n'
-    if command -v timeout >/dev/null 2>&1; then
-      timeout 75 sh "$tmp_dir/install.sh"
-    else
-      sh "$tmp_dir/install.sh"
-    fi
-    official_status=$?
-  else
-    official_status=$?
-    cat "$tmp_dir/official.err" >&2
-    if is_tls_cert_error "$tmp_dir/official.err"; then
-      printf 'Official Codex installer TLS verification failed; falling back to npmmirror. CodexHub will not disable TLS verification for the official installer.\n' >&2
-    fi
-  fi
-elif command -v wget >/dev/null 2>&1; then
-  if wget --timeout=15 --tries=1 -qO "$tmp_dir/install.sh" "https://chatgpt.com/codex/install.sh" 2>"$tmp_dir/official.err"; then
-    printf '[CodexHub] Official installer downloaded; starting installer.\n'
-    if command -v timeout >/dev/null 2>&1; then
-      timeout 75 sh "$tmp_dir/install.sh"
-    else
-      sh "$tmp_dir/install.sh"
-    fi
-    official_status=$?
-  else
-    official_status=$?
-    cat "$tmp_dir/official.err" >&2
-    if is_tls_cert_error "$tmp_dir/official.err"; then
-      printf 'Official Codex installer TLS verification failed; falling back to npmmirror. CodexHub will not disable TLS verification for the official installer.\n' >&2
-    fi
-  fi
-else
-  printf 'curl or wget is not available for the official Codex installer.\n' >&2
-fi
-
-if [ "$official_status" -eq 0 ]; then
-  printf '[CodexHub] Official Codex installer completed successfully.\n'
-  printf 'CODEXHUB_INSTALL_METHOD=official\n'
-  exit 0
-fi
-
-printf 'Official Codex installer failed with status %s; trying npmmirror native package fallback.\n' "$official_status" >&2
 native_status=127
 if command -v python3 >/dev/null 2>&1; then
   arch=$(uname -m)
@@ -1424,25 +1442,22 @@ if [ "$native_status" -eq 0 ]; then
   fi
   exit 0
 fi
+printf 'CODEXHUB_INSTALL_METHOD=failed\n'
+exit "$native_status"
+"##;
 
-printf 'npmmirror native package fallback failed with status %s; trying npm command fallback.\n' "$native_status" >&2
+pub(crate) const CODEX_REMOTE_NPM_MIRROR_SCRIPT: &str = r##"set -eu
+export CODEX_INSTALL_DIR="$HOME/.local/bin"
+export CODEX_HOME="$HOME/.codex"
+export CODEX_NON_INTERACTIVE=1
+export PATH="$HOME/.local/bin:$PATH"
+mkdir -p "$CODEX_INSTALL_DIR" "$CODEX_HOME"
 if ! command -v npm >/dev/null 2>&1; then
-  printf 'npm is not available for the npmmirror fallback.\n' >&2
-  printf 'CODEXHUB_INSTALL_METHOD=failed\n'
+  printf 'npm is not available for the npmmirror installation method.\n' >&2
   exit 127
 fi
-
-printf '[CodexHub] Starting npm install fallback.\n'
 npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com
-npm_status=$?
-if [ "$npm_status" -eq 0 ]; then
-  printf '[CodexHub] npm install fallback completed successfully.\n'
-  printf 'CODEXHUB_INSTALL_METHOD=npm-mirror\n'
-  exit 0
-fi
-
-printf 'CODEXHUB_INSTALL_METHOD=failed\n'
-exit "$npm_status"
+printf 'CODEXHUB_INSTALL_METHOD=npm-mirror\n'
 "##;
 
 pub(crate) const CODEX_UNINSTALL_SCRIPT: &str = r##"set -u

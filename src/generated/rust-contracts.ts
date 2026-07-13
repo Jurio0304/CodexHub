@@ -42,11 +42,15 @@ export type ProfilePatchDto = { name?: string, description?: string, model?: str
 
 export type TaskStatus = "queued" | "running" | "success" | "failed" | "interrupted";
 
+export type TaskStepStatus = "pending" | "running" | "success" | "failed" | "skipped";
+
+export type TaskStep = { taskRunId: string, stepId: string, sequence: number, status: TaskStepStatus, summary: string, startedAt: string | null, endedAt: string | null, };
+
 export type TaskLogLevel = "info" | "warn" | "error";
 
-export type TaskLog = { id: string, taskRunId: string, level: TaskLogLevel, timestamp: string, message: string, command?: string, stdout?: string, stderr?: string, exitCode?: number, durationMs?: number, timedOut?: boolean, };
+export type TaskLog = { id: string, taskRunId: string, stepId?: string, level: TaskLogLevel, timestamp: string, message: string, command?: string, stdout?: string, stderr?: string, exitCode?: number, durationMs?: number, timedOut?: boolean, };
 
-export type TaskRun = { id: string, hostId: string, hostName: string, action: string, status: TaskStatus, startedAt: string, endedAt: string | null, summary: string, logs: Array<TaskLog>, };
+export type TaskRun = { id: string, hostId: string, hostName: string, action: string, status: TaskStatus, startedAt: string, endedAt: string | null, summary: string, steps: Array<TaskStep>, logs: Array<TaskLog>, };
 
 export type TaskQuery = { limit?: number | null, cursor?: string | null, };
 
@@ -124,11 +128,23 @@ export type SshBootstrapProgressEventDto = { requestId: string, hostAlias: strin
 
 export type RemoteProbeResultDto = { hostAlias: string, sshStatus: HostStatusDto, latencyMs: number | null, os: string, arch: string, shell: string, path: string | null, pathHasLocalBin: boolean, codexCommandAvailable: boolean, codexInstalled: boolean, codexPath: string | null, codexVersion: string, configExists: boolean, apiConfigName: string, apiConfigSource: string, apiKeyEnvVar: string | null, apiKeyEnvPresent: boolean | null, skillsExists: boolean, skillsCount: number, task: TaskRun, };
 
+export type RemoteProbeBatchItemDto = { hostAlias: string, ok: boolean, result?: RemoteProbeResultDto, error?: string, };
+
+export type RemoteProbeBatchResultDto = { requestId: string, latestCodexVersion: LatestCodexVersionDto, results: Array<RemoteProbeBatchItemDto>, };
+
 export type LatestCodexVersionDto = { version: string | null, checkedAt: string | null, source: string, error: string | null, };
 
 export type RemoteCodexActionDto = "check-version" | "install" | "update" | "uninstall";
 
+export type HostOperationKindDto = "host-test" | "codex-install" | "codex-update" | "codex-uninstall";
+
+export type HostOperationProgressEventDto = { requestId: string, taskId: string, hostAlias: string, operation: HostOperationKindDto, step: TaskStep, log?: TaskLog, };
+
 export type RemoteCodexMaintenanceResultDto = { hostAlias: string, ok: boolean, action: RemoteCodexActionDto, beforeVersion: string | null, afterVersion: string | null, codexPath: string | null, codexCommandAvailable: boolean, installMethod: string | null, pathChanged: boolean, shellConfigPath: string | null, backupPath: string | null, message: string, task: TaskRun, };
+
+export type RemoteCodexBatchItemDto = { hostAlias: string, ok: boolean, result?: RemoteCodexMaintenanceResultDto, error?: string, };
+
+export type RemoteCodexBatchResultDto = { requestId: string, action: RemoteCodexActionDto, results: Array<RemoteCodexBatchItemDto>, };
 
 export type RemoteCodexProgressEventDto = { requestId: string, hostAlias: string, action: RemoteCodexActionDto, step: string, status: string, message: string, detail: string | null, stdout: string | null, stderr: string | null, exitCode: number | null, durationMs: number | null, timedOut: boolean | null, };
 

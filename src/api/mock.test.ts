@@ -1,4 +1,5 @@
 import { expect, test, vi } from "vitest";
+import type { HostOperationProgressEvent } from "../models";
 import { mockApi } from "./mock";
 
 test("Mock task pagination, acknowledgement, and update events match the desktop contract", async () => {
@@ -49,4 +50,113 @@ test("Mock automatic resource polling stays out of task history", async () => {
   expect(recorded.items[0]).toEqual(expect.objectContaining({ action: "Sample host resources" }));
 
   await mockApi.clearTaskHistory();
+});
+
+test("Mock Codex maintenance emits the ordered fallback chain without making a recovered task fail", async () => {
+  const events: HostOperationProgressEvent[] = [];
+  const result = await mockApi.remoteManageCodex(
+    "mock-stage-host",
+    "install",
+    120000,
+    "mock-install-request",
+    (event) => events.push(event)
+  );
+
+  expect(result.ok).toBe(true);
+  expect(result.task.steps.map((step) => [step.stepId, step.status])).toEqual([
+    ["preparation", "success"],
+    ["official-installer", "failed"],
+    ["remote-native-mirror", "failed"],
+    ["remote-npm-mirror", "success"],
+    ["local-upload", "skipped"],
+    ["final-verification", "success"]
+  ]);
+  expect(events.filter((event) => event.step.status === "running").map((event) => event.step.stepId)).toEqual([
+    "preparation",
+    "official-installer",
+    "remote-native-mirror",
+    "remote-npm-mirror",
+    "final-verification"
+  ]);
+
+  const failed = await mockApi.remoteManageCodex("mock-fail-host", "update");
+  expect(failed.ok).toBe(false);
+  expect(failed.task.status).toBe("failed");
+  expect(failed.task.steps.find((step) => step.stepId === "final-verification")?.status).toBe("failed");
+
+  const uninstallEvents: HostOperationProgressEvent[] = [];
+  const failedUninstall = await mockApi.remoteManageCodex(
+    "mock-fail-uninstall",
+    "uninstall",
+    120000,
+    "mock-uninstall-request",
+    (event) => uninstallEvents.push(event)
+  );
+  expect(failedUninstall.ok).toBe(false);
+  expect(failedUninstall.task.status).toBe("failed");
+  expect(failedUninstall.task.steps.map((step) => [step.stepId, step.status])).toEqual([
+    ["preparation", "success"],
+    ["uninstall", "failed"],
+    ["final-verification", "failed"]
+  ]);
+  expect(failedUninstall.beforeVersion).toBe("codex-cli 0.31.0");
+  expect(failedUninstall.afterVersion).toBe(failedUninstall.beforeVersion);
+  expect(failedUninstall.codexPath).toBe("$HOME/.local/bin/codex");
+  expect(failedUninstall.codexCommandAvailable).toBe(true);
+  expect(uninstallEvents.filter((event) => event.step.status !== "running").map((event) => [event.step.stepId, event.step.status])).toEqual([
+    ["preparation", "success"],
+    ["uninstall", "failed"],
+    ["final-verification", "failed"]
+  ]);
+});
+
+test("Mock host probe starts four independent groups before any group completes", async () => {
+  const events: HostOperationProgressEvent[] = [];
+  await mockApi.remoteProbeCodex(
+    "mock-parallel-probe",
+    10000,
+    "mock-probe-request",
+    (event) => events.push(event)
+  );
+
+  const sshCompleted = events.findIndex((event) => event.step.stepId === "ssh-check" && event.step.status === "success");
+  const groupEvents = events.slice(sshCompleted + 1, sshCompleted + 5);
+  expect(groupEvents.map((event) => [event.step.stepId, event.step.status])).toEqual([
+    ["system", "running"],
+    ["codex", "running"],
+    ["api", "running"],
+    ["skills", "running"]
+  ]);
+
+  const failed = await mockApi.remoteProbeCodex("mock-fail-probe");
+  expect(failed.task.status).toBe("failed");
+  expect(failed.task.steps.slice(1).every((step) => step.status === "skipped")).toBe(true);
+});
+
+test("Mock batch update uses a six-host sliding pool and preserves input order", async () => {
+  const aliases = Array.from({ length: 8 }, (_, index) => `mock-batch-${index + 1}`);
+  const events: HostOperationProgressEvent[] = [];
+  const active = new Set<string>();
+  let maxActive = 0;
+  const result = await mockApi.batchRemoteUpdateCodex(
+    aliases,
+    120000,
+    "mock-batch-request",
+    (event) => {
+      events.push(event);
+      if (event.step.stepId === "preparation" && event.step.status === "running") {
+        active.add(event.hostAlias);
+        maxActive = Math.max(maxActive, active.size);
+      }
+      if (event.step.stepId === "final-verification" && event.step.status === "success") {
+        active.delete(event.hostAlias);
+      }
+    }
+  );
+
+  expect(maxActive).toBe(6);
+  expect(result.results.map((item) => item.hostAlias)).toEqual(aliases);
+  const seventhStarted = events.findIndex((event) => event.hostAlias === aliases[6] && event.step.stepId === "preparation" && event.step.status === "running");
+  const firstFinished = events.findIndex((event) => aliases.slice(0, 6).includes(event.hostAlias) && event.step.stepId === "final-verification" && event.step.status === "success");
+  expect(seventhStarted).toBeGreaterThan(firstFinished);
 });
