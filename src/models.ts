@@ -9,6 +9,7 @@ import type {
   GpuVendorDto,
   HealthDto,
   HostResourceBatchResultDto,
+  HostResourceProgressEventDto,
   HostOperationKindDto,
   HostOperationProgressEventDto,
   HostResourceSnapshotDto,
@@ -382,6 +383,7 @@ export type MemorySnapshot = MemorySnapshotDto;
 export type GpuProcessSnapshot = GpuProcessSnapshotDto;
 export type GpuSnapshot = GpuSnapshotDto;
 export type HostResourceSnapshot = HostResourceSnapshotDto;
+export type HostResourceProgressEvent = HostResourceProgressEventDto;
 export type HostResourceBatchResult = HostResourceBatchResultDto;
 export type RemoteCodexAction = RemoteCodexActionDto;
 export type RemoteCodexProgressEvent = RemoteCodexProgressEventDto;

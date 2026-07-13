@@ -172,6 +172,8 @@ export type GpuSnapshotDto = { vendor: GpuVendorDto, index: string | null, uuid:
 
 export type HostResourceSnapshotDto = { hostAlias: string, status: HostResourceStatusDto, sampledAt: string, latencyMs: number | null, error: string | null, cpu: CpuSnapshotDto | null, memory: MemorySnapshotDto | null, gpuTool: string, gpus: Array<GpuSnapshotDto>, };
 
+export type HostResourceProgressEventDto = { requestId: string, snapshot: HostResourceSnapshotDto, };
+
 export type HostResourceBatchResultDto = { checkedAt: string, snapshots: Array<HostResourceSnapshotDto>, };
 
 export type StorageState = "missing" | "current" | "migration-required" | "recovery-required" | "corrupt";

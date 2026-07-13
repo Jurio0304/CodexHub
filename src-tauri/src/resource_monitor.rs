@@ -2,7 +2,11 @@ use crate::ssh;
 use chrono::{DateTime, Local};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use std::thread;
+use std::{
+    panic::{catch_unwind, AssertUnwindSafe},
+    sync::{mpsc, Arc},
+    thread,
+};
 use ts_rs::TS;
 
 const DEFAULT_RESOURCE_TIMEOUT_MS: u64 = 30_000;
@@ -14,6 +18,14 @@ const RESOURCE_SAMPLE_CONCURRENCY: usize = 3;
 pub(crate) struct HostResourceBatchResult {
     checked_at: String,
     snapshots: Vec<HostResourceSnapshot>,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "HostResourceProgressEventDto")]
+pub(crate) struct HostResourceProgressEvent {
+    pub(crate) request_id: String,
+    pub(crate) snapshot: HostResourceSnapshot,
 }
 
 impl HostResourceBatchResult {
@@ -134,37 +146,89 @@ pub(crate) enum GpuStatus {
     Unavailable,
 }
 
-pub(crate) fn sample_host_resources(
+pub(crate) fn sample_host_resources_with_progress<F>(
     host_aliases: Vec<String>,
     timeout_ms: Option<u64>,
-) -> HostResourceBatchResult {
+    on_snapshot: F,
+) -> HostResourceBatchResult
+where
+    F: FnMut(&HostResourceSnapshot),
+{
     let timeout = timeout_ms
         .unwrap_or(DEFAULT_RESOURCE_TIMEOUT_MS)
         .clamp(3_000, 30_000);
     let checked_at = timestamp_now();
-    let mut snapshots = Vec::new();
-
-    for chunk in host_aliases.chunks(RESOURCE_SAMPLE_CONCURRENCY) {
-        let mut handles = Vec::new();
-        for alias in chunk.iter().cloned() {
-            handles.push(thread::spawn(move || sample_one_host(alias, timeout)));
-        }
-        for handle in handles {
-            match handle.join() {
-                Ok(snapshot) => snapshots.push(snapshot),
-                Err(_) => snapshots.push(failed_snapshot(
-                    "unknown",
-                    "Resource monitor worker failed.".into(),
-                    None,
-                )),
-            }
-        }
-    }
+    let snapshots = sample_hosts_with_progress(host_aliases, timeout, sample_one_host, on_snapshot);
 
     HostResourceBatchResult {
         checked_at,
         snapshots,
     }
+}
+
+fn sample_hosts_with_progress<S, F>(
+    host_aliases: Vec<String>,
+    timeout_ms: u64,
+    sampler: S,
+    mut on_snapshot: F,
+) -> Vec<HostResourceSnapshot>
+where
+    S: Fn(String, u64) -> HostResourceSnapshot + Send + Sync + 'static,
+    F: FnMut(&HostResourceSnapshot),
+{
+    let total = host_aliases.len();
+    let mut ordered = vec![None; total];
+    let mut pending = host_aliases.into_iter().enumerate();
+    let sampler = Arc::new(sampler);
+    let (sender, receiver) = mpsc::channel();
+
+    // 固定并发池按完成顺序回传，并在空出槽位后立即补入下一台主机。
+    for _ in 0..RESOURCE_SAMPLE_CONCURRENCY.min(total) {
+        if let Some((index, host_alias)) = pending.next() {
+            spawn_resource_sample(index, host_alias, timeout_ms, &sender, &sampler);
+        }
+    }
+
+    for _ in 0..total {
+        let (index, snapshot) = receiver
+            .recv()
+            .expect("resource sample workers always return one snapshot");
+        on_snapshot(&snapshot);
+        ordered[index] = Some(snapshot);
+        if let Some((next_index, next_alias)) = pending.next() {
+            spawn_resource_sample(next_index, next_alias, timeout_ms, &sender, &sampler);
+        }
+    }
+
+    ordered
+        .into_iter()
+        .map(|snapshot| snapshot.expect("every resource sample slot is filled"))
+        .collect()
+}
+
+fn spawn_resource_sample<S>(
+    index: usize,
+    host_alias: String,
+    timeout_ms: u64,
+    sender: &mpsc::Sender<(usize, HostResourceSnapshot)>,
+    sampler: &Arc<S>,
+) where
+    S: Fn(String, u64) -> HostResourceSnapshot + Send + Sync + 'static,
+{
+    let sender = sender.clone();
+    let sampler = Arc::clone(sampler);
+    thread::spawn(move || {
+        let fallback_alias = host_alias.clone();
+        let snapshot = catch_unwind(AssertUnwindSafe(|| sampler(host_alias, timeout_ms)))
+            .unwrap_or_else(|_| {
+                failed_snapshot(
+                    fallback_alias,
+                    "Resource monitor worker failed.".into(),
+                    None,
+                )
+            });
+        let _ = sender.send((index, snapshot));
+    });
 }
 
 fn sample_one_host(host_alias: String, timeout_ms: u64) -> HostResourceSnapshot {
@@ -673,6 +737,10 @@ fn timestamp_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
 
     #[test]
     fn parses_cpu_memory_and_nvidia_rows() {
@@ -801,7 +869,8 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
 
     #[test]
     fn invalid_alias_returns_failed_snapshot_without_ssh() {
-        let result = sample_host_resources(vec!["bad alias!".into()], Some(3_000));
+        let result =
+            sample_host_resources_with_progress(vec!["bad alias!".into()], Some(3_000), |_| {});
         assert_eq!(result.snapshots.len(), 1);
         assert!(matches!(
             result.snapshots[0].status,
@@ -809,5 +878,62 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
         ));
         assert_eq!(result.snapshots[0].host_alias, "bad alias!");
         assert!(result.snapshots[0].error.is_some());
+    }
+
+    #[test]
+    fn sliding_pool_reports_each_completed_host_and_preserves_result_order() {
+        let aliases = vec!["slow", "fast-1", "fast-2", "later-1", "later-2"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let sampler_active = Arc::clone(&active);
+        let sampler_max = Arc::clone(&max_active);
+        let mut completion_order = Vec::new();
+
+        let snapshots = sample_hosts_with_progress(
+            aliases.clone(),
+            3_000,
+            move |alias, _| {
+                let current = sampler_active.fetch_add(1, Ordering::SeqCst) + 1;
+                sampler_max.fetch_max(current, Ordering::SeqCst);
+                let delay_ms = if alias == "slow" { 160 } else { 12 };
+                thread::sleep(Duration::from_millis(delay_ms));
+                sampler_active.fetch_sub(1, Ordering::SeqCst);
+                failed_snapshot(alias, "fixture".into(), None)
+            },
+            |snapshot| completion_order.push(snapshot.host_alias.clone()),
+        );
+
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.host_alias.as_str())
+                .collect::<Vec<_>>(),
+            aliases.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert_eq!(completion_order.len(), aliases.len());
+        assert_eq!(completion_order.last().map(String::as_str), Some("slow"));
+        assert!(
+            completion_order.iter().position(|alias| alias == "later-1")
+                < completion_order.iter().position(|alias| alias == "slow")
+        );
+        assert_eq!(
+            max_active.load(Ordering::SeqCst),
+            RESOURCE_SAMPLE_CONCURRENCY
+        );
+    }
+
+    #[test]
+    fn progress_event_serializes_request_and_completed_snapshot() {
+        let event = HostResourceProgressEvent {
+            request_id: "resource-request-1".into(),
+            snapshot: failed_snapshot("alpha", "fixture".into(), None),
+        };
+        let json = serde_json::to_value(event).expect("serialize resource progress event");
+
+        assert_eq!(json["requestId"], "resource-request-1");
+        assert_eq!(json["snapshot"]["hostAlias"], "alpha");
     }
 }

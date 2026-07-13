@@ -5,6 +5,7 @@ import type {
   HostOperationProgressEvent,
   HostPatch,
   HostResourceBatchResult,
+  HostResourceProgressEvent,
   InstalledSkillDownloadResult,
   InstalledSkillRequest,
   Profile,
@@ -804,6 +805,22 @@ function mockSampleHostResources(hostAliases: string[], recordTask = true): Host
   return result;
 }
 
+async function mockSampleHostResourcesWithProgress(
+  hostAliases: string[],
+  recordTask: boolean,
+  requestId?: string,
+  onProgress?: (event: HostResourceProgressEvent) => void
+) {
+  const result = mockSampleHostResources(hostAliases, recordTask);
+  if (requestId && onProgress) {
+    for (const snapshot of result.snapshots) {
+      await delay(15);
+      onProgress({ requestId, snapshot: clone(snapshot) });
+    }
+  }
+  return result;
+}
+
 function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): RemoteCodexMaintenanceResult {
   const host = fallbackHostForAlias(hostAlias);
   const maintenanceFailed = action !== "check-version" && hostAlias.toLowerCase().includes("fail");
@@ -1403,8 +1420,13 @@ export const mockApi: CodexHubApi = {
     mockRemoteProbeWithProgress(hostAlias, requestId, onProgress),
   batchRemoteProbeCodex: async (hostAliases: string[], _timeoutMs = 10000, requestId = `mock-batch-probe-${Date.now()}`, onProgress?: (event: HostOperationProgressEvent) => void) =>
     mockBatchRemoteProbeCodex(hostAliases, requestId, onProgress),
-  sampleHostResources: async (hostAliases: string[], _timeoutMs = 8000, recordTask = true) =>
-    mockSampleHostResources(hostAliases, recordTask),
+  sampleHostResources: async (
+    hostAliases: string[],
+    _timeoutMs = 8000,
+    recordTask = true,
+    requestId?: string,
+    onProgress?: (event: HostResourceProgressEvent) => void
+  ) => mockSampleHostResourcesWithProgress(hostAliases, recordTask, requestId, onProgress),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,

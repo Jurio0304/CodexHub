@@ -596,7 +596,7 @@ if (!cargoToml.includes('keyring = { version = "3", features = ["apple-native", 
 for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos", "stable_update_network_routes", "LOCAL_PROXY_PORTS", "NetworkProxyMode", "detect_network_proxy_status", "builder.proxy(proxy)"]) {
   if (!rustBackend.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
 }
-for (const token of ["mod resource_monitor", "sample_host_resources", "resource_monitor::sample_host_resources", "query-compute-apps", "CH_GPU_PROCESS", "etimes"]) {
+for (const token of ["mod resource_monitor", "sample_host_resources", "resource_monitor::sample_host_resources_with_progress", "HostResourceProgressEvent", "host-resource-progress", "RESOURCE_SAMPLE_CONCURRENCY", "query-compute-apps", "CH_GPU_PROCESS", "etimes"]) {
   if (!rustBackend.includes(token)) fail(`missing resource monitor backend token: ${token}`);
 }
 for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(running, &status, &attempts))", "Install app update", "Check app update"]) {
@@ -1017,7 +1017,7 @@ const app = read("src/App.tsx");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
 const operationProgressSource = read("src/ui/OperationProgress.tsx");
 const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
-for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
+for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
 }
 if (app.includes("copy.monitor.noGpuProcesses")) fail("resource monitor should hide empty GPU process text in host cards");
@@ -1664,7 +1664,7 @@ for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior"
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "host-operation-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex", "batchRemoteProbeCodex", "batchRemoteUpdateCodex"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
-for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "mockSampleHostResources", "recordTask?: boolean", "recordTask = true", "gpuUuid", "processes"]) {
+for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "HostResourceProgressEvent", "host-resource-progress", "mockSampleHostResources", "mockSampleHostResourcesWithProgress", "recordTask?: boolean", "recordTask = true", "gpuUuid", "processes"]) {
   if (!api.includes(token)) fail(`missing resource monitor API token: ${token}`);
 }
 for (const token of [

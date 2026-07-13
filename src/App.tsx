@@ -127,6 +127,19 @@ export function shouldRecordResourceSample(trigger: ResourceRefreshTrigger) {
   return trigger !== "auto";
 }
 
+export function mergeHostResourceSnapshot(
+  current: HostResourceSnapshot[],
+  snapshot: HostResourceSnapshot,
+  hostAliases: string[]
+) {
+  const byAlias = new Map(current.map((item) => [item.hostAlias, item]));
+  byAlias.set(snapshot.hostAlias, snapshot);
+  return hostAliases.flatMap((hostAlias) => {
+    const item = byAlias.get(hostAlias);
+    return item ? [item] : [];
+  });
+}
+
 type CodexOperationModalStatus = "running" | "success" | "failed";
 type CodexOperationModalState = {
   requestId: string;
@@ -2528,10 +2541,16 @@ function App() {
     if (showFeedback) setResourceError(null);
 
     try {
+      const hostAliases = hosts.map((host) => host.hostAlias);
+      const requestId = `resource-monitor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const result = await api.sampleHostResources(
-        hosts.map((host) => host.hostAlias),
+        hostAliases,
         RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS,
-        recordTask
+        recordTask,
+        requestId,
+        (event) => {
+          setResourceSnapshots((current) => mergeHostResourceSnapshot(current, event.snapshot, hostAliases));
+        }
       );
       setResourceSnapshots(result.snapshots);
       setResourceCheckedAt(result.checkedAt);

@@ -5,6 +5,7 @@ import type {
   HostDraft,
   HostOperationProgressEvent,
   HostPatch,
+  HostResourceProgressEvent,
   InstalledSkillRequest,
   ProfileDraft,
   ProfileImportExport,
@@ -78,6 +79,26 @@ async function runWithHostOperationProgress<T>(
   assertTauriRuntime(command);
   if (requestId && onProgress) {
     unlisten = await listen<HostOperationProgressEvent>("host-operation-progress", (event) => {
+      if (event.payload.requestId === requestId) onProgress(event.payload);
+    });
+  }
+
+  try {
+    return await invoke();
+  } finally {
+    unlisten?.();
+  }
+}
+
+async function runWithHostResourceProgress<T>(
+  requestId: string | undefined,
+  onProgress: ((event: HostResourceProgressEvent) => void) | undefined,
+  invoke: () => Promise<T>
+) {
+  let unlisten: UnlistenFn | null = null;
+  assertTauriRuntime("sample_host_resources");
+  if (requestId && onProgress) {
+    unlisten = await listen<HostResourceProgressEvent>("host-resource-progress", (event) => {
       if (event.payload.requestId === requestId) onProgress(event.payload);
     });
   }
@@ -206,12 +227,22 @@ export const desktopApi: CodexHubApi = {
       requestId
     })
   ),
-  sampleHostResources: (hostAliases: string[], timeoutMs = 8000, recordTask = true) =>
-    requiredInvoke<HostResourceBatchResultDto>("sample_host_resources", {
+  sampleHostResources: (
+    hostAliases: string[],
+    timeoutMs = 8000,
+    recordTask = true,
+    requestId?: string,
+    onProgress?: (event: HostResourceProgressEvent) => void
+  ) => runWithHostResourceProgress(
+    requestId,
+    onProgress,
+    () => requiredInvoke<HostResourceBatchResultDto>("sample_host_resources", {
       hostAliases: hostAliases.map((alias) => requireHostAlias("sample_host_resources", alias)),
       timeoutMs,
-      recordTask
-    }),
+      recordTask,
+      requestId
+    })
+  ),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,

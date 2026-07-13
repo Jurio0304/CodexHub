@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import type { HostOperationProgressEvent } from "../models";
+import type { HostOperationProgressEvent, HostResourceProgressEvent } from "../models";
 import { mockApi } from "./mock";
 
 test("Mock task pagination, acknowledgement, and update events match the desktop contract", async () => {
@@ -50,6 +50,23 @@ test("Mock automatic resource polling stays out of task history", async () => {
   expect(recorded.items[0]).toEqual(expect.objectContaining({ action: "Sample host resources" }));
 
   await mockApi.clearTaskHistory();
+});
+
+test("Mock resource sampling emits one progressive snapshot per completed host", async () => {
+  const events: HostResourceProgressEvent[] = [];
+  const aliases = ["mock-gpu-01", "mock-cpu-01", "mock-gpu-02"];
+
+  const result = await mockApi.sampleHostResources(
+    aliases,
+    8000,
+    false,
+    "mock-resource-request",
+    (event) => events.push(event)
+  );
+
+  expect(events.map((event) => event.requestId)).toEqual(aliases.map(() => "mock-resource-request"));
+  expect(events.map((event) => event.snapshot.hostAlias)).toEqual(aliases);
+  expect(result.snapshots.map((snapshot) => snapshot.hostAlias)).toEqual(aliases);
 });
 
 test("Mock Codex maintenance emits the ordered fallback chain without making a recovered task fail", async () => {

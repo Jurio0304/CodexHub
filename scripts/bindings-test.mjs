@@ -14,6 +14,7 @@ const required = [
   "export type NetworkProxyStatusDto",
   "export type SshBootstrapResultDto",
   "export type SshConfigDeleteResultDto",
+  "export type HostResourceProgressEventDto",
   "export type HostResourceBatchResultDto",
   "export type TaskStepStatus",
   '"pending" | "running" | "success" | "failed" | "skipped"',
