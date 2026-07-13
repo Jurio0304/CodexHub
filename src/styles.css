@@ -1491,6 +1491,31 @@ tr:last-child td {
   min-width: 0;
 }
 
+.monitorHostStatusIndicator {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--gray);
+}
+
+.monitorHostStatusIndicator[data-status="ok"] { background: var(--green); }
+.monitorHostStatusIndicator[data-status="partial"] { background: var(--yellow); }
+.monitorHostStatusIndicator[data-status="failed"] { background: var(--red); }
+.monitorHostStatusIndicator[data-status="refreshing"] { background: var(--blue); }
+
+.monitorHostStatusIndicator svg {
+  width: 16px;
+  height: 16px;
+}
+
+.monitorHostStatusIndicator[data-status="refreshing"] svg {
+  animation: spin 0.9s linear infinite;
+}
+
 .monitorHostHeader h3 {
   margin: 0;
   color: var(--text);

@@ -1017,9 +1017,10 @@ const app = read("src/App.tsx");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
 const operationProgressSource = read("src/ui/OperationProgress.tsx");
 const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
-for (const token of ["MonitorView", "MonitorHostCard", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory"]) {
+for (const token of ["MonitorView", "MonitorHostCard", "MonitorHostStatusIndicator", "resolveMonitorHostIndicatorState", "resourcePendingHostAliases", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory", 'aria-label={label}', 'role="img"', 'stroke="currentColor"']) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
 }
+if (app.includes("resourceStatusTone")) fail("resource monitor host headers should use icon indicators instead of text badges");
 if (app.includes("copy.monitor.noGpuProcesses")) fail("resource monitor should hide empty GPU process text in host cards");
 for (const token of ["MonitorHostRow", "monitorTable"]) {
   if (app.includes(token)) fail(`resource monitor should use Bento cards instead of table UI: ${token}`);
@@ -1882,7 +1883,7 @@ for (const token of [".storageHealthBanner", "width: min(100%, var(--app-content
 for (const token of ["storagePlanCard", "storagePlanCode", "grid-template-columns: repeat(2, minmax(0, 1fr))", 'font-family: "Consolas"']) {
   if (!app.includes(token) && !styles.includes(token)) fail(`storage migration confirmation should use card and code-snippet styling: ${token}`);
 }
-for (const token of ["monitorBentoGrid", "monitorHostCard", "monitorSummaryTile", "monitorGpuBlock", "monitorProcessRow", "monitorAutoRefreshControl", "monitorDragHandle", "monitorSegmentedMeter", "monitorDragGhost", "--monitor-gap", "grid-auto-rows: 2px", "data-placeholder", 'data-tone="memory"', 'data-tone="cpu"', 'data-tone="gpu"']) {
+for (const token of ["monitorBentoGrid", "monitorHostCard", "monitorHostStatusIndicator", "monitorSummaryTile", "monitorGpuBlock", "monitorProcessRow", "monitorAutoRefreshControl", "monitorDragHandle", "monitorSegmentedMeter", "monitorDragGhost", "--monitor-gap", "grid-auto-rows: 2px", "data-placeholder", 'data-tone="memory"', 'data-tone="cpu"', 'data-tone="gpu"', 'data-status="refreshing"', "width: 24px", "background: var(--green)", "background: var(--red)", "background: var(--blue)"]) {
   if (!styles.includes(token)) fail(`missing resource monitor Bento style token: ${token}`);
 }
 if (styles.includes("monitorBentoTile")) fail("resource monitor should use simplified summary tiles instead of old Bento tile styles");

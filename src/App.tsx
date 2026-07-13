@@ -120,6 +120,7 @@ type HostProbeOptions = {
   showProgressModal?: boolean;
 };
 type ResourceRefreshTrigger = "initial" | "manual" | "auto";
+type MonitorHostIndicatorState = HostResourceSnapshot["status"] | "refreshing" | "no-sample";
 const MAX_VISIBLE_TASKS = 100;
 
 // Scheduled polling updates monitor cards without consuming durable task history.
@@ -138,6 +139,18 @@ export function mergeHostResourceSnapshot(
     const item = byAlias.get(hostAlias);
     return item ? [item] : [];
   });
+}
+
+export function resolveMonitorHostIndicatorState(
+  status: HostResourceSnapshot["status"] | null | undefined,
+  refreshing: boolean
+): MonitorHostIndicatorState {
+  if (refreshing) return "refreshing";
+  return status ?? "no-sample";
+}
+
+function monitorHostAliasKey(hostAlias: string) {
+  return hostAlias.toLowerCase();
 }
 
 type CodexOperationModalStatus = "running" | "success" | "failed";
@@ -2393,6 +2406,7 @@ function App() {
   const [resourceSnapshots, setResourceSnapshots] = useState<HostResourceSnapshot[]>([]);
   const [resourceCheckedAt, setResourceCheckedAt] = useState<string | null>(null);
   const [resourceBusy, setResourceBusy] = useState(false);
+  const [resourcePendingHostAliases, setResourcePendingHostAliases] = useState<Set<string>>(() => new Set());
   const [resourceError, setResourceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
@@ -2532,16 +2546,18 @@ function App() {
     if (hosts.length === 0) {
       setResourceSnapshots([]);
       setResourceCheckedAt(null);
+      setResourcePendingHostAliases(new Set());
       if (showFeedback) setInfoNotice(copy.monitor.refreshed(0));
       return null;
     }
 
+    const hostAliases = hosts.map((host) => host.hostAlias);
     resourceBusyRef.current = true;
     setResourceBusy(true);
+    setResourcePendingHostAliases(new Set(hostAliases.map(monitorHostAliasKey)));
     if (showFeedback) setResourceError(null);
 
     try {
-      const hostAliases = hosts.map((host) => host.hostAlias);
       const requestId = `resource-monitor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const result = await api.sampleHostResources(
         hostAliases,
@@ -2549,6 +2565,14 @@ function App() {
         recordTask,
         requestId,
         (event) => {
+          // Each progress event settles one card before the full batch finishes.
+          setResourcePendingHostAliases((current) => {
+            const aliasKey = monitorHostAliasKey(event.snapshot.hostAlias);
+            if (!current.has(aliasKey)) return current;
+            const next = new Set(current);
+            next.delete(aliasKey);
+            return next;
+          });
           setResourceSnapshots((current) => mergeHostResourceSnapshot(current, event.snapshot, hostAliases));
         }
       );
@@ -2564,6 +2588,7 @@ function App() {
     } finally {
       resourceBusyRef.current = false;
       setResourceBusy(false);
+      setResourcePendingHostAliases(new Set());
     }
   }, [copy.monitor, hosts, setErrorNotice, setInfoNotice]);
 
@@ -4020,6 +4045,7 @@ function App() {
             hosts={hosts}
             hostOrder={settings.resourceMonitorHostOrder}
             refreshSeconds={settings.resourceMonitorRefreshSeconds}
+            refreshingHostAliases={resourcePendingHostAliases}
             settingsSaving={settingsSaving}
             snapshots={resourceSnapshots}
             onAutoRefreshChange={(resourceMonitorAutoRefresh) => persistSettings({ ...settings, resourceMonitorAutoRefresh })}
@@ -4668,6 +4694,7 @@ function MonitorView({
   hosts,
   hostOrder,
   refreshSeconds,
+  refreshingHostAliases,
   settingsSaving,
   snapshots,
   onAutoRefreshChange,
@@ -4683,6 +4710,7 @@ function MonitorView({
   hosts: Host[];
   hostOrder: string[];
   refreshSeconds: number;
+  refreshingHostAliases: ReadonlySet<string>;
   settingsSaving: boolean;
   snapshots: HostResourceSnapshot[];
   onAutoRefreshChange: (enabled: boolean) => void;
@@ -4698,7 +4726,7 @@ function MonitorView({
   const autoScrollFrameRef = useRef<number | null>(null);
   const autoScrollSpeedRef = useRef(0);
   const snapshotByAlias = useMemo(
-    () => new Map(snapshots.map((snapshot) => [snapshot.hostAlias.toLowerCase(), snapshot])),
+    () => new Map(snapshots.map((snapshot) => [monitorHostAliasKey(snapshot.hostAlias), snapshot])),
     [snapshots]
   );
   const gpuUserColorByUser = useMemo(() => buildMonitorGpuUserColorMap(snapshots), [snapshots]);
@@ -4708,7 +4736,8 @@ function MonitorView({
     [dragState, hosts, orderedHosts]
   );
   const ghostHost = dragState ? hosts.find((host) => host.hostAlias === dragState.alias) ?? null : null;
-  const ghostSnapshot = ghostHost ? snapshotByAlias.get(ghostHost.hostAlias.toLowerCase()) ?? null : null;
+  const ghostSnapshot = ghostHost ? snapshotByAlias.get(monitorHostAliasKey(ghostHost.hostAlias)) ?? null : null;
+  const ghostRefreshing = ghostHost ? refreshingHostAliases.has(monitorHostAliasKey(ghostHost.hostAlias)) : false;
 
   const registerMonitorCard = useCallback((alias: string, element: HTMLElement | null) => {
     if (element) {
@@ -4957,7 +4986,8 @@ function MonitorView({
               host={host}
               key={host.id}
               placeholder={dragState?.alias === host.hostAlias}
-              snapshot={snapshotByAlias.get(host.hostAlias.toLowerCase()) ?? null}
+              refreshing={refreshingHostAliases.has(monitorHostAliasKey(host.hostAlias))}
+              snapshot={snapshotByAlias.get(monitorHostAliasKey(host.hostAlias)) ?? null}
               userColorByUser={gpuUserColorByUser}
               onCardElement={registerMonitorCard}
               onDragHandlePointerDown={handleDragHandlePointerDown}
@@ -4970,10 +5000,55 @@ function MonitorView({
           copy={copy}
           dragState={dragState}
           host={ghostHost}
+          refreshing={ghostRefreshing}
           snapshot={ghostSnapshot}
         />
       ) : null}
     </div>
+  );
+}
+
+function MonitorHostStatusIndicator({
+  copy,
+  refreshing,
+  snapshot
+}: {
+  copy: UICopy;
+  refreshing: boolean;
+  snapshot: HostResourceSnapshot | null;
+}) {
+  const state = resolveMonitorHostIndicatorState(snapshot?.status, refreshing);
+  const label = state === "refreshing"
+    ? copy.monitor.refreshing
+    : state === "no-sample"
+      ? copy.monitor.statusNoSample
+      : resourceStatusLabel(state, copy);
+
+  return (
+    <span
+      aria-label={label}
+      className="monitorHostStatusIndicator"
+      data-status={state}
+      role="img"
+      title={label}
+    >
+      <svg
+        aria-hidden="true"
+        fill="none"
+        focusable="false"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.25"
+        viewBox="0 0 24 24"
+      >
+        {state === "ok" ? <path d="m7 12.5 3.4 3.4L17 8.5" /> : null}
+        {state === "partial" ? <path d="M12 7.5v6m0 3.5v.01" /> : null}
+        {state === "failed" ? <path d="m8.5 8.5 7 7m0-7-7 7" /> : null}
+        {state === "refreshing" ? <circle cx="12" cy="12" r="5.5" strokeDasharray="23 12" /> : null}
+        {state === "no-sample" ? <path d="M8 12h8" /> : null}
+      </svg>
+    </span>
   );
 }
 
@@ -4982,6 +5057,7 @@ function MonitorHostCard({
   dragging,
   host,
   placeholder,
+  refreshing,
   snapshot,
   userColorByUser,
   onCardElement,
@@ -4991,6 +5067,7 @@ function MonitorHostCard({
   dragging: boolean;
   host: Host;
   placeholder: boolean;
+  refreshing: boolean;
   snapshot: HostResourceSnapshot | null;
   userColorByUser: MonitorGpuUserColorMap;
   onCardElement: (alias: string, element: HTMLElement | null) => void;
@@ -5052,11 +5129,7 @@ function MonitorHostCard({
         <div>
           <h3>{host.hostAlias}</h3>
         </div>
-        {snapshot ? (
-          <Badge tone={resourceStatusTone(snapshot.status)}>{resourceStatusLabel(snapshot.status, copy)}</Badge>
-        ) : (
-          <Badge tone="gray">{copy.monitor.statusNoSample}</Badge>
-        )}
+        <MonitorHostStatusIndicator copy={copy} refreshing={refreshing} snapshot={snapshot} />
       </header>
 
       {snapshot?.error ? <small className="monitorCellNote">{snapshot.error}</small> : null}
@@ -5180,11 +5253,13 @@ function MonitorHostDragGhost({
   copy,
   dragState,
   host,
+  refreshing,
   snapshot
 }: {
   copy: UICopy;
   dragState: MonitorDragState;
   host: Host;
+  refreshing: boolean;
   snapshot: HostResourceSnapshot | null;
 }) {
   const cpuPercent = monitorCpuPercent(snapshot?.cpu);
@@ -5204,11 +5279,7 @@ function MonitorHostDragGhost({
       <span className="monitorDragGhostHandle" aria-hidden="true" />
       <header className="monitorHostHeader">
         <h3>{host.hostAlias}</h3>
-        {snapshot ? (
-          <Badge tone={resourceStatusTone(snapshot.status)}>{resourceStatusLabel(snapshot.status, copy)}</Badge>
-        ) : (
-          <Badge tone="gray">{copy.monitor.statusNoSample}</Badge>
-        )}
+        <MonitorHostStatusIndicator copy={copy} refreshing={refreshing} snapshot={snapshot} />
       </header>
       <div className="monitorSummaryGrid">
         <MonitorSummaryTile
@@ -9498,12 +9569,6 @@ function formatBoolean(value: boolean, copy: UICopy) {
 
 function formatLatency(value: number | null | undefined, copy: UICopy) {
   return typeof value === "number" ? `${value} ms` : copy.hosts.unknown;
-}
-
-function resourceStatusTone(status: HostResourceSnapshot["status"]): BadgeTone {
-  if (status === "ok") return "green";
-  if (status === "partial") return "yellow";
-  return "red";
 }
 
 function resourceStatusLabel(status: HostResourceSnapshot["status"], copy: UICopy) {

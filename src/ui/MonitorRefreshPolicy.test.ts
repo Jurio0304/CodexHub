@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 import type { HostResourceSnapshot } from "../models";
-import { mergeHostResourceSnapshot, shouldRecordResourceSample } from "../App";
+import {
+  mergeHostResourceSnapshot,
+  resolveMonitorHostIndicatorState,
+  shouldRecordResourceSample
+} from "../App";
 
 function snapshot(hostAlias: string, usagePercent: number): HostResourceSnapshot {
   return {
@@ -33,5 +37,21 @@ describe("resource monitor task policy", () => {
 
     const afterGamma = mergeHostResourceSnapshot(afterBeta, snapshot("gamma", 30), ["alpha", "beta", "gamma"]);
     expect(afterGamma.map((item) => item.hostAlias)).toEqual(["alpha", "beta", "gamma"]);
+  });
+});
+
+describe("resource monitor host indicator", () => {
+  test("shows refreshing ahead of the previous snapshot status", () => {
+    expect(resolveMonitorHostIndicatorState("ok", true)).toBe("refreshing");
+    expect(resolveMonitorHostIndicatorState("failed", true)).toBe("refreshing");
+  });
+
+  test.each([
+    ["ok", "ok"],
+    ["partial", "partial"],
+    ["failed", "failed"],
+    [null, "no-sample"]
+  ] as const)("maps %s to %s while idle", (status, expected) => {
+    expect(resolveMonitorHostIndicatorState(status, false)).toBe(expected);
   });
 });
