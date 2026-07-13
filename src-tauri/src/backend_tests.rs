@@ -190,6 +190,7 @@ mod tests {
         ));
         assert!(settings.network_proxy_url.is_empty());
         assert!(settings.resource_monitor_host_order.is_empty());
+        assert!(settings.host_operation_log_popups);
         assert_eq!(
             serde_json::to_string(&CloseButtonBehavior::MinimizeToTray)
                 .expect("serialize behavior"),

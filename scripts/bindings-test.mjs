@@ -6,6 +6,7 @@ const generated = fs.readFileSync(generatedPath, "utf8");
 const required = [
   "export type ApiError",
   "export type AppSettingsDto",
+  "hostOperationLogPopups: boolean",
   "export type AppUpdateStatusDto",
   "export type HostDto",
   "export type ProfileDto",

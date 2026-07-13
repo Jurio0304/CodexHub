@@ -37,6 +37,25 @@ function ConfiguredHarness({ onOpenTask }: { onOpenTask: (taskId: string) => voi
   );
 }
 
+function DefaultPlacementHarness({ explicitDetail = false }: { explicitDetail?: boolean }) {
+  const { configure, notify } = useFeedback();
+  useEffect(() => {
+    configure({ defaultPlacement: "global", labels: localizedLabels });
+  }, [configure]);
+  return (
+    <button
+      type="button"
+      onClick={() => notify({
+        message: explicitDetail ? "Explicit detail" : "Configured global",
+        placement: explicitDetail ? "detail" : undefined,
+        tone: "success"
+      })}
+    >
+      Notify
+    </button>
+  );
+}
+
 test("success and error feedback share the transient Toast surface without a close button", async () => {
   const user = userEvent.setup();
   render(<FeedbackProvider><Harness /></FeedbackProvider>);
@@ -70,6 +89,25 @@ test("global information feedback uses the global viewport placement", async () 
   const info = await screen.findByText("Dialog opened");
   expect(info.closest("[data-tone]")).toHaveAttribute("data-tone", "info");
   expect(document.querySelector(".feedbackToastViewport")).toHaveAttribute("data-placement", "global");
+});
+
+test("configured default placement centers feedback globally", async () => {
+  const user = userEvent.setup();
+  render(<FeedbackProvider><DefaultPlacementHarness /></FeedbackProvider>);
+
+  await user.click(screen.getByRole("button", { name: "Notify" }));
+  expect(await screen.findByText("Configured global")).toBeVisible();
+  expect(document.querySelector(".feedbackToastViewport")).toHaveAttribute("data-placement", "global");
+});
+
+test("explicit placement overrides the configured feedback default", async () => {
+  const user = userEvent.setup();
+  render(<FeedbackProvider><DefaultPlacementHarness explicitDetail /></FeedbackProvider>);
+
+  await user.click(screen.getByRole("button", { name: "Notify" }));
+  const toast = await screen.findByText("Explicit detail");
+  expect(toast.closest("[data-tone]")).toHaveAttribute("data-placement", "detail");
+  expect(document.querySelector(".feedbackToastViewport")).toHaveAttribute("data-placement", "detail");
 });
 
 test("task-linked errors use configured labels and open the durable task", async () => {

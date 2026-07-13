@@ -656,7 +656,11 @@ export const uiCopy = {
       } as Record<string, readonly [string, string]>,
       hide: "Hide",
       close: "Close",
-      viewTasks: "View Tasks"
+      viewTasks: "View Tasks",
+      disableLogPopups: "Don't show again",
+      disableLogPopupsTitle: "Turn off log pop-up prompts?",
+      disableLogPopupsBody: "Future host tests and Codex install, update, and uninstall operations will continue in the background without opening this log pop-up. Detailed logs remain available in Tasks. You can turn the prompts back on in Settings.",
+      disableLogPopupsConfirm: "Turn off"
     },
     skills: {
       library: "Local skill library",
@@ -857,6 +861,7 @@ export const uiCopy = {
       platformAppearance: "Platform",
       font: "Font",
       sidebarCompletionIndicators: "Sidebar visual hints",
+      hostOperationLogPopups: "Log pop-up prompts",
       runtime: "Runtime",
       backend: "Backend",
       app: "App",
@@ -1410,7 +1415,11 @@ export const uiCopy = {
       } as Record<string, readonly [string, string]>,
       hide: "隐藏",
       close: "关闭",
-      viewTasks: "查看任务"
+      viewTasks: "查看任务",
+      disableLogPopups: "不再显示",
+      disableLogPopupsTitle: "关闭日志弹窗提示？",
+      disableLogPopupsBody: "后续主机测试以及 Codex 安装、更新、卸载仍会在后台运行，但不再自动打开日志弹窗；详细日志仍保留在“任务”中。你可以随时在“设置”中重新开启。",
+      disableLogPopupsConfirm: "关闭提示"
     },
     skills: {
       library: "本地技能库",
@@ -1611,6 +1620,7 @@ export const uiCopy = {
       platformAppearance: "平台",
       font: "字体",
       sidebarCompletionIndicators: "侧边栏视觉提示",
+      hostOperationLogPopups: "日志弹窗提示",
       runtime: "运行时",
       backend: "后端",
       app: "应用",
@@ -2381,6 +2391,8 @@ function App() {
   const [hostModalOpen, setHostModalOpen] = useState(false);
   const [newProfileRequest, setNewProfileRequest] = useState(0);
   const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
+  const [disableOperationLogPopupsOpen, setDisableOperationLogPopupsOpen] = useState(false);
+  const [disableOperationLogPopupsBusy, setDisableOperationLogPopupsBusy] = useState(false);
   const [codexUninstallConfirm, setCodexUninstallConfirm] = useState<CodexUninstallConfirmState | null>(null);
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [setupGuideStep, setSetupGuideStep] = useState<SetupGuideStep>("preferences");
@@ -2638,12 +2650,13 @@ function App() {
     return cleared;
   }, [copy.tasks, refreshTasks, setNotice]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     configureFeedback({
+      defaultPlacement: codexOperationModal ? "global" : "detail",
       labels: copy.feedback,
       onOpenTask: openTaskDetail
     });
-  }, [configureFeedback, copy.feedback, openTaskDetail]);
+  }, [codexOperationModal, configureFeedback, copy.feedback, openTaskDetail]);
 
   useEffect(() => {
     let active = true;
@@ -3029,7 +3042,8 @@ function App() {
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
       const hostAlias = target?.hostAlias ?? idOrAlias;
       const hostName = target?.name ?? hostAlias;
-      const requestId = showProgressModal ? `host-test-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
+      const shouldShowProgressModal = showProgressModal && settings.hostOperationLogPopups;
+      const requestId = shouldShowProgressModal ? `host-test-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
       setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
       if (requestId) {
@@ -3141,34 +3155,41 @@ function App() {
       const aliases = Array.from(new Set(sshConfigHosts.map((host) => host.alias).filter(Boolean)));
       if (aliases.length === 0) return { ok: true };
       const requestId = `batch-host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const showProgressModal = settings.hostOperationLogPopups;
       const targets = aliases.map((hostAlias) => ({
         hostAlias,
         hostName: hosts.find((host) => host.hostAlias === hostAlias)?.name ?? hostAlias
       }));
-      setCodexOperationModal(createOperationModalState(
-        requestId,
-        "host-test",
-        targets,
-        copy.codexOperation.batchTestStarted(aliases.length)
-      ));
+      if (showProgressModal) {
+        setCodexOperationModal(createOperationModalState(
+          requestId,
+          "host-test",
+          targets,
+          copy.codexOperation.batchTestStarted(aliases.length)
+        ));
+      }
       setHostBusy((current) => {
         const next = { ...current };
         for (const alias of aliases) next[alias] = "test";
         return next;
       });
       setHosts((current) => current.map((host) => aliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host));
-      await waitForNextFrame();
+      if (showProgressModal) await waitForNextFrame();
       try {
-        const result = await api.batchRemoteProbeCodex(aliases, 10000, requestId, (event) => {
+        const result = await api.batchRemoteProbeCodex(aliases, 10000, requestId, showProgressModal ? (event) => {
           setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
-        });
+        } : undefined);
         setLatestCodexVersion(result.latestCodexVersion);
         for (const item of result.results) {
           if (item.result) {
             setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(item.result!.task)], current));
-            setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.task.summary));
+            if (showProgressModal) {
+              setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.task.summary));
+            }
           } else {
-            setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
+            if (showProgressModal) {
+              setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
+            }
           }
         }
         const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
@@ -3179,20 +3200,24 @@ function App() {
         const message = ok
           ? copy.hosts.testedAllResult(successful, result.results.length)
           : copy.hosts.testedAllFailed(successful, result.results.length);
-        setCodexOperationModal((current) => current?.requestId === requestId
-          ? { ...current, status: aggregateOperationStatus(current.hosts), message }
-          : current);
+        if (showProgressModal) {
+          setCodexOperationModal((current) => current?.requestId === requestId
+            ? { ...current, status: aggregateOperationStatus(current.hosts), message }
+            : current);
+        }
         if (ok) setNotice(message);
         else setErrorNotice(message);
         return { ok };
       } catch (error) {
         const message = formatError(error);
-        setCodexOperationModal((current) => failRemainingOperationHosts(
-          current,
-          requestId,
-          message,
-          Boolean(taskIdForError(error))
-        ));
+        if (showProgressModal) {
+          setCodexOperationModal((current) => failRemainingOperationHosts(
+            current,
+            requestId,
+            message,
+            Boolean(taskIdForError(error))
+          ));
+        }
         setHosts((current) => current.map((host) => aliases.includes(host.hostAlias) ? { ...host, status: "unknown" } : host));
         throw error;
       } finally {
@@ -3222,7 +3247,8 @@ function App() {
       const target = hosts.find((host) => host.id === idOrAlias || host.hostAlias === idOrAlias);
       const hostAlias = target?.hostAlias ?? idOrAlias;
       const hostName = target?.name ?? hostAlias;
-      const showProgressModal = action === "install" || action === "update" || action === "uninstall";
+      const showProgressModal = settings.hostOperationLogPopups
+        && (action === "install" || action === "update" || action === "uninstall");
       const requestId = showProgressModal ? `codex-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
       setHostBusy((current) => ({ ...current, [hostAlias]: action }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
@@ -3301,29 +3327,36 @@ function App() {
       });
       setHosts((current) => current.map((host) => (uniqueAliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host)));
       const requestId = `batch-codex-update-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      setCodexOperationModal(createOperationModalState(
-        requestId,
-        "codex-update",
-        uniqueAliases.map((hostAlias) => ({
-          hostAlias,
-          hostName: hosts.find((host) => host.hostAlias === hostAlias)?.name ?? hostAlias
-        })),
-        copy.codexOperation.batchUpdateStarted(uniqueAliases.length)
-      ));
-      await waitForNextFrame();
+      const showProgressModal = settings.hostOperationLogPopups;
+      if (showProgressModal) {
+        setCodexOperationModal(createOperationModalState(
+          requestId,
+          "codex-update",
+          uniqueAliases.map((hostAlias) => ({
+            hostAlias,
+            hostName: hosts.find((host) => host.hostAlias === hostAlias)?.name ?? hostAlias
+          })),
+          copy.codexOperation.batchUpdateStarted(uniqueAliases.length)
+        ));
+        await waitForNextFrame();
+      }
 
       try {
-        const result = await api.batchRemoteUpdateCodex(uniqueAliases, 120000, requestId, (event) => {
+        const result = await api.batchRemoteUpdateCodex(uniqueAliases, 120000, requestId, showProgressModal ? (event) => {
           setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
-        });
+        } : undefined);
         const failedAliases: string[] = [];
         for (const item of result.results) {
           if (item.result) {
             applyRemoteCodexResult(item.result, "update");
-            setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.message));
+            if (showProgressModal) {
+              setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.message));
+            }
           } else {
             failedAliases.push(item.hostAlias);
-            setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
+            if (showProgressModal) {
+              setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
+            }
           }
         }
         if (failedAliases.length > 0) {
@@ -3331,21 +3364,25 @@ function App() {
         }
         const successCount = result.results.filter((item) => item.ok).length;
         const message = copy.hosts.updatedOutdatedCodex(successCount, uniqueAliases.length);
-        setCodexOperationModal((current) => current?.requestId === requestId
-          ? { ...current, status: aggregateOperationStatus(current.hosts), message }
-          : current);
+        if (showProgressModal) {
+          setCodexOperationModal((current) => current?.requestId === requestId
+            ? { ...current, status: aggregateOperationStatus(current.hosts), message }
+            : current);
+        }
         if (successCount === uniqueAliases.length) setNotice(message);
         else setErrorNotice(message);
         void refreshLatestCodex(true);
         return { ok: successCount === uniqueAliases.length };
       } catch (error) {
         const message = formatError(error);
-        setCodexOperationModal((current) => failRemainingOperationHosts(
-          current,
-          requestId,
-          message,
-          Boolean(taskIdForError(error))
-        ));
+        if (showProgressModal) {
+          setCodexOperationModal((current) => failRemainingOperationHosts(
+            current,
+            requestId,
+            message,
+            Boolean(taskIdForError(error))
+          ));
+        }
         setHosts((current) => current.map((host) => uniqueAliases.includes(host.hostAlias) ? { ...host, status: "unknown" } : host));
         throw error;
       } finally {
@@ -3730,6 +3767,19 @@ function App() {
     }
   };
 
+  const disableHostOperationLogPopups = async () => {
+    if (disableOperationLogPopupsBusy) return;
+    setDisableOperationLogPopupsBusy(true);
+    try {
+      const saved = await persistSettings({ ...settings, hostOperationLogPopups: false });
+      if (!saved) return;
+      setDisableOperationLogPopupsOpen(false);
+      setCodexOperationModal(null);
+    } finally {
+      setDisableOperationLogPopupsBusy(false);
+    }
+  };
+
   const retrySettingsSave = async () => pendingSettings ? persistSettings(pendingSettings) : true;
 
   const handleChooseCloseButtonBehavior = async (behavior: Exclude<CloseButtonBehavior, "ask">) => {
@@ -3995,6 +4045,7 @@ function App() {
             onCloseButtonBehaviorChange={(closeButtonBehavior) => persistSettings({ ...settings, closeButtonBehavior })}
             onCopyPublicKey={handleCopyPublicKey}
             onFontPresetChange={(fontPreset) => persistSettings({ ...settings, fontPreset })}
+            onHostOperationLogPopupsChange={(hostOperationLogPopups) => persistSettings({ ...settings, hostOperationLogPopups })}
             onNetworkProxyModeChange={(networkProxyMode) => persistSettings({ ...settings, networkProxyMode })}
             onNetworkProxyManualRequest={() => setNetworkProxyManualOpen(true)}
             onPlatformAppearanceChange={(platformAppearance) => persistSettings({ ...settings, platformAppearance })}
@@ -4125,12 +4176,26 @@ function App() {
           resolveStep={(step) => operationStepPresentation(copy, step)}
           title={operationModalTitle(copy, codexOperationModal.action, codexOperationModal.hosts.length)}
           onClose={() => setCodexOperationModal(null)}
+          onDisableLogPopups={() => setDisableOperationLogPopupsOpen(true)}
           onViewTasks={codexOperationModal.hasTasks ? () => {
             setActiveSection("tasks");
             setCodexOperationModal(null);
           } : undefined}
         />
       ) : null}
+      <ConfirmDialog
+        busy={disableOperationLogPopupsBusy}
+        copy={{
+          title: copy.codexOperation.disableLogPopupsTitle,
+          body: copy.codexOperation.disableLogPopupsBody,
+          cancel: copy.hosts.cancel,
+          confirm: copy.codexOperation.disableLogPopupsConfirm
+        }}
+        danger={false}
+        open={disableOperationLogPopupsOpen}
+        onCancel={() => setDisableOperationLogPopupsOpen(false)}
+        onConfirm={() => void disableHostOperationLogPopups()}
+      />
       {appUpdateFailureTask ? (
         <TaskLogModal
           copy={copy}
@@ -8457,6 +8522,7 @@ function SettingsView({
   onCloseButtonBehaviorChange,
   onCopyPublicKey,
   onFontPresetChange,
+  onHostOperationLogPopupsChange,
   onNetworkProxyModeChange,
   onNetworkProxyManualRequest,
   onPlatformAppearanceChange,
@@ -8478,6 +8544,7 @@ function SettingsView({
   onCloseButtonBehaviorChange: (behavior: CloseButtonBehavior) => void;
   onCopyPublicKey: (publicKey: string) => Promise<boolean>;
   onFontPresetChange: (fontPreset: FontPreset) => void;
+  onHostOperationLogPopupsChange: (enabled: boolean) => void;
   onNetworkProxyModeChange: (mode: NetworkProxyMode) => void;
   onNetworkProxyManualRequest: () => void;
   onPlatformAppearanceChange: (platformAppearance: PlatformAppearance) => void;
@@ -8582,6 +8649,22 @@ function SettingsView({
               disabled={settingsSaving}
               type="button"
               onClick={() => onSidebarCompletionIndicatorsChange(!settings.sidebarCompletionIndicators)}
+            >
+              <span className="pillToggleThumb" aria-hidden="true" />
+            </button>
+          </div>
+
+          <div className="settingControlRow">
+            <span>{copy.settings.hostOperationLogPopups}</span>
+            <button
+              className="pillToggle"
+              data-enabled={settings.hostOperationLogPopups}
+              role="switch"
+              aria-checked={settings.hostOperationLogPopups}
+              aria-label={copy.settings.hostOperationLogPopups}
+              disabled={settingsSaving}
+              type="button"
+              onClick={() => onHostOperationLogPopupsChange(!settings.hostOperationLogPopups)}
             >
               <span className="pillToggleThumb" aria-hidden="true" />
             </button>
@@ -9259,10 +9342,13 @@ function codexOperationKind(action: RemoteCodexAction): HostOperationKind {
 function operationProgressCopy(copy: UICopy): OperationProgressCopy {
   return {
     close: copy.codexOperation.close,
+    disableLogPopups: copy.codexOperation.disableLogPopups,
     hide: copy.codexOperation.hide,
     viewTasks: copy.codexOperation.viewTasks,
     hostSelector: copy.codexOperation.hostSelector,
     progress: copy.codexOperation.progress,
+    latestLog: copy.codexOperation.latestLog,
+    logLevel: copy.status.log,
     details: copy.codexOperation.technicalDetails,
     noLogs: copy.codexOperation.noLogs,
     noOutput: copy.tasks.noOutput,

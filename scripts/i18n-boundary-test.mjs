@@ -148,6 +148,11 @@ for (const key of [
   "batchTestStarted",
   "batchUpdateStarted",
   "technicalDetails",
+  "latestLog",
+  "disableLogPopups",
+  "disableLogPopupsTitle",
+  "disableLogPopupsBody",
+  "disableLogPopupsConfirm",
   "hostSelector",
   "skippedSummary",
   "fallbackFailedSummary",
@@ -177,6 +182,27 @@ for (const stepId of [
 ]) {
   if (!appSource.includes(`${JSON.stringify(stepId)}:`) && !appSource.includes(`${stepId}:`)) {
     throw new Error(`Host-operation step copy is missing: ${stepId}`);
+  }
+}
+for (const token of [
+  'latestLog: "Latest log"',
+  'latestLog: "简要日志"',
+  'disableLogPopups: "Don\'t show again"',
+  'disableLogPopups: "不再显示"',
+  'hostOperationLogPopups: "Log pop-up prompts"',
+  'hostOperationLogPopups: "日志弹窗提示"'
+]) {
+  if (!appSource.includes(token)) {
+    throw new Error(`Log pop-up localization contract is incomplete: ${token}`);
+  }
+}
+for (const token of [
+  "disableLogPopups: copy.codexOperation.disableLogPopups",
+  "latestLog: copy.codexOperation.latestLog",
+  "logLevel: copy.status.log"
+]) {
+  if (!appSource.includes(token)) {
+    throw new Error(`Operation-progress copy mapping is incomplete: ${token}`);
   }
 }
 if (/<(?:td|strong)>\{task\.summary\}<\//u.test(appSource)) {

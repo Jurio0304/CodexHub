@@ -18,14 +18,17 @@ CodexHub uses one feedback path so a completed action is visible, keyboard-acces
 
 `FeedbackProvider` deduplicates by placement, tone, task id, and message. Every Toast starts closing within five seconds. Its one-second entrance moves a short distance upward while changing from blurred to sharp; its one-second exit reverses that motion. Pointer, keyboard, touch, wheel, or scroll input starts the exit immediately. There is no close icon; an optional task/retry action runs first and then closes the Toast.
 
-The four semantic tones use theme-aware pale surfaces, stronger borders, and an elevated shadow: blue for information, yellow for warning, green for success, and red for failure. `detail` feedback is centered over the content pane. `global` feedback is centered over the full app viewport for dialogs such as Add Server, New API config, and skill download.
+The four semantic tones use theme-aware pale surfaces, stronger borders, and an elevated shadow: blue for information, yellow for warning, green for success, and red for failure. `detail` feedback is centered over the content pane, while `global` feedback is centered over the full app viewport. Host-test and Codex-maintenance completion Toasts switch to `global` while their live log modal is visible and return to `detail` when no such modal exists. Dialog-driven actions such as Add Server, New API config, and skill download may also request `global` explicitly.
+
+The persisted `hostOperationLogPopups` preference controls only the automatic live log modal for single or batch host tests and Codex install, update, uninstall, or batch update. The modal header's **Don't show again** action opens a separate confirmation before saving the preference; the same pill switch appears immediately below **Sidebar visual hints** in Settings. Turning the preference off does not cancel, pause, or discard an operation, its redacted logs, or its completion Toast, and Settings can enable it again later.
 
 ## Task Surfaces
 
 - The Tasks page reads the authoritative retained SQLite history and never displays more than 100 task records.
 - The complete task list keeps at most the latest 100 task records. Automatic retention and the Tasks-page **Clear all** action first export complete task/log records as a JSON archive, move that file to the operating system recycle bin, and only then delete the completed SQLite rows. Running and queued tasks remain active.
 - Resource-monitor sampling writes one task for the first page entry or a manual refresh. Scheduled auto-refresh remains taskless so polling cannot displace user-initiated history.
-- A failed task opens only `error` detail rows automatically. Other log levels stay collapsed until the user expands them.
+- Live progress and Tasks history share the same two-level disclosure. Every step card, including failed steps, starts collapsed. Opening a step reveals concise level-and-message rows; opening one of those rows then reveals command, exit code, duration, timeout state, stdout, and stderr.
+- Disabling live log pop-ups never removes stored steps or logs. The Tasks page remains the authoritative retained history and can reopen the same step cards after the operation finishes.
 - `task-updated` is a notification event. Event-delivery failure is logged with redaction; SQLite remains authoritative.
 - SSH bootstrap and remote Codex progress messages are redacted and appended to SQLite before completion. Final task persistence merges them instead of replacing the running log.
 - Sidebar success and failure indicators share one transient state and clear when the owning page is entered or receives the next interaction.

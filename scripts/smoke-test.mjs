@@ -242,6 +242,7 @@ for (const size of [16, 24, 32, 48, 64, 128, 256]) {
 
 const research = read("docs/research.md");
 const architecture = read("docs/architecture.md");
+const feedbackDocs = read("docs/feedback-error-handling.md");
 const mvp = read("docs/mvp-scope.md");
 const limitations = read("docs/known-limitations.md");
 const linuxSupport = read("docs/linux-support.md");
@@ -306,6 +307,10 @@ const requiredText = [
   [architecture, "Task schema v4"],
   [architecture, "host-operation-progress"],
   [architecture, "fixed six-host sliding pool"],
+  [architecture, "two disclosure levels"],
+  [architecture, "hostOperationLogPopups"],
+  [feedbackDocs, "does not cancel, pause, or discard"],
+  [feedbackDocs, "Tasks page remains the authoritative retained history"],
   [mvp, "Mandatory remote Codex wrapper"],
   [mvp, "Window 5: profile/API config"],
   [mvp, "Window 6: single-card local skill library"],
@@ -431,6 +436,12 @@ const linuxUpdaterFeedScript = read("scripts/create-linux-updater-feed.mjs");
 const macosUpdaterFeedScript = read("scripts/create-macos-updater-feed.mjs");
 for (const token of ["sidebar_completion_indicators", "sidebar_completion_indicators: true", "#[serde(default = \"default_true\")]"]) {
   if (!rustBackend.includes(token)) fail(`missing sidebar completion settings Rust token: ${token}`);
+}
+if (!/#\[serde\(default = "default_true"\)\]\s*pub\(crate\) host_operation_log_popups: bool/u.test(rustBackend)) {
+  fail("host-operation log pop-up setting must default to enabled when legacy settings omit it");
+}
+if (!rustBackend.includes("host_operation_log_popups: true")) {
+  fail("default Rust settings must enable host-operation log pop-ups");
 }
 for (const token of [
   "CODEX_NATIVE_PLATFORM_SCRIPT",
@@ -1254,12 +1265,52 @@ for (const token of [
   'role="tablist"',
   'role="tab"',
   "aria-selected={selected}",
-  "hosts.some((host) => host.hostAlias === selectedHostAlias)"
+  "hosts.some((host) => host.hostAlias === selectedHostAlias)",
+  "copy.latestLog",
+  "copy.logLevel[log.level]",
+  '<details className="taskLogFlowRow operationStepLogEntry"',
+  '<summary className="codexOperationLogRow"',
+  'className="taskLogFlowDetails"',
+  "log.command",
+  "log.exitCode",
+  "log.durationMs",
+  "log.stdout",
+  "log.stderr"
 ]) {
   if (!operationProgressSource.includes(token)) fail(`missing shared operation progress behavior: ${token}`);
 }
+if (!/\{expanded \? \([\s\S]*?<details className="taskLogFlowRow operationStepLogEntry"[\s\S]*?<summary className="codexOperationLogRow"[\s\S]*?\{log\.message\}[\s\S]*?<div className="taskLogFlowDetails">/u.test(operationProgressSource)) {
+  fail("operation step cards must reveal concise log rows before each row reveals full command/output details");
+}
+if (operationProgressSource.includes("operationStepChevron")) {
+  fail("operation step cards must not render the removed right-side chevron");
+}
 if (operationProgressSource.includes("useState(step.status") || operationProgressSource.includes('step.status === "failed" && expanded')) {
   fail("failed operation steps must stay collapsed until the user expands them");
+}
+for (const token of [
+  "onDisableLogPopups",
+  "copy.disableLogPopups",
+  "operationProgressHeaderActions",
+  "operationProgressDisableButton"
+]) {
+  if (!operationProgressSource.includes(token)) fail(`missing operation log pop-up header control: ${token}`);
+}
+for (const token of [
+  "showProgressModal && settings.hostOperationLogPopups",
+  'action === "install" || action === "update" || action === "uninstall"',
+  "settings.hostOperationLogPopups;",
+  "setDisableOperationLogPopupsOpen(true)",
+  "persistSettings({ ...settings, hostOperationLogPopups: false })",
+  "if (!saved) return;",
+  "setCodexOperationModal(null)",
+  'defaultPlacement: codexOperationModal ? "global" : "detail"'
+]) {
+  if (!app.includes(token)) fail(`missing host-operation log pop-up preference behavior: ${token}`);
+}
+const batchProgressPreferenceCount = (app.match(/const showProgressModal = settings\.hostOperationLogPopups;/gu) ?? []).length;
+if (batchProgressPreferenceCount < 2) {
+  fail("batch host test and batch Codex update must both honor the log pop-up preference");
 }
 if (app.includes("profileCard")) fail("Profiles page should use a compact table list instead of profile cards");
 if (!app.includes("function ProfilesView(")) fail("Profiles page should be implemented");
@@ -1779,7 +1830,7 @@ const settings = read("src/settings.ts");
 for (const fontPreset of ["English", "简体中文", "zh-cn"]) {
   if (!settings.includes(fontPreset)) fail(`missing font preset: ${fontPreset}`);
 }
-for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "networkProxyMode", "networkProxyMode: \"auto\"", "networkProxyUrl", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
+for (const token of ["setupGuideDismissed", "setupGuideDismissed: false", "platformAppearance", "platformAppearance: \"auto\"", "networkProxyMode", "networkProxyMode: \"auto\"", "networkProxyUrl", "sidebarCompletionIndicators", "sidebarCompletionIndicators: true", "candidate.sidebarCompletionIndicators !== false", "hostOperationLogPopups", "hostOperationLogPopups: true", "candidate.hostOperationLogPopups !== false", "resolvePlatformAppearance", "applyPlatformAppearance"]) {
   if (!settings.includes(token)) fail(`missing settings token: ${token}`);
 }
 if (!settings.includes('isWindows(platform) ? "windows" : "macos"')) {
@@ -1807,7 +1858,7 @@ for (const token of [".modalFrame.portalModalContent", "position: fixed", "trans
   if (!styles.includes(token)) fail(`missing centered AlertDialog portal style: ${token}`);
 }
 const feedback = read("src/ui/feedback.tsx");
-for (const token of ["duration={5000}", "dismissForInteraction", 'data-tone={item.tone}', "feedbackToastActions", 'FeedbackPlacement = "detail" | "global"', 'data-placement={viewportPlacement}']) {
+for (const token of ["duration={5000}", "dismissForInteraction", 'data-tone={item.tone}', "feedbackToastActions", 'FeedbackPlacement = "detail" | "global"', 'data-placement={viewportPlacement}', "defaultPlacement?: FeedbackPlacement", "configurationRef.current.defaultPlacement"]) {
   if (!feedback.includes(token)) fail(`missing transient feedback token: ${token}`);
 }
 if (feedback.includes("<Toast.Close") || feedback.includes("persistentFeedbackRegion")) {
@@ -1869,6 +1920,19 @@ if (/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\
 }
 if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.sidebarCompletionIndicators}<\/span>/.test(app)) {
   fail("appearance card should place a divider above the sidebar visual hints row");
+}
+const sidebarVisualHintRow = app.indexOf("<span>{copy.settings.sidebarCompletionIndicators}</span>");
+const logPopupHintRow = app.indexOf("<span>{copy.settings.hostOperationLogPopups}</span>");
+if (sidebarVisualHintRow < 0 || logPopupHintRow <= sidebarVisualHintRow) {
+  fail("appearance settings must place the log pop-up pill directly after sidebar visual hints");
+}
+for (const token of [
+  "onHostOperationLogPopupsChange",
+  "data-enabled={settings.hostOperationLogPopups}",
+  "aria-checked={settings.hostOperationLogPopups}",
+  "onHostOperationLogPopupsChange(!settings.hostOperationLogPopups)"
+]) {
+  if (!app.includes(token)) fail(`missing host-operation log pop-up Settings pill behavior: ${token}`);
 }
 if (!/className="settingControlRow" data-divider="true">\s*<span>{copy\.settings\.closeButtonBehavior}<\/span>/.test(app)) {
   fail("other settings card should place a divider above the close button behavior row");
@@ -1976,6 +2040,17 @@ for (const token of [
   '.operationStatusIcon[data-status="failed"]'
 ]) {
   if (!styles.includes(token)) fail(`missing shared operation progress style: ${token}`);
+}
+const operationHostSelectorStyle = styles.match(/\.operationHostSelector\s*\{[^}]*\}/u)?.[0] ?? "";
+for (const token of ["display: flex", "flex-wrap: wrap"]) {
+  if (!operationHostSelectorStyle.includes(token)) fail(`batch host selector must wrap all host pills: ${token}`);
+}
+if (styles.includes("operationStepChevron")) {
+  fail("removed operation step chevron styles must not remain");
+}
+const operationHeaderCloseStyle = styles.match(/\.operationProgressHeaderActions \.modalCloseButton\s*\{[^}]*\}/u)?.[0] ?? "";
+if (!operationHeaderCloseStyle.includes("position: static")) {
+  fail("operation progress close button must stay inset inside the header action group");
 }
 for (const token of ["taskLogModal", "taskLogModalMeta", "taskDetailsCol", "taskTableWrap", "tasksTable", "copyPublicKeyButton", 'data-success="true"', "max-width: var(--app-content-max)"]) {
   if (!styles.includes(token)) fail(`missing simplified UI style token: ${token}`);

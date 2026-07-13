@@ -38,6 +38,7 @@ export const defaultSettings: AppSettings = {
   resourceMonitorHostOrder: [],
   resourceMonitorRefreshSeconds: 60,
   sidebarCompletionIndicators: true,
+  hostOperationLogPopups: true,
   setupGuideDismissed: false
 };
 
@@ -104,6 +105,7 @@ export function normalizeSettings(value: unknown): AppSettings {
     resourceMonitorHostOrder: normalizeStringList(candidate.resourceMonitorHostOrder),
     resourceMonitorRefreshSeconds: normalizeResourceMonitorRefreshSeconds(candidate.resourceMonitorRefreshSeconds),
     sidebarCompletionIndicators: candidate.sidebarCompletionIndicators !== false,
+    hostOperationLogPopups: candidate.hostOperationLogPopups !== false,
     setupGuideDismissed: candidate.setupGuideDismissed === true
   };
 }

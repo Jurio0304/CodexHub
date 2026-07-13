@@ -10,12 +10,14 @@ export type ConfirmDialogCopy = {
 export function ConfirmDialog({
   busy = false,
   copy,
+  danger = true,
   open,
   onCancel,
   onConfirm
 }: {
   busy?: boolean;
   copy: ConfirmDialogCopy;
+  danger?: boolean;
   open: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -39,7 +41,7 @@ export function ConfirmDialog({
       </div>
       <div className="modalActions">
         <button className="secondaryButton" data-alert-cancel disabled={busy} type="button" onClick={onCancel}>{copy.cancel}</button>
-        <button className="primaryButton dangerButton" disabled={busy} type="button" onClick={onConfirm}>{copy.confirm}</button>
+        <button className={danger ? "primaryButton dangerButton" : "primaryButton"} disabled={busy} type="button" onClick={onConfirm}>{copy.confirm}</button>
       </div>
     </AlertModalFrame>
   );

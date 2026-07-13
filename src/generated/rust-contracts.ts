@@ -20,7 +20,7 @@ export type CloseButtonBehaviorDto = "ask" | "exit" | "minimize-to-tray";
 
 export type NetworkProxyModeDto = "auto" | "direct" | "manual";
 
-export type AppSettingsDto = { theme: ThemeChoiceDto, fontPreset: "english" | "zh-cn", platformAppearance: PlatformAppearanceDto, closeButtonBehavior: CloseButtonBehaviorDto, networkProxyMode: NetworkProxyModeDto, networkProxyUrl: string, resourceMonitorAutoRefresh: boolean, resourceMonitorHostOrder: Array<string>, resourceMonitorRefreshSeconds: number, sidebarCompletionIndicators: boolean, setupGuideDismissed: boolean, };
+export type AppSettingsDto = { theme: ThemeChoiceDto, fontPreset: "english" | "zh-cn", platformAppearance: PlatformAppearanceDto, closeButtonBehavior: CloseButtonBehaviorDto, networkProxyMode: NetworkProxyModeDto, networkProxyUrl: string, resourceMonitorAutoRefresh: boolean, resourceMonitorHostOrder: Array<string>, resourceMonitorRefreshSeconds: number, sidebarCompletionIndicators: boolean, hostOperationLogPopups: boolean, setupGuideDismissed: boolean, };
 
 export type SettingsSaveResultDto = { settings: AppSettingsDto, changed: boolean, backupPath: string | null, };
 

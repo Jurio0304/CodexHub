@@ -20,7 +20,10 @@ const task: TaskRun = {
     taskRunId: "task-1",
     level: "info",
     timestamp: "2026-07-11T10:00:01+08:00",
-    message: "Saved"
+    message: "Saved",
+    command: "save_settings",
+    stdout: "saved settings",
+    stderr: ""
   }]
 };
 
@@ -51,9 +54,15 @@ test("task page header clears all completed history while the detail dialog has 
   const detail = await screen.findByRole("dialog", { name: "Save settings" });
   expect(within(detail).queryByRole("button", { name: "Clear all" })).not.toBeInTheDocument();
   expect(within(detail).getByText("Historical details")).toBeInTheDocument();
-  expect(within(detail).queryByText("Saved", { selector: ".operationStepLog p" })).not.toBeInTheDocument();
+  expect(within(detail).queryByText("Saved", { selector: ".codexOperationLogRow span" })).not.toBeInTheDocument();
   await user.click(within(detail).getByRole("button", { name: /Historical details/ }));
-  expect(within(detail).getByText("Saved", { selector: ".operationStepLog p" })).toBeInTheDocument();
+  const summary = within(detail).getByText("Saved", { selector: ".codexOperationLogRow span" }).closest("summary");
+  expect(summary).not.toBeNull();
+  const logDetails = summary!.closest("details");
+  expect(logDetails).not.toHaveAttribute("open");
+  await user.click(summary!);
+  expect(logDetails).toHaveAttribute("open");
+  expect(within(detail).getByText("save_settings")).toBeInTheDocument();
   await user.click(within(detail).getByRole("button", { name: "Close" }));
 
   await user.click(clearButton);

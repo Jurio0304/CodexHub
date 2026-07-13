@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
-import type { HostOperationKind, TaskLog, TaskRun, TaskStep, TaskStepStatus } from "../models";
+import type { HostOperationKind, TaskLog, TaskLogLevel, TaskRun, TaskStep, TaskStepStatus } from "../models";
 import { ModalFrame } from "./ModalFrame";
 
 export type OperationOverallStatus = "running" | "success" | "failed" | "partial";
@@ -19,8 +19,10 @@ export type OperationProgressCopy = {
   close: string;
   hide: string;
   viewTasks: string;
+  disableLogPopups: string;
   hostSelector: string;
   progress: string;
+  latestLog: string;
   details: string;
   noLogs: string;
   noOutput: string;
@@ -32,6 +34,7 @@ export type OperationProgressCopy = {
   stderr: string;
   yes: string;
   no: string;
+  logLevel: Record<TaskLogLevel, string>;
   status: Record<TaskStepStatus, string>;
   overallStatus: Record<OperationOverallStatus, string>;
 };
@@ -152,6 +155,7 @@ export function OperationStepCard({
   const [expanded, setExpanded] = useState(false);
   const contentId = `operation-step-${safeDomId(step.taskRunId)}-${safeDomId(step.stepId)}`;
 
+  // 步骤卡先展示精简日志，单条日志再按需展开完整诊断。
   return (
     <section className="operationStepCard" data-status={step.status}>
       <button
@@ -168,30 +172,39 @@ export function OperationStepCard({
         </span>
         <span className="operationStepState">{copy.status[step.status]}</span>
         <OperationStatusIcon status={step.status} />
-        <span className="operationStepChevron" aria-hidden="true">⌄</span>
       </button>
       {expanded ? (
         <div className="operationStepDetails" id={contentId}>
-          <span className="operationStepDetailsTitle">{copy.details}</span>
-          {logs.length > 0 ? logs.map((log) => (
-            <div className="operationStepLog" data-level={log.level} key={log.id}>
-              <p>{log.message}</p>
-              <div className="operationStepMetaGrid">
-                <OperationDetail label={copy.command} value={log.command ?? "-"} code />
-                <OperationDetail label={copy.exitCode} value={log.exitCode ?? "-"} code />
-                <OperationDetail label={copy.duration} value={typeof log.durationMs === "number" ? `${log.durationMs} ms` : "-"} code />
-                <OperationDetail
-                  label={copy.timedOut}
-                  value={typeof log.timedOut === "boolean" ? (log.timedOut ? copy.yes : copy.no) : "-"}
-                  code
-                />
-              </div>
-              <div className="operationStepStreamGrid">
-                <OperationDetail label={copy.stdout} value={log.stdout || copy.noOutput} pre />
-                <OperationDetail label={copy.stderr} value={log.stderr || copy.noOutput} pre />
-              </div>
+          <span className="operationStepDetailsTitle">{copy.latestLog}</span>
+          {logs.length > 0 ? (
+            <div className="codexOperationLogRows taskLogFlowRows operationStepLogRows">
+              {logs.map((log) => (
+                <details className="taskLogFlowRow operationStepLogEntry" data-level={log.level} key={log.id}>
+                  <summary className="codexOperationLogRow" data-level={log.level}>
+                    <strong>{copy.logLevel[log.level]}</strong>
+                    <span>{log.message}</span>
+                  </summary>
+                  <div className="taskLogFlowDetails">
+                    <span className="operationStepDetailsTitle">{copy.details}</span>
+                    <div className="taskLogMetaGrid">
+                      <OperationDetail label={copy.command} value={log.command ?? "-"} code />
+                      <OperationDetail label={copy.exitCode} value={log.exitCode ?? "-"} code />
+                      <OperationDetail label={copy.duration} value={typeof log.durationMs === "number" ? `${log.durationMs} ms` : "-"} code />
+                      <OperationDetail
+                        label={copy.timedOut}
+                        value={typeof log.timedOut === "boolean" ? (log.timedOut ? copy.yes : copy.no) : "-"}
+                        code
+                      />
+                    </div>
+                    <div className="taskLogStreamGrid">
+                      <OperationDetail label={copy.stdout} value={log.stdout || copy.noOutput} pre />
+                      <OperationDetail label={copy.stderr} value={log.stderr || copy.noOutput} pre />
+                    </div>
+                  </div>
+                </details>
+              ))}
             </div>
-          )) : <p className="operationStepEmpty">{copy.noLogs}</p>}
+          ) : <p className="operationStepEmpty">{copy.noLogs}</p>}
         </div>
       ) : null}
     </section>
@@ -298,6 +311,7 @@ export function OperationProgressModal({
   hosts,
   message,
   onClose,
+  onDisableLogPopups,
   onViewTasks,
   overallStatus,
   resolveStep,
@@ -308,6 +322,7 @@ export function OperationProgressModal({
   hosts: OperationProgressHost[];
   message: string;
   onClose: () => void;
+  onDisableLogPopups?: () => void;
   onViewTasks?: () => void;
   overallStatus: OperationOverallStatus;
   resolveStep: (step: TaskStep) => OperationStepPresentation;
@@ -318,11 +333,18 @@ export function OperationProgressModal({
     <div className="modalBackdrop" role="presentation">
       <ModalFrame className="codexOperationModal operationProgressModal" titleId={titleId}>
         <header className="operationProgressHeader">
-          <div>
+          <div className="operationProgressHeaderTitle">
             <h2 id={titleId}>{title}</h2>
             <span className="operationOverallStatus" data-status={overallStatus}>{copy.overallStatus[overallStatus]}</span>
           </div>
-          <button className="modalCloseButton" type="button" aria-label={copy.close} onClick={onClose}>×</button>
+          <div className="operationProgressHeaderActions">
+            {onDisableLogPopups ? (
+              <button className="miniButton operationProgressDisableButton" type="button" onClick={onDisableLogPopups}>
+                {copy.disableLogPopups}
+              </button>
+            ) : null}
+            <button className="modalCloseButton" type="button" aria-label={copy.close} onClick={onClose}>×</button>
+          </div>
         </header>
         <p aria-live="polite" className="operationProgressMessage">{message}</p>
         <OperationProgressPanel copy={copy} hosts={hosts} resolveStep={resolveStep} />

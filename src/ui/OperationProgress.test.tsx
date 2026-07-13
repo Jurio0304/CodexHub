@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { TaskLog, TaskStep, TaskStepStatus } from "../models";
 import {
   OperationProgressModal,
@@ -18,8 +18,10 @@ const copy: OperationProgressCopy = {
   close: "Close",
   hide: "Hide",
   viewTasks: "View Tasks",
+  disableLogPopups: "Don't show again",
   hostSelector: "Hosts",
   progress: "Progress",
+  latestLog: "Latest log",
   details: "Technical details",
   noLogs: "No details yet.",
   noOutput: "(no output)",
@@ -31,6 +33,11 @@ const copy: OperationProgressCopy = {
   stderr: "stderr",
   yes: "Yes",
   no: "No",
+  logLevel: {
+    info: "Info",
+    warn: "Warning",
+    error: "Error"
+  },
   status: {
     pending: "Waiting",
     running: "Running",
@@ -96,6 +103,7 @@ test("step cards show all four visual states and stay collapsed, including failu
   expect(document.querySelectorAll('.operationStatusIcon[data-status="success"]')).toHaveLength(1);
   expect(document.querySelectorAll('.operationStatusIcon[data-status="failed"]')).toHaveLength(1);
   expect(document.querySelectorAll('.operationStatusIcon[data-status="skipped"]')).toHaveLength(1);
+  expect(document.querySelector(".operationStepChevron")).not.toBeInTheDocument();
   expect(screen.queryByRole("img")).not.toBeInTheDocument();
   expect(screen.queryByText("install-codex")).not.toBeInTheDocument();
   const failedButton = screen.getByRole("button", { name: /failed.*failed summary.*failed/i });
@@ -104,6 +112,14 @@ test("step cards show all four visual states and stay collapsed, including failu
     .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
   await user.click(failedButton);
+  expect(screen.getByText("Latest log")).toBeInTheDocument();
+  const logSummary = screen.getByText("Official installer failed; trying the mirror.").closest("summary");
+  const logDetails = logSummary?.closest("details");
+  expect(logSummary).not.toBeNull();
+  expect(logDetails).not.toHaveAttribute("open");
+
+  await user.click(logSummary!);
+  expect(logDetails).toHaveAttribute("open");
   expect(screen.getByText("install-codex")).toBeInTheDocument();
   expect(screen.getByText("network unavailable")).toBeInTheDocument();
   expect(screen.getByText("-", { selector: "code" })).toBeInTheDocument();
@@ -135,10 +151,18 @@ test("panel supports multiple running steps and keeps the selected host stable",
       status: "failed",
       steps: [step("failed", "ssh")],
       logs: []
-    }
+    },
+    ...Array.from({ length: 5 }, (_, index): OperationProgressHost => ({
+      hostAlias: `host-${index + 3}`,
+      hostName: `Host ${index + 3}`,
+      status: "pending",
+      steps: [step("pending", `waiting-${index + 3}`)],
+      logs: []
+    }))
   ];
   const { rerender } = render(<OperationProgressPanel copy={copy} hosts={hosts} resolveStep={resolveStep} />);
   expect(document.querySelectorAll('.operationStatusIcon[data-status="running"]')).toHaveLength(2);
+  expect(screen.getAllByRole("tab")).toHaveLength(7);
 
   const alphaTab = screen.getByRole("tab", { name: "Alpha. Running. 0/2" });
   const betaTab = screen.getByRole("tab", { name: "Beta. Failed. 1/1" });
@@ -152,6 +176,8 @@ test("panel supports multiple running steps and keeps the selected host stable",
   await user.keyboard("{ArrowLeft}");
   expect(screen.getByRole("tab", { name: "Alpha. Running. 0/2" })).toHaveAttribute("aria-selected", "true");
   await user.keyboard("{End}");
+  expect(screen.getByRole("tab", { name: "Host 7. Waiting. 0/1" })).toHaveAttribute("aria-selected", "true");
+  await user.click(betaTab);
   expect(screen.getByRole("tab", { name: "Beta. Failed. 1/1" })).toHaveAttribute("aria-selected", "true");
 
   rerender(
@@ -188,6 +214,37 @@ test("overall running state is controlled independently from successful steps", 
   expect(within(dialog).getByText("Running", { selector: ".operationOverallStatus" })).toBeInTheDocument();
   expect(within(dialog).getByText("Completed", { selector: ".operationStepState" })).toBeInTheDocument();
   expect(within(dialog).getByRole("button", { name: "Hide" })).toBeInTheDocument();
+  expect(within(dialog).queryByRole("button", { name: "Don't show again" })).not.toBeInTheDocument();
+});
+
+test("progress modal keeps the disable action left of the inset close control", async () => {
+  const user = userEvent.setup();
+  const onDisableLogPopups = vi.fn();
+  render(
+    <OperationProgressModal
+      copy={copy}
+      hosts={[{
+        hostAlias: "alpha",
+        hostName: "Alpha",
+        status: "success",
+        steps: [step("success", "preflight")],
+        logs: []
+      }]}
+      message="Finished."
+      overallStatus="success"
+      resolveStep={resolveStep}
+      title="Codex maintenance"
+      onClose={() => undefined}
+      onDisableLogPopups={onDisableLogPopups}
+    />
+  );
+
+  const actions = document.querySelector<HTMLElement>(".operationProgressHeaderActions")!;
+  const disableButton = within(actions).getByRole("button", { name: "Don't show again" });
+  const closeButton = within(actions).getByRole("button", { name: "Close" });
+  expect(disableButton.compareDocumentPosition(closeButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  await user.click(disableButton);
+  expect(onDisableLogPopups).toHaveBeenCalledOnce();
 });
 
 test("host status waits for the operation-specific terminal step instead of failing on a recovered method", () => {

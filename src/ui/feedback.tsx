@@ -36,6 +36,7 @@ export type FeedbackLabels = {
 };
 
 type FeedbackConfiguration = {
+  defaultPlacement?: FeedbackPlacement;
   labels: FeedbackLabels;
   onOpenTask?: (taskId: string) => void;
 };
@@ -53,6 +54,7 @@ const FeedbackContext = createContext<FeedbackContextValue | null>(null);
 export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [configuration, setConfiguration] = useState<FeedbackConfiguration>({ labels: defaultLabels });
+  const configurationRef = useRef<FeedbackConfiguration>(configuration);
   const sequence = useRef(0);
   const itemsRef = useRef<FeedbackItem[]>([]);
   const removalTimers = useRef(new Map<string, number>());
@@ -77,7 +79,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
 
   const notify = useCallback((input: FeedbackInput) => {
     const tone = input.tone ?? "info";
-    const placement = input.placement ?? "detail";
+    const placement = input.placement ?? configurationRef.current.defaultPlacement ?? "detail";
     const dedupeKey = `${placement}:${tone}:${input.taskId ?? ""}:${input.message}`;
     let returnedId = "";
     setItems((current) => {
@@ -99,6 +101,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const configure = useCallback((next: FeedbackConfiguration) => {
+    configurationRef.current = next;
     setConfiguration(next);
   }, []);
 

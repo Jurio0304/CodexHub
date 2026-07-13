@@ -82,6 +82,8 @@ pub(crate) struct AppSettings {
     pub(crate) resource_monitor_refresh_seconds: u16,
     #[serde(default = "default_true")]
     pub(crate) sidebar_completion_indicators: bool,
+    #[serde(default = "default_true")]
+    pub(crate) host_operation_log_popups: bool,
     #[serde(default)]
     pub(crate) setup_guide_dismissed: bool,
 }
@@ -108,6 +110,7 @@ impl Default for AppSettings {
             resource_monitor_host_order: Vec::new(),
             resource_monitor_refresh_seconds: 60,
             sidebar_completion_indicators: true,
+            host_operation_log_popups: true,
             setup_guide_dismissed: false,
         }
     }
@@ -308,6 +311,7 @@ mod tests {
 
         let mut changed = initial;
         changed.resource_monitor_refresh_seconds = 120;
+        changed.host_operation_log_popups = false;
         let saved = write_settings_at(&path, &changed).expect("changed settings should save");
         assert!(saved.changed);
         let backup = saved
