@@ -1,6 +1,6 @@
 # CodexHub macOS Support
 
-Status: macOS release-build support is merged into `master`, and the real-device validation baseline was completed. The v0.4.5 macOS public artifact remains unsigned/ad-hoc.
+Status: macOS release-build support is merged into `master`, and the real-device validation baseline was completed. The v0.4.6 macOS public artifact remains unsigned/ad-hoc.
 
 CodexHub remains conservative: it writes CodexHub-managed SSH blocks to the user's SSH config, avoids Codex App private state, and keeps remote Codex work on the existing SSH/SFTP path. macOS support is buildable and mock-testable from Windows, with GUI behavior, installed app behavior, Gatekeeper handoff, and Codex App SSH handoff requiring a real Mac check for each public macOS artifact.
 
@@ -81,7 +81,7 @@ Re-run this checklist after any macOS lifecycle, packaging, signing, SSH path, o
 
 ## Known Limitations
 
-- v0.4.5 remains unsigned/ad-hoc, so Gatekeeper approval may still be required on first launch.
+- v0.4.6 remains unsigned/ad-hoc, so Gatekeeper approval may still be required on first launch.
 - Developer ID signing and notarization are not configured.
 - The macOS release workflow publishes to a GitHub Release only on manual dispatch with `upload_to_release=true`.
 - Future macOS behavior or packaging changes must re-run the real Mac validation checklist.
