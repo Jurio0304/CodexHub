@@ -27,6 +27,7 @@ import type {
   RemoteCodexBatchResult,
   RemoteCodexMaintenanceResult,
   RemoteProbeResult,
+  RemoteProbeBatchItemCompletedEvent,
   RemoteProbeBatchResult,
   SkillDetectionResult,
   SkillInventoryStatus,
@@ -59,6 +60,7 @@ import type {
 export type SshBootstrapProgressHandler = (event: SshBootstrapProgressEvent) => void;
 export type HostOperationProgressHandler = (event: HostOperationProgressEvent) => void;
 export type HostResourceProgressHandler = (event: HostResourceProgressEvent) => void;
+export type RemoteProbeBatchItemCompletedHandler = (event: RemoteProbeBatchItemCompletedEvent) => void;
 export type RemoteCodexProgressHandler = HostOperationProgressHandler;
 export type TaskUpdatedHandler = (event: TaskEvent) => void;
 
@@ -105,7 +107,8 @@ export type CodexHubApi = {
     hostAliases: string[],
     timeoutMs?: number,
     requestId?: string,
-    onProgress?: HostOperationProgressHandler
+    onProgress?: HostOperationProgressHandler,
+    onItemCompleted?: RemoteProbeBatchItemCompletedHandler
   ) => Promise<RemoteProbeBatchResult>;
   sampleHostResources: (
     hostAliases: string[],

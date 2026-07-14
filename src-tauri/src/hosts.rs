@@ -9,6 +9,10 @@ pub(crate) fn load_hosts(_app: &AppHandle, state: &AppState) -> Result<Vec<Host>
 }
 
 pub(crate) fn save_hosts(_app: &AppHandle, state: &AppState, hosts: &[Host]) -> Result<(), String> {
+    save_hosts_state(state, hosts)
+}
+
+pub(crate) fn save_hosts_state(state: &AppState, hosts: &[Host]) -> Result<(), String> {
     storage::save_document(
         &state.paths,
         &state.task_store,

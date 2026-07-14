@@ -1017,8 +1017,18 @@ const app = read("src/App.tsx");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
 const operationProgressSource = read("src/ui/OperationProgress.tsx");
 const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
-for (const token of ["MonitorView", "MonitorHostCard", "MonitorHostStatusIndicator", "resolveMonitorHostIndicatorState", "resourcePendingHostAliases", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory", 'aria-label={label}', 'role="img"', 'stroke="currentColor"']) {
+for (const token of ["MonitorView", "MonitorHostCard", "MonitorHostStatusIndicator", "CircularStatusIndicator", "HostStatusIndicator", "resolveMonitorHostIndicatorState", "resolveHostStatusIndicatorState", "applyRemoteProbeResultToHosts", "applyRemoteProbeBatchResultsToHosts", "resourcePendingHostAliases", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory", 'aria-label={label}', 'role="img"', 'stroke="currentColor"']) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
+}
+if (!/<th className="sshHostsAliasCol">[\s\S]*?<th className="sshHostsOnlineCol">[\s\S]*?<th className="sshHostsSourceCol">/.test(app)) {
+  fail("Host list columns should keep Alias -> Online -> Source order");
+}
+if ((app.match(/<HostStatusIndicator/g) ?? []).length < 3) fail("Host list, matrix, and details should share the circular Host status indicator");
+const hostDetailsSource = app.slice(app.indexOf("function HostDetailsPanel"), app.indexOf("function profileApplyEligibleHostIds"));
+if (!hostDetailsSource.includes("copy.hosts.source") || !hostDetailsSource.includes("hostSourceLabel(copy, host)")) fail("Host details should show Source");
+if (hostDetailsSource.includes("copy.hosts.shell")) fail("Host details should not show the Shell row");
+for (const token of ["persist_host_check", "save_hosts_state", "The offline Host status failed to persist"]) {
+  if (!rustBackend.includes(token)) fail(`missing persisted Host connectivity token: ${token}`);
 }
 if (app.includes("resourceStatusTone")) fail("resource monitor host headers should use icon indicators instead of text badges");
 if (app.includes("copy.monitor.noGpuProcesses")) fail("resource monitor should hide empty GPU process text in host cards");
@@ -1473,7 +1483,9 @@ for (const token of [
   if (!app.includes(token)) fail(`missing latest/relative Codex UI token: ${token}`);
 }
 for (const token of [
-  "api.batchRemoteProbeCodex(aliases, 10000, requestId",
+  "api.batchRemoteProbeCodex(",
+  "applyCompletedItem(event.item)",
+  "applyHostOperationProgressConnectivityToHosts",
   "api.batchRemoteUpdateCodex(uniqueAliases, 120000, requestId",
   "applyHostOperationProgressEvent(current, event)",
   "aggregateOperationStatus(current.hosts)",
@@ -1662,10 +1674,10 @@ if (!api.includes('checkStableUpdate: () => requiredInvoke<AppUpdateStatusDto>("
 for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior", "onCloseButtonBehaviorRequested", "close-button-behavior-requested", "requiredInvoke<AppSettings>"]) {
   if (!api.includes(token)) fail(`missing close-button API token: ${token}`);
 }
-for (const token of ["connectSshHost", "ssh-bootstrap-progress", "host-operation-progress", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex", "batchRemoteProbeCodex", "batchRemoteUpdateCodex"]) {
+for (const token of ["connectSshHost", "ssh-bootstrap-progress", "host-operation-progress", "remote-probe-batch-item-completed", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex", "batchRemoteProbeCodex", "batchRemoteUpdateCodex", "onItemCompleted"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
-for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "HostResourceProgressEvent", "host-resource-progress", "mockSampleHostResources", "mockSampleHostResourcesWithProgress", "recordTask?: boolean", "recordTask = true", "gpuUuid", "processes"]) {
+for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "HostResourceProgressEvent", "host-resource-progress", "mockSampleHostResources", "mockSampleHostResourcesWithProgress", "recordTask?: boolean", "recordTask = true", "sshStatus", "timedOut", "gpuUuid", "processes"]) {
   if (!api.includes(token)) fail(`missing resource monitor API token: ${token}`);
 }
 for (const token of [
@@ -1877,13 +1889,16 @@ for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNo
 for (const token of ["record_task.unwrap_or(true)", "if should_record_task", "if !should_record_task", "run_resource_sample"]) {
   if (!rustBackend.includes(token)) fail(`missing automatic resource-sample task policy token: ${token}`);
 }
+for (const token of ["normalize_health_check_timeout_ms", "MAX_HEALTH_CHECK_TIMEOUT_MS", "CH_SSH_CONNECTED=1", "HostResourceSshStatus::Offline", "RemoteProbeBatchItemCompletedEvent"]) {
+  if (!`${rustBackend}\n${sshRs}`.includes(token)) fail(`missing ten-second SSH health/status token: ${token}`);
+}
 for (const token of [".storageHealthBanner", "width: min(100%, var(--app-content-max))", "margin: 0 auto 16px"]) {
   if (!styles.includes(token)) fail(`storage health banner should align with the visible detail width: ${token}`);
 }
 for (const token of ["storagePlanCard", "storagePlanCode", "grid-template-columns: repeat(2, minmax(0, 1fr))", 'font-family: "Consolas"']) {
   if (!app.includes(token) && !styles.includes(token)) fail(`storage migration confirmation should use card and code-snippet styling: ${token}`);
 }
-for (const token of ["monitorBentoGrid", "monitorHostCard", "monitorHostStatusIndicator", "monitorSummaryTile", "monitorGpuBlock", "monitorProcessRow", "monitorAutoRefreshControl", "monitorDragHandle", "monitorSegmentedMeter", "monitorDragGhost", "--monitor-gap", "grid-auto-rows: 2px", "data-placeholder", 'data-tone="memory"', 'data-tone="cpu"', 'data-tone="gpu"', 'data-status="refreshing"', "width: 24px", "background: var(--green)", "background: var(--red)", "background: var(--blue)"]) {
+for (const token of ["monitorBentoGrid", "monitorHostCard", "circularStatusIndicator", "sshHostsOnlineCol", "monitorSummaryTile", "monitorGpuBlock", "monitorProcessRow", "monitorAutoRefreshControl", "monitorDragHandle", "monitorSegmentedMeter", "monitorDragGhost", "--monitor-gap", "grid-auto-rows: 2px", "data-placeholder", 'data-tone="memory"', 'data-tone="cpu"', 'data-tone="gpu"', 'data-status="refreshing"', "width: 24px", "min-width: 64px", "background: var(--green)", "background: var(--red)", "background: var(--blue)"]) {
   if (!styles.includes(token)) fail(`missing resource monitor Bento style token: ${token}`);
 }
 if (styles.includes("monitorBentoTile")) fail("resource monitor should use simplified summary tiles instead of old Bento tile styles");

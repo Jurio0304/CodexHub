@@ -341,7 +341,7 @@ pub(crate) fn run_ssh_check(
     let alias = alias_result
         .clone()
         .unwrap_or_else(|_| host_alias.trim().to_string());
-    let timeout = ssh::normalize_timeout_ms(timeout_ms);
+    let timeout = ssh::normalize_health_check_timeout_ms(timeout_ms);
     let task_id = format!("task-ssh-{}", timestamp_millis());
     let host_name = host_name_for_alias(state, &alias);
     let host_id = host_id_for_alias(state, &alias);
@@ -1236,7 +1236,7 @@ pub(crate) fn run_remote_probe(
     timeout_ms: Option<u64>,
     request_id: Option<String>,
 ) -> Result<RemoteProbeResult, String> {
-    let timeout = ssh::normalize_timeout_ms(timeout_ms);
+    let timeout = ssh::normalize_health_check_timeout_ms(timeout_ms);
     let alias_result = ssh::validate_ssh_alias(&host_alias);
     let alias = alias_result
         .clone()
@@ -1307,7 +1307,10 @@ pub(crate) fn run_remote_probe(
     )?;
 
     if !check_ok {
-        update_host_check(state, &alias, false, check_output.duration_ms);
+        let status_persist_error =
+            persist_host_check(state, &alias, false, check_output.duration_ms)
+                .err()
+                .map(|error| redact_error_text(&error));
         for (step_id, _) in PROBE_STEP_IDS.iter().skip(1) {
             persist_and_emit_step(
                 &progress,
@@ -1317,6 +1320,17 @@ pub(crate) fn run_remote_probe(
                 None,
             )?;
         }
+        let mut summary = format!("Remote probe skipped because SSH check failed: {check_message}");
+        if let Some(error) = status_persist_error {
+            let persist_message = format!("The offline Host status failed to persist: {error}");
+            logs.push(basic_log(
+                &task_id,
+                logs.len() + 1,
+                TaskLogLevel::Error,
+                &persist_message,
+            ));
+            summary.push_str(&format!(" {persist_message}"));
+        }
         let task = TaskRun {
             id: task_id.clone(),
             host_id,
@@ -1325,7 +1339,7 @@ pub(crate) fn run_remote_probe(
             status: TaskStatus::Failed,
             started_at: started_at.clone(),
             ended_at: Some(timestamp_label()),
-            summary: format!("Remote probe skipped because SSH check failed: {check_message}"),
+            summary,
             steps: state
                 .task_store
                 .get(&task_id)?
@@ -1379,11 +1393,13 @@ pub(crate) fn run_remote_probe(
     let mut api_data = None;
     let mut skills_data = None;
     let mut failed_groups = 0usize;
+    let mut probe_timed_out = false;
     // Each logical probe owns one SSH process; the receiver closes cards in completion order.
     let probe_result = run_parallel_completions(
         scripts,
         |step_id, script| probe_group_output(&alias, step_id, &script, timeout),
         |step_id, output| -> Result<(), String> {
+            probe_timed_out |= output.timed_out;
             let parsed = if !output.success() {
                 Err(command_detail(&output))
             } else {
@@ -1520,15 +1536,21 @@ pub(crate) fn run_remote_probe(
     } else {
         format!(" Warnings: {}.", readiness_notes.join("; "))
     };
-    let summary = format!(
-        "Probe completed for {alias}: {os}/{arch}, Codex {}. {} group(s) failed.{readiness_suffix}",
-        if codex_installed {
-            codex_version.as_str()
-        } else {
-            "not installed"
-        },
-        failed_groups,
-    );
+    let summary = if probe_timed_out {
+        format!(
+            "Remote probe timed out for {alias}; the host was marked offline. {failed_groups} group(s) failed."
+        )
+    } else {
+        format!(
+            "Probe completed for {alias}: {os}/{arch}, Codex {}. {} group(s) failed.{readiness_suffix}",
+            if codex_installed {
+                codex_version.as_str()
+            } else {
+                "not installed"
+            },
+            failed_groups,
+        )
+    };
     let mut task = TaskRun {
         id: task_id.clone(),
         host_id,
@@ -1550,29 +1572,36 @@ pub(crate) fn run_remote_probe(
         logs,
     };
 
-    if let Err(error) = update_host_probe(
-        app,
-        state,
-        &alias,
-        &os,
-        &arch,
-        &shell,
-        path.clone(),
-        path_has_local_bin,
-        codex_command_available,
-        codex_installed,
-        &codex_version,
-        config_exists,
-        &api_config_match,
-        api_key_env_var.clone(),
-        api_key_env_present,
-        skills_exists,
-        skills_count,
-        system_data.is_some(),
-        codex_data.is_some(),
-        api_data.is_some(),
-        skills_data.is_some(),
-    ) {
+    // 任一探测 SSH 超时都优先确认离线，避免部分成功数据把状态写回在线。
+    let state_update = if probe_timed_out {
+        persist_host_check(state, &alias, false, 0).map(|_| ())
+    } else {
+        update_host_probe(
+            app,
+            state,
+            &alias,
+            &os,
+            &arch,
+            &shell,
+            path.clone(),
+            path_has_local_bin,
+            codex_command_available,
+            codex_installed,
+            &codex_version,
+            config_exists,
+            &api_config_match,
+            api_key_env_var.clone(),
+            api_key_env_present,
+            skills_exists,
+            skills_count,
+            system_data.is_some(),
+            codex_data.is_some(),
+            api_data.is_some(),
+            skills_data.is_some(),
+        )
+        .map(|_| ())
+    };
+    if let Err(error) = state_update {
         let safe_error = redact_error_text(&error);
         task.status = TaskStatus::Failed;
         task.summary = format!(
@@ -1589,8 +1618,12 @@ pub(crate) fn run_remote_probe(
 
     Ok(RemoteProbeResult {
         host_alias: alias,
-        ssh_status: HostStatus::Online,
-        latency_ms: Some(check_output.duration_ms),
+        ssh_status: if probe_timed_out {
+            HostStatus::Offline
+        } else {
+            HostStatus::Online
+        },
+        latency_ms: (!probe_timed_out).then_some(check_output.duration_ms),
         os,
         arch,
         shell,
@@ -1717,7 +1750,7 @@ fn run_probe_batch_items(
     request_id: &str,
 ) -> Vec<RemoteProbeBatchItem> {
     run_bounded_ordered(host_aliases, |host_alias| {
-        match run_remote_probe(
+        let item = match run_remote_probe(
             app,
             state,
             host_alias.clone(),
@@ -1736,7 +1769,21 @@ fn run_probe_batch_items(
                 result: None,
                 error: Some(redact_error_text(&error)),
             },
+        };
+        // 单台任务与 Host 状态均落定后再通知前端，避免步骤事件抢跑。
+        if let Err(error) = app.emit(
+            "remote-probe-batch-item-completed",
+            RemoteProbeBatchItemCompletedEvent {
+                request_id: request_id.to_string(),
+                item: item.clone(),
+            },
+        ) {
+            eprintln!(
+                "Could not emit completed remote probe item: {}",
+                redact_error_text(&error.to_string())
+            );
         }
+        item
     })
 }
 
@@ -4203,6 +4250,24 @@ mod host_operation_tests {
     }
 
     #[test]
+    fn completed_batch_probe_event_serializes_request_and_item() {
+        let event = RemoteProbeBatchItemCompletedEvent {
+            request_id: "batch-probe-1".into(),
+            item: RemoteProbeBatchItem {
+                host_alias: "alpha".into(),
+                ok: false,
+                result: None,
+                error: Some("fixture".into()),
+            },
+        };
+        let json = serde_json::to_value(event).expect("serialize completed batch probe event");
+
+        assert_eq!(json["requestId"], "batch-probe-1");
+        assert_eq!(json["item"]["hostAlias"], "alpha");
+        assert_eq!(json["item"]["ok"], false);
+    }
+
+    #[test]
     fn installation_fallback_stops_only_after_validated_success() {
         assert_eq!(next_installation_method(&[]), Some(0));
         assert_eq!(next_installation_method(&[true]), None);
@@ -4486,9 +4551,8 @@ mod host_operation_tests {
         }
     }
 
-    #[test]
-    fn failed_probe_groups_preserve_old_fields_while_successful_groups_update() {
-        let mut host = Host {
+    fn trusted_test_host() -> Host {
+        Host {
             id: "host-1".into(),
             name: "Host".into(),
             host_alias: "lab".into(),
@@ -4517,8 +4581,13 @@ mod host_operation_tests {
             skill_pack_ids: Vec::new(),
             tags: Vec::new(),
             last_seen: "old".into(),
-            latency_ms: None,
-        };
+            latency_ms: Some(42),
+        }
+    }
+
+    #[test]
+    fn failed_probe_groups_preserve_old_fields_while_successful_groups_update() {
+        let mut host = trusted_test_host();
         let api_match = RemoteApiConfigMatch {
             name: "New config".into(),
             source: "new".into(),
@@ -4554,5 +4623,29 @@ mod host_operation_tests {
         assert_eq!(host.profile_id.as_deref(), Some("old-profile"));
         assert_eq!(host.skills_count, Some(7));
         assert_eq!(host.skills_exists, Some(false));
+        assert!(matches!(host.status, HostStatus::Online));
+    }
+
+    #[test]
+    fn failed_ssh_check_persists_offline_without_erasing_trusted_details() {
+        let state = AppState::new(storage::TaskStore::in_memory());
+        let original = trusted_test_host();
+        save_hosts_state(&state, std::slice::from_ref(&original)).expect("persist initial host");
+
+        persist_host_check(&state, "LAB", false, 10_000).expect("persist failed SSH status");
+        let stored =
+            storage::load_document(&state.paths, "hosts", "hosts.json", Vec::<Host>::new())
+                .expect("reload persisted hosts")
+                .data;
+        let host = stored.first().expect("stored host");
+
+        assert!(matches!(host.status, HostStatus::Offline));
+        assert_eq!(host.latency_ms, None);
+        assert_eq!(host.os, original.os);
+        assert_eq!(host.codex_version, original.codex_version);
+        assert_eq!(host.api_config_name, original.api_config_name);
+        assert_eq!(host.skills_count, original.skills_count);
+        assert_eq!(host.shell, original.shell);
+        assert_eq!(host.last_seen, original.last_seen);
     }
 }

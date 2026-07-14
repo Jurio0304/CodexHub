@@ -13,6 +13,7 @@ import type {
   HostOperationKindDto,
   HostOperationProgressEventDto,
   HostResourceSnapshotDto,
+  HostResourceSshStatusDto,
   HostResourceStatusDto,
   LatestCodexVersionDto,
   LocalCodexStatusDto,
@@ -26,6 +27,7 @@ import type {
   RemoteCodexProgressEventDto,
   RemoteProbeResultDto,
   RemoteProbeBatchItemDto,
+  RemoteProbeBatchItemCompletedEventDto,
   RemoteProbeBatchResultDto,
   SshBootstrapResultDto,
   SshCheckResultDto,
@@ -373,9 +375,11 @@ export type SshBootstrapProgressEvent = {
 export type RemoteProbeResult = RemoteProbeResultDto;
 
 export type RemoteProbeBatchItem = RemoteProbeBatchItemDto;
+export type RemoteProbeBatchItemCompletedEvent = RemoteProbeBatchItemCompletedEventDto;
 export type RemoteProbeBatchResult = RemoteProbeBatchResultDto;
 
 export type HostResourceStatus = HostResourceStatusDto;
+export type HostResourceSshStatus = HostResourceSshStatusDto;
 export type GpuVendor = GpuVendorDto;
 export type GpuTool = "nvidia-smi" | "rocm-smi" | "lspci" | "none" | string;
 export type CpuSnapshot = CpuSnapshotDto;

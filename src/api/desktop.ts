@@ -13,6 +13,7 @@ import type {
   RemoteCodexAction,
   RemoteCodexBatchResult,
   RemoteCodexMaintenanceResult,
+  RemoteProbeBatchItemCompletedEvent,
   SkillDetectionResult,
   SkillImportResult,
   SkillTargetOperationResult,
@@ -107,6 +108,33 @@ async function runWithHostResourceProgress<T>(
     return await invoke();
   } finally {
     unlisten?.();
+  }
+}
+
+async function runWithRemoteProbeBatchEvents<T>(
+  requestId: string | undefined,
+  onProgress: ((event: HostOperationProgressEvent) => void) | undefined,
+  onItemCompleted: ((event: RemoteProbeBatchItemCompletedEvent) => void) | undefined,
+  invoke: () => Promise<T>
+) {
+  let unlistenProgress: UnlistenFn | null = null;
+  let unlistenCompleted: UnlistenFn | null = null;
+  assertTauriRuntime("batch_remote_probe_codex");
+  try {
+    if (requestId && onProgress) {
+      unlistenProgress = await listen<HostOperationProgressEvent>("host-operation-progress", (event) => {
+        if (event.payload.requestId === requestId) onProgress(event.payload);
+      });
+    }
+    if (requestId && onItemCompleted) {
+      unlistenCompleted = await listen<RemoteProbeBatchItemCompletedEvent>("remote-probe-batch-item-completed", (event) => {
+        if (event.payload.requestId === requestId) onItemCompleted(event.payload);
+      });
+    }
+    return await invoke();
+  } finally {
+    unlistenCompleted?.();
+    unlistenProgress?.();
   }
 }
 
@@ -216,11 +244,12 @@ export const desktopApi: CodexHubApi = {
     hostAliases: string[],
     timeoutMs = 10000,
     requestId?: string,
-    onProgress?: (event: HostOperationProgressEvent) => void
-  ) => runWithHostOperationProgress(
-    "batch_remote_probe_codex",
+    onProgress?: (event: HostOperationProgressEvent) => void,
+    onItemCompleted?: (event: RemoteProbeBatchItemCompletedEvent) => void
+  ) => runWithRemoteProbeBatchEvents(
     requestId,
     onProgress,
+    onItemCompleted,
     () => requiredInvoke<RemoteProbeBatchResult>("batch_remote_probe_codex", {
       hostAliases: hostAliases.map((alias) => requireHostAlias("batch_remote_probe_codex", alias)),
       timeoutMs,
@@ -229,7 +258,7 @@ export const desktopApi: CodexHubApi = {
   ),
   sampleHostResources: (
     hostAliases: string[],
-    timeoutMs = 8000,
+    timeoutMs = 10000,
     recordTask = true,
     requestId?: string,
     onProgress?: (event: HostResourceProgressEvent) => void

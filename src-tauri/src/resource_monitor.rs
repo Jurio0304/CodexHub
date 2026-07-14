@@ -9,7 +9,6 @@ use std::{
 };
 use ts_rs::TS;
 
-const DEFAULT_RESOURCE_TIMEOUT_MS: u64 = 30_000;
 const RESOURCE_SAMPLE_CONCURRENCY: usize = 3;
 
 #[derive(Clone, Serialize, TS)]
@@ -48,8 +47,10 @@ impl HostResourceBatchResult {
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "HostResourceSnapshotDto")]
 pub(crate) struct HostResourceSnapshot {
-    host_alias: String,
+    pub(crate) host_alias: String,
     status: HostResourceStatus,
+    pub(crate) ssh_status: HostResourceSshStatus,
+    pub(crate) timed_out: bool,
     sampled_at: String,
     #[ts(type = "number | null")]
     latency_ms: Option<u64>,
@@ -67,6 +68,15 @@ pub(crate) enum HostResourceStatus {
     Ok,
     Partial,
     Failed,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(rename = "HostResourceSshStatusDto")]
+pub(crate) enum HostResourceSshStatus {
+    Online,
+    Offline,
+    Unknown,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -154,9 +164,7 @@ pub(crate) fn sample_host_resources_with_progress<F>(
 where
     F: FnMut(&HostResourceSnapshot),
 {
-    let timeout = timeout_ms
-        .unwrap_or(DEFAULT_RESOURCE_TIMEOUT_MS)
-        .clamp(3_000, 30_000);
+    let timeout = ssh::normalize_health_check_timeout_ms(timeout_ms);
     let checked_at = timestamp_now();
     let snapshots = sample_hosts_with_progress(host_aliases, timeout, sample_one_host, on_snapshot);
 
@@ -243,7 +251,7 @@ fn sample_one_host(host_alias: String, timeout_ms: u64) -> HostResourceSnapshot 
     };
 
     if !output.success() {
-        return failed_snapshot(alias, command_error(&output), Some(output.duration_ms));
+        return failed_snapshot_for_output(alias, &output);
     }
 
     parse_resource_stdout(&alias, &output.stdout, output.duration_ms)
@@ -254,9 +262,51 @@ fn failed_snapshot(
     error: String,
     latency_ms: Option<u64>,
 ) -> HostResourceSnapshot {
+    failed_snapshot_with_connectivity(
+        host_alias,
+        error,
+        latency_ms,
+        HostResourceSshStatus::Unknown,
+        false,
+    )
+}
+
+fn failed_snapshot_for_output(
+    host_alias: impl Into<String>,
+    output: &ssh::SshCommandOutput,
+) -> HostResourceSnapshot {
+    let connected = output
+        .stdout
+        .lines()
+        .any(|line| line.trim() == "CH_SSH_CONNECTED=1");
+    // 超时始终视为离线；已输出连接标记的远端脚本错误仍代表 SSH 可达。
+    let ssh_status = if output.timed_out || !connected {
+        HostResourceSshStatus::Offline
+    } else {
+        HostResourceSshStatus::Online
+    };
+    let latency_ms = (ssh_status == HostResourceSshStatus::Online).then_some(output.duration_ms);
+    failed_snapshot_with_connectivity(
+        host_alias,
+        command_error(output),
+        latency_ms,
+        ssh_status,
+        output.timed_out,
+    )
+}
+
+fn failed_snapshot_with_connectivity(
+    host_alias: impl Into<String>,
+    error: String,
+    latency_ms: Option<u64>,
+    ssh_status: HostResourceSshStatus,
+    timed_out: bool,
+) -> HostResourceSnapshot {
     HostResourceSnapshot {
         host_alias: host_alias.into(),
         status: HostResourceStatus::Failed,
+        ssh_status,
+        timed_out,
         sampled_at: timestamp_now(),
         latency_ms,
         error: Some(error),
@@ -381,6 +431,8 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
     HostResourceSnapshot {
         host_alias: host_alias.to_string(),
         status,
+        ssh_status: HostResourceSshStatus::Online,
+        timed_out: false,
         sampled_at: timestamp_now(),
         latency_ms: Some(latency_ms),
         error: None,
@@ -392,7 +444,8 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
 }
 
 fn resource_probe_script() -> &'static str {
-    r#"sanitize_monitor_field() {
+    r#"printf 'CH_SSH_CONNECTED=1\n'
+sanitize_monitor_field() {
   printf '%s' "$1" | tr '\r\n|' '   ' | cut -c 1-180
 }
 cpu_line() {
@@ -846,6 +899,8 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
     fn marks_missing_cpu_or_memory_as_partial() {
         let snapshot = parse_resource_stdout("partial-host", "CH_GPU_TOOL=none\n", 42);
         assert!(matches!(snapshot.status, HostResourceStatus::Partial));
+        assert!(matches!(snapshot.ssh_status, HostResourceSshStatus::Online));
+        assert!(!snapshot.timed_out);
         assert!(snapshot.cpu.is_none());
         assert!(snapshot.memory.is_none());
     }
@@ -865,6 +920,30 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
             command_error(&output),
             "Resource sampling timed out after 30042 ms."
         );
+        let snapshot = failed_snapshot_for_output("lab", &output);
+        assert!(matches!(
+            snapshot.ssh_status,
+            HostResourceSshStatus::Offline
+        ));
+        assert!(snapshot.timed_out);
+        assert_eq!(snapshot.latency_ms, None);
+    }
+
+    #[test]
+    fn remote_script_failure_after_connection_keeps_ssh_online() {
+        let output = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CH_SSH_CONNECTED=1\n".into(),
+            stderr: "remote script failed".into(),
+            exit_code: Some(1),
+            duration_ms: 84,
+            timed_out: false,
+        };
+
+        let snapshot = failed_snapshot_for_output("lab", &output);
+        assert!(matches!(snapshot.ssh_status, HostResourceSshStatus::Online));
+        assert!(!snapshot.timed_out);
+        assert_eq!(snapshot.latency_ms, Some(84));
     }
 
     #[test]
@@ -877,6 +956,11 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
             HostResourceStatus::Failed
         ));
         assert_eq!(result.snapshots[0].host_alias, "bad alias!");
+        assert!(matches!(
+            result.snapshots[0].ssh_status,
+            HostResourceSshStatus::Unknown
+        ));
+        assert!(!result.snapshots[0].timed_out);
         assert!(result.snapshots[0].error.is_some());
     }
 
@@ -935,5 +1019,7 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
 
         assert_eq!(json["requestId"], "resource-request-1");
         assert_eq!(json["snapshot"]["hostAlias"], "alpha");
+        assert_eq!(json["snapshot"]["sshStatus"], "unknown");
+        assert_eq!(json["snapshot"]["timedOut"], false);
     }
 }

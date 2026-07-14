@@ -27,6 +27,7 @@ const MANAGED_END_PREFIX: &str = "# <<< CodexHub managed host:";
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
+const MAX_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTHORIZED_KEYS_INSTALL_SCRIPT: &str = "umask 077; mkdir -p \"$HOME/.ssh\" && touch \"$HOME/.ssh/authorized_keys\" && IFS= read -r key && if grep -qxF \"$key\" \"$HOME/.ssh/authorized_keys\" 2>/dev/null; then printf 'authorized_keys already contains key\\n'; else printf '%s\\n' \"$key\" >> \"$HOME/.ssh/authorized_keys\" && printf 'authorized_keys updated\\n'; fi";
@@ -854,6 +855,11 @@ pub fn normalize_timeout_ms(timeout_ms: Option<u64>) -> u64 {
     timeout_ms
         .unwrap_or(DEFAULT_TIMEOUT_MS)
         .clamp(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+}
+
+/// 主机可达性检查统一封顶 10 秒，长耗时安装任务继续使用通用上限。
+pub fn normalize_health_check_timeout_ms(timeout_ms: Option<u64>) -> u64 {
+    normalize_timeout_ms(timeout_ms).min(MAX_HEALTH_CHECK_TIMEOUT_MS)
 }
 
 pub fn validate_ssh_alias(alias: &str) -> Result<String, String> {
@@ -2361,6 +2367,14 @@ fn duration_ms(start: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn health_check_timeout_is_capped_at_ten_seconds() {
+        assert_eq!(normalize_health_check_timeout_ms(None), 10_000);
+        assert_eq!(normalize_health_check_timeout_ms(Some(60_000)), 10_000);
+        assert_eq!(normalize_health_check_timeout_ms(Some(5_000)), 5_000);
+        assert_eq!(normalize_timeout_ms(Some(60_000)), 60_000);
+    }
 
     fn draft(alias: &str) -> SshHostDraft {
         SshHostDraft {

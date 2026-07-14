@@ -10,6 +10,8 @@ function snapshot(hostAlias: string, usagePercent: number): HostResourceSnapshot
   return {
     hostAlias,
     status: "ok",
+    sshStatus: "online",
+    timedOut: false,
     sampledAt: "2026-07-13T21:00:00+08:00",
     latencyMs: usagePercent,
     error: null,

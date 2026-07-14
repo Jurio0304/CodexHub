@@ -766,6 +766,14 @@ pub(crate) struct RemoteProbeBatchItem {
 
 #[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "RemoteProbeBatchItemCompletedEventDto")]
+pub(crate) struct RemoteProbeBatchItemCompletedEvent {
+    pub(crate) request_id: String,
+    pub(crate) item: RemoteProbeBatchItem,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 #[ts(rename = "RemoteProbeBatchResultDto")]
 pub(crate) struct RemoteProbeBatchResult {
     pub(crate) request_id: String,

@@ -69,6 +69,16 @@ test("Mock resource sampling emits one progressive snapshot per completed host",
   expect(result.snapshots.map((snapshot) => snapshot.hostAlias)).toEqual(aliases);
 });
 
+test("Mock resource timeout reports SSH offline at the ten-second boundary", async () => {
+  const result = await mockApi.sampleHostResources(["mock-timeout-host"]);
+  expect(result.snapshots[0]).toEqual(expect.objectContaining({
+    status: "failed",
+    sshStatus: "offline",
+    timedOut: true,
+    latencyMs: null
+  }));
+});
+
 test("Mock Codex maintenance emits the ordered fallback chain without making a recovered task fail", async () => {
   const events: HostOperationProgressEvent[] = [];
   const result = await mockApi.remoteManageCodex(
@@ -148,6 +158,29 @@ test("Mock host probe starts four independent groups before any group completes"
   const failed = await mockApi.remoteProbeCodex("mock-fail-probe");
   expect(failed.task.status).toBe("failed");
   expect(failed.task.steps.slice(1).every((step) => step.status === "skipped")).toBe(true);
+});
+
+test("Mock batch host probe emits each completed item before the ordered batch resolves", async () => {
+  const aliases = Array.from({ length: 8 }, (_, index) => `mock-probe-${index + 1}`);
+  const completed: string[] = [];
+  let resolved = false;
+  const promise = mockApi.batchRemoteProbeCodex(
+    aliases,
+    10000,
+    "mock-probe-batch-request",
+    undefined,
+    (event) => {
+      expect(resolved).toBe(false);
+      expect(event.requestId).toBe("mock-probe-batch-request");
+      completed.push(event.item.hostAlias);
+    }
+  );
+  const result = await promise;
+  resolved = true;
+
+  expect(completed).toHaveLength(aliases.length);
+  expect(new Set(completed)).toEqual(new Set(aliases));
+  expect(result.results.map((item) => item.hostAlias)).toEqual(aliases);
 });
 
 test("Mock batch update uses a six-host sliding pool and preserves input order", async () => {

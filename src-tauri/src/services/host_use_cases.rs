@@ -382,16 +382,20 @@ fn run_resource_sample<F>(
     host_aliases: Vec<String>,
     timeout_ms: Option<u64>,
     should_record_task: bool,
-    on_snapshot: F,
+    mut on_snapshot: F,
 ) -> Result<resource_monitor::HostResourceBatchResult, String>
 where
     F: FnMut(&resource_monitor::HostResourceSnapshot),
 {
+    let mut apply_snapshot = |snapshot: &resource_monitor::HostResourceSnapshot| {
+        update_runtime_host_connectivity(state, snapshot);
+        on_snapshot(snapshot);
+    };
     if !should_record_task {
         return Ok(resource_monitor::sample_host_resources_with_progress(
             host_aliases,
             timeout_ms,
-            on_snapshot,
+            &mut apply_snapshot,
         ));
     }
 
@@ -407,7 +411,7 @@ where
     let result = resource_monitor::sample_host_resources_with_progress(
         host_aliases,
         timeout_ms,
-        on_snapshot,
+        &mut apply_snapshot,
     );
     let (total, partial, failed) = result.outcome_counts();
     task.status = if partial > 0 || failed > 0 {
@@ -429,6 +433,33 @@ where
     ));
     jobs::persist_task(&state.task_store, state.task_event_sink.as_ref(), &task)?;
     Ok(result)
+}
+
+fn update_runtime_host_connectivity(
+    state: &AppState,
+    snapshot: &resource_monitor::HostResourceSnapshot,
+) {
+    use resource_monitor::HostResourceSshStatus;
+
+    let mut hosts = state.hosts.lock().expect("hosts mutex poisoned");
+    let Some(host) = hosts
+        .iter_mut()
+        .find(|host| host.host_alias.eq_ignore_ascii_case(&snapshot.host_alias))
+    else {
+        return;
+    };
+    // 监控轮询只维护运行时连接状态，避免定时采样反复生成 hosts.json 备份。
+    match snapshot.ssh_status {
+        HostResourceSshStatus::Online if !matches!(&host.status, HostStatus::Online) => {
+            host.status = HostStatus::Online;
+            host.last_seen = "just now".into();
+        }
+        HostResourceSshStatus::Offline => {
+            host.status = HostStatus::Offline;
+            host.latency_ms = None;
+        }
+        HostResourceSshStatus::Online | HostResourceSshStatus::Unknown => {}
+    }
 }
 
 pub(crate) async fn execute_remote_manage_codex(

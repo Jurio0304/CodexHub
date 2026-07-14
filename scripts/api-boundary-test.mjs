@@ -56,16 +56,18 @@ for (const command of ["batch_remote_probe_codex", "batch_remote_update_codex"])
 }
 for (const token of [
   "HostOperationProgressHandler",
+  "RemoteProbeBatchItemCompletedHandler",
   "batchRemoteProbeCodex",
   "batchRemoteUpdateCodex",
   'listen<HostOperationProgressEvent>("host-operation-progress"',
+  'listen<RemoteProbeBatchItemCompletedEvent>("remote-probe-batch-item-completed"',
   "event.payload.requestId === requestId"
 ]) {
   if (!`${apiContractsSource}\n${desktopSource}`.includes(token)) {
     fail(`structured host-operation API boundary is missing: ${token}`);
   }
 }
-for (const token of ["batchRemoteProbeCodex:", "batchRemoteUpdateCodex:", "runMockConcurrencyPool", "concurrency = 6"]) {
+for (const token of ["batchRemoteProbeCodex:", "batchRemoteUpdateCodex:", "runMockConcurrencyPool", "concurrency = 6", "onItemCompleted?.({ requestId, item: clone(item) })"]) {
   if (!mockSource.includes(token)) fail(`Mock batch API boundary is missing: ${token}`);
 }
 if (desktopSource.includes('"remote-codex-progress"')) {

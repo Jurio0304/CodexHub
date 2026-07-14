@@ -130,6 +130,8 @@ export type RemoteProbeResultDto = { hostAlias: string, sshStatus: HostStatusDto
 
 export type RemoteProbeBatchItemDto = { hostAlias: string, ok: boolean, result?: RemoteProbeResultDto, error?: string, };
 
+export type RemoteProbeBatchItemCompletedEventDto = { requestId: string, item: RemoteProbeBatchItemDto, };
+
 export type RemoteProbeBatchResultDto = { requestId: string, latestCodexVersion: LatestCodexVersionDto, results: Array<RemoteProbeBatchItemDto>, };
 
 export type LatestCodexVersionDto = { version: string | null, checkedAt: string | null, source: string, error: string | null, };
@@ -158,6 +160,8 @@ export type LocalCodexStatusDto = { platform: RuntimePlatformDto, detected: bool
 
 export type HostResourceStatusDto = "ok" | "partial" | "failed";
 
+export type HostResourceSshStatusDto = "online" | "offline" | "unknown";
+
 export type CpuSnapshotDto = { usagePercent: number | null, load1: number | null, load5: number | null, load15: number | null, cores: number | null, model: string | null, };
 
 export type MemorySnapshotDto = { totalBytes: number | null, availableBytes: number | null, usedPercent: number | null, };
@@ -170,7 +174,7 @@ export type GpuProcessSnapshotDto = { gpuUuid: string | null, pid: number | null
 
 export type GpuSnapshotDto = { vendor: GpuVendorDto, index: string | null, uuid: string | null, name: string, status: GpuStatusDto, utilizationPercent: number | null, memoryUsedBytes: number | null, memoryTotalBytes: number | null, temperatureC: number | null, powerWatts: number | null, driverVersion: string | null, processes: Array<GpuProcessSnapshotDto>, };
 
-export type HostResourceSnapshotDto = { hostAlias: string, status: HostResourceStatusDto, sampledAt: string, latencyMs: number | null, error: string | null, cpu: CpuSnapshotDto | null, memory: MemorySnapshotDto | null, gpuTool: string, gpus: Array<GpuSnapshotDto>, };
+export type HostResourceSnapshotDto = { hostAlias: string, status: HostResourceStatusDto, sshStatus: HostResourceSshStatusDto, timedOut: boolean, sampledAt: string, latencyMs: number | null, error: string | null, cpu: CpuSnapshotDto | null, memory: MemorySnapshotDto | null, gpuTool: string, gpus: Array<GpuSnapshotDto>, };
 
 export type HostResourceProgressEventDto = { requestId: string, snapshot: HostResourceSnapshotDto, };
 

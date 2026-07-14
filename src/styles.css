@@ -1491,7 +1491,7 @@ tr:last-child td {
   min-width: 0;
 }
 
-.monitorHostStatusIndicator {
+.circularStatusIndicator {
   display: inline-grid;
   place-items: center;
   flex: 0 0 24px;
@@ -1502,17 +1502,17 @@ tr:last-child td {
   background: var(--gray);
 }
 
-.monitorHostStatusIndicator[data-status="ok"] { background: var(--green); }
-.monitorHostStatusIndicator[data-status="partial"] { background: var(--yellow); }
-.monitorHostStatusIndicator[data-status="failed"] { background: var(--red); }
-.monitorHostStatusIndicator[data-status="refreshing"] { background: var(--blue); }
+.circularStatusIndicator[data-status="ok"] { background: var(--green); }
+.circularStatusIndicator[data-status="partial"] { background: var(--yellow); }
+.circularStatusIndicator[data-status="failed"] { background: var(--red); }
+.circularStatusIndicator[data-status="refreshing"] { background: var(--blue); }
 
-.monitorHostStatusIndicator svg {
+.circularStatusIndicator svg {
   width: 16px;
   height: 16px;
 }
 
-.monitorHostStatusIndicator[data-status="refreshing"] svg {
+.circularStatusIndicator[data-status="refreshing"] svg {
   animation: spin 0.9s linear infinite;
 }
 
@@ -1727,6 +1727,13 @@ tr:last-child td {
 }
 
 .sshHostsPortCol {
+  white-space: nowrap;
+}
+
+.sshHostsOnlineCol {
+  width: 64px;
+  min-width: 64px;
+  text-align: center;
   white-space: nowrap;
 }
 

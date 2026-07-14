@@ -30,7 +30,7 @@ use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Local, TimeZone}
 use commands::*;
 use contracts::{redact_error_text, TaskEvent};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
-use hosts::{load_hosts, save_current_hosts, save_hosts};
+use hosts::{load_hosts, save_current_hosts, save_hosts, save_hosts_state};
 use profiles::{load_profiles, save_profiles};
 use serde::{Deserialize, Serialize};
 pub(crate) use services::updater_operations::{detect_network_proxy_status, run_blocking_command};

@@ -7,7 +7,7 @@ use crate::{
     resource_monitor::{
         CpuSnapshot, GpuProcessSnapshot, GpuSnapshot, GpuStatus, GpuVendor,
         HostResourceBatchResult, HostResourceProgressEvent, HostResourceSnapshot,
-        HostResourceStatus, MemorySnapshot,
+        HostResourceSshStatus, HostResourceStatus, MemorySnapshot,
     },
     settings::{
         AppSettings, CloseButtonBehavior, NetworkProxyMode, PlatformAppearance, SettingsSaveResult,
@@ -278,6 +278,7 @@ mod tests {
             SshBootstrapProgressEvent::decl(&config),
             RemoteProbeResult::decl(&config),
             RemoteProbeBatchItem::decl(&config),
+            RemoteProbeBatchItemCompletedEvent::decl(&config),
             RemoteProbeBatchResult::decl(&config),
             LatestCodexVersion::decl(&config),
             RemoteCodexAction::decl(&config),
@@ -292,6 +293,7 @@ mod tests {
             RuntimePlatform::decl(&config),
             LocalCodexStatus::decl(&config),
             HostResourceStatus::decl(&config),
+            HostResourceSshStatus::decl(&config),
             CpuSnapshot::decl(&config),
             MemorySnapshot::decl(&config),
             GpuVendor::decl(&config),

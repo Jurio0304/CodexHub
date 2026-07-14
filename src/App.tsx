@@ -27,6 +27,8 @@ import type {
   CcSwitchDetection,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
+  RemoteProbeBatchItem,
+  RemoteProbeResult,
   RemoteSkill,
   SkillDetectionResult,
   SkillInventoryStatus,
@@ -141,12 +143,122 @@ export function mergeHostResourceSnapshot(
   });
 }
 
+export function applyHostResourceConnectivityToHosts(
+  hosts: Host[],
+  snapshot: HostResourceSnapshot,
+  justNow: string
+) {
+  if (snapshot.sshStatus === "unknown") return hosts;
+  const aliasKey = snapshot.hostAlias.toLowerCase();
+  let changed = false;
+  const next = hosts.map((host) => {
+    if (host.hostAlias.toLowerCase() !== aliasKey) return host;
+    if (snapshot.sshStatus === "offline") {
+      if (host.status === "offline" && host.latencyMs === null) return host;
+      changed = true;
+      return { ...host, status: "offline" as const, latencyMs: null };
+    }
+    if (host.status === "online") return host;
+    changed = true;
+    return { ...host, status: "online" as const, lastSeen: justNow };
+  });
+  return changed ? next : hosts;
+}
+
+export function applyHostOperationProgressConnectivityToHosts(
+  hosts: Host[],
+  event: HostOperationProgressEvent
+) {
+  if (!hostOperationProgressConfirmsOffline(event)) return hosts;
+  const aliasKey = event.hostAlias.toLowerCase();
+  let changed = false;
+  const next = hosts.map((host) => {
+    if (host.hostAlias.toLowerCase() !== aliasKey) return host;
+    if (host.status === "offline" && host.latencyMs === null) return host;
+    changed = true;
+    return { ...host, status: "offline" as const, latencyMs: null };
+  });
+  return changed ? next : hosts;
+}
+
+export function hostOperationProgressConfirmsOffline(event: HostOperationProgressEvent) {
+  return event.operation === "host-test" && (
+    (event.step.stepId === "ssh-check" && event.step.status === "failed")
+    || event.log?.timedOut === true
+  );
+}
+
+export function applyRemoteProbeResultToHost(
+  host: Host,
+  result: RemoteProbeResult,
+  justNow: string
+): Host {
+  const connectivity = {
+    status: result.sshStatus,
+    latencyMs: result.latencyMs
+  };
+  // An offline result confirms connectivity only; keep the last trusted remote details intact.
+  if (result.sshStatus !== "online") return { ...host, ...connectivity };
+  return {
+    ...host,
+    ...connectivity,
+    os: result.os,
+    arch: result.arch,
+    shell: result.shell,
+    path: result.path,
+    pathHasLocalBin: result.pathHasLocalBin,
+    codexCommandAvailable: result.codexCommandAvailable,
+    codexInstalled: result.codexInstalled,
+    codexVersion: result.codexVersion,
+    configExists: result.configExists,
+    apiConfigName: result.apiConfigName,
+    apiConfigSource: result.apiConfigSource,
+    apiKeyEnvVar: result.apiKeyEnvVar,
+    apiKeyEnvPresent: result.apiKeyEnvPresent,
+    skillsExists: result.skillsExists,
+    skillsCount: result.skillsCount,
+    lastSeen: justNow
+  };
+}
+
+export function applyRemoteProbeResultToHosts(
+  hosts: Host[],
+  result: RemoteProbeResult,
+  justNow: string
+) {
+  const aliasKey = result.hostAlias.toLowerCase();
+  return hosts.map((host) => host.hostAlias.toLowerCase() === aliasKey
+    ? applyRemoteProbeResultToHost(host, result, justNow)
+    : host);
+}
+
+export function applyRemoteProbeBatchResultsToHosts(
+  hosts: Host[],
+  results: RemoteProbeBatchItem[],
+  justNow: string
+) {
+  const resultByAlias = new Map(results.map((item) => [item.hostAlias.toLowerCase(), item]));
+  return hosts.map((host) => {
+    const item = resultByAlias.get(host.hostAlias.toLowerCase());
+    if (!item) return host;
+    if (item.result) return applyRemoteProbeResultToHost(host, item.result, justNow);
+    return { ...host, status: "unknown" as const, latencyMs: null };
+  });
+}
+
 export function resolveMonitorHostIndicatorState(
   status: HostResourceSnapshot["status"] | null | undefined,
   refreshing: boolean
 ): MonitorHostIndicatorState {
   if (refreshing) return "refreshing";
   return status ?? "no-sample";
+}
+
+export function resolveHostStatusIndicatorState(status: HostStatus): MonitorHostIndicatorState {
+  if (status === "online") return "ok";
+  if (status === "offline") return "failed";
+  if (status === "testing") return "refreshing";
+  return "no-sample";
 }
 
 function monitorHostAliasKey(hostAlias: string) {
@@ -205,7 +317,7 @@ const DEFAULT_PROFILE_PROVIDER = "openai";
 const DEFAULT_PROFILE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_PROFILE_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const APP_UPDATE_DAILY_CHECK_HOUR = 4;
-const RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS = 30_000;
+const RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS = 10_000;
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
 const PREVIEW_SIDEBAR_UPDATE_BUTTON =
   viteEnv?.DEV === true && viteEnv?.VITE_CODEXHUB_PREVIEW_UPDATE_BUTTON === "1";
@@ -2458,6 +2570,11 @@ function App() {
   const canInstallSidebarStableUpdate =
     previewSidebarStableUpdateButton ||
     (appUpdateStatus.channel === "stable" && appUpdateStatus.configured && appUpdateStatus.state === "available" && !appUpdateBusy);
+  const resourceHostAliasesKey = hosts.map((host) => host.hostAlias).join("\u0000");
+  const resourceHostAliases = useMemo(
+    () => resourceHostAliasesKey ? resourceHostAliasesKey.split("\u0000") : [],
+    [resourceHostAliasesKey]
+  );
   useEffect(() => {
     sidebarCompletionIndicatorsRef.current = settings.sidebarCompletionIndicators;
     if (!settings.sidebarCompletionIndicators) setSectionCompletionSignals({});
@@ -2543,7 +2660,7 @@ function App() {
     const recordTask = shouldRecordResourceSample(trigger);
     const showFeedback = recordTask;
     if (resourceBusyRef.current) return null;
-    if (hosts.length === 0) {
+    if (resourceHostAliases.length === 0) {
       setResourceSnapshots([]);
       setResourceCheckedAt(null);
       setResourcePendingHostAliases(new Set());
@@ -2551,7 +2668,7 @@ function App() {
       return null;
     }
 
-    const hostAliases = hosts.map((host) => host.hostAlias);
+    const hostAliases = resourceHostAliases;
     resourceBusyRef.current = true;
     setResourceBusy(true);
     setResourcePendingHostAliases(new Set(hostAliases.map(monitorHostAliasKey)));
@@ -2574,9 +2691,14 @@ function App() {
             return next;
           });
           setResourceSnapshots((current) => mergeHostResourceSnapshot(current, event.snapshot, hostAliases));
+          setHosts((current) => applyHostResourceConnectivityToHosts(current, event.snapshot, copy.common.justNow));
         }
       );
       setResourceSnapshots(result.snapshots);
+      setHosts((current) => result.snapshots.reduce(
+        (next, snapshot) => applyHostResourceConnectivityToHosts(next, snapshot, copy.common.justNow),
+        current
+      ));
       setResourceCheckedAt(result.checkedAt);
       if (showFeedback) setInfoNotice(copy.monitor.refreshed(result.snapshots.length));
       return result;
@@ -2590,7 +2712,7 @@ function App() {
       setResourceBusy(false);
       setResourcePendingHostAliases(new Set());
     }
-  }, [copy.monitor, hosts, setErrorNotice, setInfoNotice]);
+  }, [copy.common.justNow, copy.monitor, resourceHostAliases, setErrorNotice, setInfoNotice]);
 
   useEffect(() => {
     if (loading || activeSection !== "monitor") return;
@@ -3087,10 +3209,10 @@ function App() {
       const hostAlias = target?.hostAlias ?? idOrAlias;
       const hostName = target?.name ?? hostAlias;
       const shouldShowProgressModal = showProgressModal && settings.hostOperationLogPopups;
-      const requestId = shouldShowProgressModal ? `host-test-${Date.now()}-${Math.random().toString(36).slice(2)}` : undefined;
+      const requestId = `host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setHostBusy((current) => ({ ...current, [hostAlias]: "test" }));
       setHosts((current) => current.map((host) => (host.hostAlias === hostAlias ? { ...host, status: "testing" } : host)));
-      if (requestId) {
+      if (shouldShowProgressModal) {
         setCodexOperationModal(createOperationModalState(
           requestId,
           "host-test",
@@ -3100,10 +3222,14 @@ function App() {
         await waitForNextFrame();
       }
 
+      let completedResult: RemoteProbeResult | null = null;
       try {
-        const probe = api.remoteProbeCodex(hostAlias, 10000, requestId, requestId ? (event) => {
-          setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
-        } : undefined);
+        const probe = api.remoteProbeCodex(hostAlias, 10000, requestId, (event) => {
+          setHosts((current) => applyHostOperationProgressConnectivityToHosts(current, event));
+          if (shouldShowProgressModal) {
+            setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
+          }
+        });
         const result = includeLatestVersion
           ? (await Promise.all([
               probe,
@@ -3119,40 +3245,16 @@ function App() {
               })
             ]))[0]
           : await probe;
-        setHosts((current) =>
-          current.map((host) =>
-            host.hostAlias === result.hostAlias
-              ? {
-                  ...host,
-                  status: result.sshStatus,
-                  os: result.os,
-                  arch: result.arch,
-                  shell: result.shell,
-                  path: result.path,
-                  pathHasLocalBin: result.pathHasLocalBin,
-                  codexCommandAvailable: result.codexCommandAvailable,
-                  codexInstalled: result.codexInstalled,
-                  codexVersion: result.codexVersion,
-                  configExists: result.configExists,
-                  apiConfigName: result.apiConfigName,
-                  apiConfigSource: result.apiConfigSource,
-                  apiKeyEnvVar: result.apiKeyEnvVar,
-                  apiKeyEnvPresent: result.apiKeyEnvPresent,
-                  skillsExists: result.skillsExists,
-                  skillsCount: result.skillsCount,
-                  latencyMs: result.latencyMs,
-                  lastSeen: result.sshStatus === "online" ? copy.common.justNow : host.lastSeen
-                }
-              : host
-          )
-        );
+        completedResult = result;
         if (refreshCatalog) {
           const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
-          setHosts(refreshedHosts);
+          setHosts(applyRemoteProbeResultToHosts(refreshedHosts, result, copy.common.justNow));
           setProfiles(refreshedProfiles);
+        } else {
+          setHosts((current) => applyRemoteProbeResultToHosts(current, result, copy.common.justNow));
         }
         setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(result.task)], current));
-        if (requestId) {
+        if (shouldShowProgressModal) {
           setCodexOperationModal((current) => finalizeOperationHost(
             current,
             requestId,
@@ -3169,7 +3271,16 @@ function App() {
         }
         return { ...result, ok: result.sshStatus === "online" && result.task.status === "success" };
       } catch (error) {
-        if (requestId) {
+        if (completedResult) {
+          const result = completedResult;
+          setHosts((current) => applyRemoteProbeResultToHosts(current, result, copy.common.justNow));
+        } else {
+          const aliasKey = hostAlias.toLowerCase();
+          setHosts((current) => current.map((host) => host.hostAlias.toLowerCase() === aliasKey
+            ? { ...host, status: "unknown", latencyMs: null }
+            : host));
+        }
+        if (shouldShowProgressModal) {
           setCodexOperationModal((current) => failOperationHost(current, requestId, hostAlias, formatError(error)));
         }
         throw error;
@@ -3219,25 +3330,56 @@ function App() {
       });
       setHosts((current) => current.map((host) => aliases.includes(host.hostAlias) ? { ...host, status: "testing" } : host));
       if (showProgressModal) await waitForNextFrame();
+      let completedResults: RemoteProbeBatchItem[] | null = null;
+      const streamedResults = new Map<string, RemoteProbeBatchItem>();
+      const confirmedOfflineAliases = new Set<string>();
+      const applyCompletedItem = (item: RemoteProbeBatchItem) => {
+        streamedResults.set(item.hostAlias.toLowerCase(), item);
+        setHosts((current) => applyRemoteProbeBatchResultsToHosts(current, [item], copy.common.justNow));
+        if (item.result) {
+          setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(item.result!.task)], current));
+          if (showProgressModal) {
+            setCodexOperationModal((current) => finalizeOperationHost(
+              current,
+              requestId,
+              item.hostAlias,
+              item.result!.task,
+              item.ok,
+              item.result!.task.summary
+            ));
+          }
+        } else if (showProgressModal) {
+          setCodexOperationModal((current) => failOperationHost(
+            current,
+            requestId,
+            item.hostAlias,
+            item.error ?? copy.codexOperation.failed
+          ));
+        }
+      };
       try {
-        const result = await api.batchRemoteProbeCodex(aliases, 10000, requestId, showProgressModal ? (event) => {
-          setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
-        } : undefined);
+        const result = await api.batchRemoteProbeCodex(
+          aliases,
+          10000,
+          requestId,
+          (event) => {
+            if (hostOperationProgressConfirmsOffline(event)) {
+              confirmedOfflineAliases.add(event.hostAlias.toLowerCase());
+            }
+            setHosts((current) => applyHostOperationProgressConnectivityToHosts(current, event));
+            if (showProgressModal) {
+              setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
+            }
+          },
+          (event) => applyCompletedItem(event.item)
+        );
+        completedResults = result.results;
         setLatestCodexVersion(result.latestCodexVersion);
         for (const item of result.results) {
-          if (item.result) {
-            setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(item.result!.task)], current));
-            if (showProgressModal) {
-              setCodexOperationModal((current) => finalizeOperationHost(current, requestId, item.hostAlias, item.result!.task, item.ok, item.result!.task.summary));
-            }
-          } else {
-            if (showProgressModal) {
-              setCodexOperationModal((current) => failOperationHost(current, requestId, item.hostAlias, item.error ?? copy.codexOperation.failed));
-            }
-          }
+          if (!streamedResults.has(item.hostAlias.toLowerCase())) applyCompletedItem(item);
         }
         const [refreshedHosts, refreshedProfiles] = await Promise.all([api.listHosts(), api.listProfiles()]);
-        setHosts(refreshedHosts);
+        setHosts(applyRemoteProbeBatchResultsToHosts(refreshedHosts, result.results, copy.common.justNow));
         setProfiles(refreshedProfiles);
         const successful = result.results.filter((item) => item.ok).length;
         const ok = successful === result.results.length;
@@ -3262,7 +3404,18 @@ function App() {
             Boolean(taskIdForError(error))
           ));
         }
-        setHosts((current) => current.map((host) => aliases.includes(host.hostAlias) ? { ...host, status: "unknown" } : host));
+        const results = completedResults ?? Array.from(streamedResults.values());
+        const settledAliases = new Set([
+          ...results.map((item) => item.hostAlias.toLowerCase()),
+          ...confirmedOfflineAliases
+        ]);
+        setHosts((current) => {
+          const settled = applyRemoteProbeBatchResultsToHosts(current, results, copy.common.justNow);
+          return settled.map((host) => aliases.includes(host.hostAlias)
+            && !settledAliases.has(host.hostAlias.toLowerCase())
+            ? { ...host, status: "unknown" as const, latencyMs: null }
+            : host);
+        });
         throw error;
       } finally {
         setHostBusy((current) => {
@@ -5024,10 +5177,19 @@ function MonitorHostStatusIndicator({
       ? copy.monitor.statusNoSample
       : resourceStatusLabel(state, copy);
 
+  return <CircularStatusIndicator label={label} state={state} />;
+}
+
+function HostStatusIndicator({ copy, status }: { copy: UICopy; status: HostStatus }) {
+  const state = resolveHostStatusIndicatorState(status);
+  return <CircularStatusIndicator label={copy.status.host[status]} state={state} />;
+}
+
+export function CircularStatusIndicator({ label, state }: { label: string; state: MonitorHostIndicatorState }) {
   return (
     <span
       aria-label={label}
-      className="monitorHostStatusIndicator"
+      className="circularStatusIndicator"
       data-status={state}
       role="img"
       title={label}
@@ -5412,7 +5574,7 @@ function ServerMatrix({
                   <TitleWithIcon icon="hosts" level={3}>{host.name}</TitleWithIcon>
                   <p>{formatEndpoint(host)}</p>
                 </div>
-                <StatusBadge copy={copy} status={host.status} />
+                <HostStatusIndicator copy={copy} status={host.status} />
               </div>
 
               <dl className="hostMeta">
@@ -5604,6 +5766,7 @@ function HostsView({
               <thead>
                 <tr>
                   <th className="sshHostsAliasCol">{copy.hosts.alias}</th>
+                  <th className="sshHostsOnlineCol">{copy.status.host.online}</th>
                   <th className="sshHostsSourceCol">{copy.hosts.source}</th>
                   <th className="sshHostsAddressCol">{copy.hosts.hostName}</th>
                   <th className="sshHostsPortCol">{copy.hosts.port}</th>
@@ -5618,6 +5781,7 @@ function HostsView({
                 {sshConfigHosts.map((sshHost) => {
                   const host = hostByAlias.get(sshHost.alias.toLowerCase()) ?? null;
                   const busy = hostBusy[sshHost.alias];
+                  const hostStatus = host?.status ?? (busy === "test" ? "testing" : "unknown");
                   const codexStatus = hostCodexStatus(copy, host, busy, hosts, latestCodexVersion);
                   const latestStatus = latestCodexStatus(copy, latestCodexVersion);
                   const codexTested = isHostCodexTested(host);
@@ -5628,6 +5792,7 @@ function HostsView({
                   return (
                     <tr className="selectableRow" data-selected={selectedHostAlias === sshHost.alias} key={sshHost.alias} onClick={() => setSelectedHostAlias(sshHost.alias)}>
                       <td className="sshHostsAliasCol"><strong>{sshHost.alias}</strong></td>
+                      <td className="sshHostsOnlineCol"><HostStatusIndicator copy={copy} status={hostStatus} /></td>
                       <td className="sshHostsSourceCol"><Badge tone={sshHost.managed ? "blue" : "gray"}>{sshHostSourceLabel(copy, sshHost)}</Badge></td>
                       <td className="sshHostsAddressCol">{sshHost.hostName}</td>
                       <td className="sshHostsPortCol">{sshHost.port}</td>
@@ -5983,7 +6148,7 @@ function HostDetailsPanel({
           <TitleWithIcon icon="hosts" level={2}>{copy.hosts.detailsTitle(host?.hostAlias ?? copy.hosts.unknown)}</TitleWithIcon>
         </div>
         <div className="calloutMeta largeStatus">
-          {host ? <StatusBadge copy={copy} status={host.status} /> : <Badge tone="gray">{copy.hosts.unknown}</Badge>}
+          <HostStatusIndicator copy={copy} status={host?.status ?? "unknown"} />
         </div>
       </div>
 
@@ -6003,8 +6168,10 @@ function HostDetailsPanel({
           <dd><HostDetailValueBadge label={knownHostValue(host?.arch, copy)} tone={archTone(host?.arch, copy)} /></dd>
         </div>
         <div>
-          <dt>{copy.hosts.shell}</dt>
-          <dd><HostDetailValueBadge label={knownHostValue(host?.shell, copy)} tone={knownValueTone(host?.shell, copy)} /></dd>
+          <dt>{copy.hosts.source}</dt>
+          <dd>{host
+            ? <Badge tone={host.source === "managed" ? "blue" : "gray"}>{hostSourceLabel(copy, host)}</Badge>
+            : <HostDetailValueBadge label={copy.hosts.unknown} tone="gray" />}</dd>
         </div>
         <div>
           <dt>{copy.hosts.latency}</dt>

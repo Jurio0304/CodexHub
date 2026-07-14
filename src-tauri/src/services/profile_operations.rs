@@ -1353,6 +1353,19 @@ pub(crate) fn update_host_check(state: &AppState, alias: &str, ok: bool, duratio
     }
 }
 
+pub(crate) fn persist_host_check(
+    state: &AppState,
+    alias: &str,
+    ok: bool,
+    duration_ms: u64,
+) -> Result<(), String> {
+    // Serialize status-only writes with probe/profile updates so batch results cannot be lost.
+    let _write_guard = services::profile_links::acquire_write_lock(state)?;
+    update_host_check(state, alias, ok, duration_ms);
+    let hosts = state.hosts.lock().expect("hosts mutex poisoned").clone();
+    save_hosts_state(state, &hosts)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_host_probe_group_updates(
     host: &mut Host,
