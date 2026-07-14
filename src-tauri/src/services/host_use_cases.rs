@@ -421,6 +421,20 @@ where
     };
     task.ended_at = Some(timestamp_label());
     task.summary = format!("Sampled {total} host(s): {partial} partial, {failed} failed.");
+    // 每台主机保留一条可扫读日志，最终再追加整批汇总。
+    for snapshot in result.snapshots() {
+        let level = match snapshot.status() {
+            resource_monitor::HostResourceStatus::Ok => TaskLogLevel::Info,
+            resource_monitor::HostResourceStatus::Partial => TaskLogLevel::Warn,
+            resource_monitor::HostResourceStatus::Failed => TaskLogLevel::Error,
+        };
+        task.logs.push(basic_log(
+            &task_id,
+            task.logs.len() + 1,
+            level,
+            &redact_error_text(&snapshot.task_log_summary()),
+        ));
+    }
     task.logs.push(basic_log(
         &task_id,
         task.logs.len() + 1,
@@ -562,5 +576,18 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].action, "Sample host resources");
         assert!(matches!(tasks[0].status, TaskStatus::Failed));
+        let host_log = tasks[0]
+            .logs
+            .iter()
+            .find(|log| log.message.starts_with("Host bad alias!:"))
+            .expect("per-host resource log");
+        assert!(matches!(host_log.level, TaskLogLevel::Error));
+        assert!(host_log.message.contains("resource sampling failed:"));
+        let summary_log = tasks[0].logs.last().expect("resource summary log");
+        assert!(matches!(summary_log.level, TaskLogLevel::Warn));
+        assert_eq!(
+            summary_log.message,
+            "Sampled 1 host(s): 0 partial, 1 failed."
+        );
     }
 }

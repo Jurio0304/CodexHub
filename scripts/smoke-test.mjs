@@ -1889,6 +1889,12 @@ for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNo
 for (const token of ["record_task.unwrap_or(true)", "if should_record_task", "if !should_record_task", "run_resource_sample"]) {
   if (!rustBackend.includes(token)) fail(`missing automatic resource-sample task policy token: ${token}`);
 }
+for (const token of ["task_log_summary", "for snapshot in result.snapshots()", "HostResourceStatus::Ok => TaskLogLevel::Info", "HostResourceStatus::Partial => TaskLogLevel::Warn", "HostResourceStatus::Failed => TaskLogLevel::Error"]) {
+  if (!rustBackend.includes(token)) fail(`missing per-host resource task log token: ${token}`);
+}
+for (const token of ["mockResourceSampleTask", "mockResourceSnapshotLogMessage", 'snapshot.status === "ok" ? "info"', 'partial > 0 || failed > 0 ? "warn" : "info"']) {
+  if (!api.includes(token)) fail(`missing Mock per-host resource task log token: ${token}`);
+}
 for (const token of ["normalize_health_check_timeout_ms", "MAX_HEALTH_CHECK_TIMEOUT_MS", "CH_SSH_CONNECTED=1", "HostResourceSshStatus::Offline", "RemoteProbeBatchItemCompletedEvent"]) {
   if (!`${rustBackend}\n${sshRs}`.includes(token)) fail(`missing ten-second SSH health/status token: ${token}`);
 }

@@ -48,6 +48,7 @@ test("Mock automatic resource polling stays out of task history", async () => {
   const recorded = await mockApi.queryTasks({ limit: 10, cursor: null });
   expect(recorded.items).toHaveLength(1);
   expect(recorded.items[0]).toEqual(expect.objectContaining({ action: "Sample host resources" }));
+  expect(recorded.items[0]?.logs.map((log) => log.level)).toEqual(["info", "info"]);
 
   await mockApi.clearTaskHistory();
 });
@@ -67,6 +68,22 @@ test("Mock resource sampling emits one progressive snapshot per completed host",
   expect(events.map((event) => event.requestId)).toEqual(aliases.map(() => "mock-resource-request"));
   expect(events.map((event) => event.snapshot.hostAlias)).toEqual(aliases);
   expect(result.snapshots.map((snapshot) => snapshot.hostAlias)).toEqual(aliases);
+});
+
+test("Mock recorded resource sampling keeps one typed log per host plus a warning summary", async () => {
+  await mockApi.clearTaskHistory();
+  await mockApi.sampleHostResources(["mock-gpu-01", "mock-cpu-01", "mock-timeout-host"], 10000, true);
+
+  const task = (await mockApi.queryTasks({ limit: 10, cursor: null })).items[0];
+  expect(task?.logs.map((log) => log.level)).toEqual(["info", "warn", "error", "warn"]);
+  expect(task?.logs.slice(0, 3).map((log) => log.message)).toEqual([
+    expect.stringContaining("Host mock-gpu-01: resource sampling succeeded"),
+    expect.stringContaining("Host mock-cpu-01: resource sampling completed with partial data"),
+    expect.stringContaining("Host mock-timeout-host: resource sampling failed")
+  ]);
+  expect(task?.logs[task.logs.length - 1]?.message).toBe("Sampled 3 host(s): 1 partial, 1 failed.");
+
+  await mockApi.clearTaskHistory();
 });
 
 test("Mock resource timeout reports SSH offline at the ten-second boundary", async () => {

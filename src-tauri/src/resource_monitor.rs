@@ -41,6 +41,10 @@ impl HostResourceBatchResult {
             .count();
         (self.snapshots.len(), partial, failed)
     }
+
+    pub(crate) fn snapshots(&self) -> &[HostResourceSnapshot] {
+        &self.snapshots
+    }
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -68,6 +72,52 @@ pub(crate) enum HostResourceStatus {
     Ok,
     Partial,
     Failed,
+}
+
+impl HostResourceSnapshot {
+    pub(crate) fn status(&self) -> &HostResourceStatus {
+        &self.status
+    }
+
+    pub(crate) fn task_log_summary(&self) -> String {
+        let duration = self
+            .latency_ms
+            .map(|value| format!(" in {value} ms"))
+            .unwrap_or_default();
+        match &self.status {
+            HostResourceStatus::Ok => format!(
+                "Host {}: resource sampling succeeded{duration}; {} GPU(s) detected.",
+                self.host_alias,
+                self.gpus.len()
+            ),
+            HostResourceStatus::Partial => format!(
+                "Host {}: resource sampling completed with partial data{duration}; {} GPU(s) detected.",
+                self.host_alias,
+                self.gpus.len()
+            ),
+            HostResourceStatus::Failed => {
+                let detail = self
+                    .error
+                    .as_deref()
+                    .map(compact_log_detail)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "Unknown resource sampling error.".into());
+                format!("Host {}: resource sampling failed: {detail}", self.host_alias)
+            }
+        }
+    }
+}
+
+fn compact_log_detail(value: &str) -> String {
+    const MAX_CHARS: usize = 240;
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= MAX_CHARS {
+        return compact;
+    }
+    format!(
+        "{}...",
+        compact.chars().take(MAX_CHARS - 3).collect::<String>()
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, TS)]
@@ -810,6 +860,10 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
 ";
         let snapshot = parse_resource_stdout("gpu-host", output, 123);
         assert!(matches!(snapshot.status, HostResourceStatus::Ok));
+        assert_eq!(
+            snapshot.task_log_summary(),
+            "Host gpu-host: resource sampling succeeded in 123 ms; 1 GPU(s) detected."
+        );
         assert_eq!(snapshot.cpu.unwrap().usage_percent, Some(70.0));
         assert_eq!(snapshot.memory.unwrap().used_percent, Some(75.0));
         assert_eq!(snapshot.gpus.len(), 1);
@@ -901,6 +955,10 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
         assert!(matches!(snapshot.status, HostResourceStatus::Partial));
         assert!(matches!(snapshot.ssh_status, HostResourceSshStatus::Online));
         assert!(!snapshot.timed_out);
+        assert_eq!(
+            snapshot.task_log_summary(),
+            "Host partial-host: resource sampling completed with partial data in 42 ms; 0 GPU(s) detected."
+        );
         assert!(snapshot.cpu.is_none());
         assert!(snapshot.memory.is_none());
     }
@@ -927,6 +985,10 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
         ));
         assert!(snapshot.timed_out);
         assert_eq!(snapshot.latency_ms, None);
+        assert_eq!(
+            snapshot.task_log_summary(),
+            "Host lab: resource sampling failed: Resource sampling timed out after 30042 ms."
+        );
     }
 
     #[test]

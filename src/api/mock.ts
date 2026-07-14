@@ -807,6 +807,49 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
   };
 }
 
+function mockResourceSnapshotLogMessage(snapshot: HostResourceBatchResult["snapshots"][number]) {
+  const duration = snapshot.latencyMs === null ? "" : ` in ${snapshot.latencyMs} ms`;
+  if (snapshot.status === "ok") {
+    return `Host ${snapshot.hostAlias}: resource sampling succeeded${duration}; ${snapshot.gpus.length} GPU(s) detected.`;
+  }
+  if (snapshot.status === "partial") {
+    return `Host ${snapshot.hostAlias}: resource sampling completed with partial data${duration}; ${snapshot.gpus.length} GPU(s) detected.`;
+  }
+  const detail = (snapshot.error ?? "Unknown resource sampling error.").replace(/\s+/g, " ").trim().slice(0, 240);
+  return `Host ${snapshot.hostAlias}: resource sampling failed: ${detail}`;
+}
+
+function mockResourceSampleTask(result: HostResourceBatchResult) {
+  const partial = result.snapshots.filter((snapshot) => snapshot.status === "partial").length;
+  const failed = result.snapshots.filter((snapshot) => snapshot.status === "failed").length;
+  const total = result.snapshots.length;
+  const summary = `Sampled ${total} host(s): ${partial} partial, ${failed} failed.`;
+  const task = mockTaskRun(
+    "resource-monitor",
+    `${total} host(s)`,
+    "Sample host resources",
+    summary,
+    partial === 0 && failed === 0
+  );
+  task.logs = result.snapshots.map((snapshot, index) => ({
+    id: `${task.id}-log-${index + 1}`,
+    taskRunId: task.id,
+    level: snapshot.status === "ok" ? "info" : snapshot.status === "partial" ? "warn" : "error",
+    timestamp: task.startedAt,
+    message: mockResourceSnapshotLogMessage(snapshot),
+    durationMs: snapshot.latencyMs ?? (snapshot.timedOut ? 10000 : undefined),
+    timedOut: snapshot.timedOut
+  }));
+  task.logs.push({
+    id: `${task.id}-log-${task.logs.length + 1}`,
+    taskRunId: task.id,
+    level: partial > 0 || failed > 0 ? "warn" : "info",
+    timestamp: task.startedAt,
+    message: summary
+  });
+  return task;
+}
+
 function mockSampleHostResources(hostAliases: string[], recordTask = true): HostResourceBatchResult {
   const aliases = hostAliases.length > 0 ? hostAliases : ["mock-gpu-01", "mock-cpu-01", "mock-gpu-02"];
   const result: HostResourceBatchResult = {
@@ -814,16 +857,7 @@ function mockSampleHostResources(hostAliases: string[], recordTask = true): Host
     snapshots: aliases.map(mockHostResourceSnapshot)
   };
   if (recordTask) {
-    const partial = result.snapshots.filter((snapshot) => snapshot.status === "partial").length;
-    const failed = result.snapshots.filter((snapshot) => snapshot.status === "failed").length;
-    const total = result.snapshots.length;
-    recordMockTask(mockTaskRun(
-      "resource-monitor",
-      `${total} host(s)`,
-      "Sample host resources",
-      `Sampled ${total} host(s): ${partial} partial, ${failed} failed.`,
-      partial === 0 && failed === 0
-    ));
+    recordMockTask(mockResourceSampleTask(result));
   }
   return result;
 }
