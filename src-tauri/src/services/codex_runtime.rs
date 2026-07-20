@@ -4283,7 +4283,9 @@ pub(crate) fn reconcile_remote_codex_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use std::io::Write as _;
+    #[cfg(target_os = "linux")]
     use std::process::Stdio;
 
     fn output(success: bool, stdout: &str) -> ssh::SshCommandOutput {
@@ -4297,6 +4299,9 @@ mod tests {
         }
     }
 
+    // Execution fixtures model the supported Linux remote, not host-side MSYS
+    // or macOS filesystem and process semantics.
+    #[cfg(target_os = "linux")]
     fn run_sh(script: &str) -> Option<ssh::SshCommandOutput> {
         let mut child = match std::process::Command::new("sh")
             .arg("-s")
@@ -4324,6 +4329,11 @@ mod tests {
             duration_ms: 1,
             timed_out: false,
         })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn run_sh(_script: &str) -> Option<ssh::SshCommandOutput> {
+        None
     }
 
     fn run_session_cleanup_fixture(
