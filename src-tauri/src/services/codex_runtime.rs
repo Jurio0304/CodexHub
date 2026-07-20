@@ -1740,8 +1740,13 @@ if [ -e "$target_file" ] || [ -L "$target_file" ]; then
     legacy_release_entry=$verified_release_entry
     legacy_release_version=$verified_release_version
     legacy_binary_relative_path=$verified_binary_relative_path
-    select_verified_current_binary || fail_runtime current-release-identity-unknown
-    normalized_target_file_value="$standalone_current"
+    # A missing current link must not hide a separately verified legacy target.
+    # Existing invalid current state was already rejected above.
+    if select_verified_current_binary; then
+      normalized_target_file_value="$standalone_current"
+    else
+      normalized_target_file_value="$target_file_value"
+    fi
   else
     is_valid_executable_target "$target_file_value" || fail_runtime target-file-identity-unknown
     normalized_target_file_value="$target_file_value"
@@ -5330,7 +5335,7 @@ rm -rf "$root"
         })
         .expect("manual pre-login result");
         assert_eq!(parsed.status, CodexRuntimeReconcileStatus::ManualRequired);
-        assert_eq!(parsed.reason, "selected-target-below-pre-login-runtime");
+        assert_eq!(parsed.reason, "selected-target-below-locked-runtime");
         assert!(output.stdout.contains("CODEXHUB_TEST_LAUNCHER=absent"));
     }
 
@@ -5551,7 +5556,7 @@ CODEXHUB_RECONCILE_SCRIPT
 HOME="$home" SHELL=/bin/sh PATH="$home/.local/bin:$PATH" sh "$root/reconcile.sh" >"$root/out"
 cat "$root/out"
 printf 'CODEXHUB_TEST_CURRENT=%s\n' "$(readlink -f "$home/.codex/packages/standalone/current")"
-printf 'CODEXHUB_TEST_VERSION=%s\n' "$("$home/.local/bin/codex" --version | awk '{ print $NF }')"
+printf 'CODEXHUB_TEST_VERSION=%s\n' "$(HOME="$home" "$home/.local/bin/codex" --version | awk '{ print $NF }')"
 rm -rf "$root"
 "###
             .replace("__CURRENT_SETUP__", current_setup)
@@ -7010,23 +7015,42 @@ ln -s "$releases/0.141.0-x86_64-unknown-linux-musl/codex" \
 mkdir -p "$home/proc/321"
 uid=$(id -u)
 printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" >"$home/proc/321/status"
-printf '321 (codex) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1001\n' >"$home/proc/321/stat"
+printf '321 (codex) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1001\n' >"$home/proc/321/stat"
 ln -s "$releases/0.142.0/bin/codex" "$home/proc/321/exe"
+set +e
 HOME="$home" sh "$root/update-cleanup.sh" >"$root/first.out"
+first_status=$?
+set -e
+if [ "$first_status" -ne 0 ]; then
+  cat "$root/first.out"
+  exit "$first_status"
+fi
 backup=""
 for item in "$hub"/deletion-backups/update-*; do
   [ -d "$item" ] || continue
   [ -z "$backup" ] || exit 92
   backup=$item
 done
-[ -n "$backup" ]
+if [ -z "$backup" ]; then
+  cat "$root/first.out"
+  exit 93
+fi
 if [ "$(sed -n '1p' "$releases/0.142.0/.codexhub-managed-release" 2>/dev/null)" = "CodexHub managed standalone release v1" ]; then
   in_use_marker=valid
 else
   in_use_marker=missing
 fi
 rm -rf "$home/proc/321"
+set +e
 HOME="$home" sh "$root/managed-cleanup.sh" >"$root/second.out"
+second_status=$?
+set -e
+if [ "$second_status" -ne 0 ]; then
+  cat "$root/first.out"
+  printf '%s\n' CODEXHUB_TEST_SECOND_RUN
+  cat "$root/second.out"
+  exit "$second_status"
+fi
 cat "$root/first.out"
 printf '%s\n' CODEXHUB_TEST_SECOND_RUN
 cat "$root/second.out"
@@ -7087,7 +7111,8 @@ rm -rf "$root"
         };
         assert!(
             output.success(),
-            "update cleanup fixture failed: {}",
+            "update cleanup fixture failed: stdout={} stderr={}",
+            output.stdout,
             output.stderr
         );
         let (first, second) = output

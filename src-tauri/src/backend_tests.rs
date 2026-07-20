@@ -6,6 +6,10 @@ use crate::*;
 mod tests {
     use super::*;
 
+    fn normalized_fixture_source(source: &str) -> String {
+        source.replace("\r\n", "\n")
+    }
+
     fn test_profile(provider: &str) -> Profile {
         Profile {
             id: "profile-1".into(),
@@ -1785,7 +1789,7 @@ codexhub_test_sleep() {{ :; }}
 
     #[test]
     fn profile_apply_persists_confirmed_state_before_process_reload() {
-        let source = include_str!("services/profile_operations.rs");
+        let source = normalized_fixture_source(include_str!("services/profile_operations.rs"));
         let env_check = source
             .find("let api_key_env_present")
             .expect("API env verification");
@@ -1819,7 +1823,7 @@ codexhub_test_sleep() {{ :; }}
 
     #[test]
     fn install_runtime_reconcile_and_cleanup_order_is_stable() {
-        let source = include_str!("services/host_operations.rs");
+        let source = normalized_fixture_source(include_str!("services/host_operations.rs"));
         let reconcile_guard = source
             .find("let should_reconcile_runtime = successful_install.is_some() || has_runtime_recovery_floor")
             .expect("runtime recovery guard");
@@ -1854,7 +1858,8 @@ codexhub_test_sleep() {{ :; }}
         assert!(source[cleanup..].contains("action == RemoteCodexAction::Update"));
         assert!(source[cleanup..].contains("CodexReleaseCleanupPolicy::VerifiedOlderThan"));
         assert!(source[cleanup..].contains("CodexReleaseCleanupPolicy::ManagedOnly"));
-        let profile_source = include_str!("services/profile_operations.rs");
+        let profile_source =
+            normalized_fixture_source(include_str!("services/profile_operations.rs"));
         assert!(profile_source.contains("codex_runtime::CodexReleaseCleanupPolicy::ManagedOnly"));
         assert!(!profile_source.contains("CodexReleaseCleanupPolicy::VerifiedOlderThan"));
     }
@@ -2287,7 +2292,7 @@ printf 'CODEXHUB_TEST_NATIVE_HELPERS=ok\n'
             assert!(locked.contains("trap 'exit 143' TERM"));
         }
 
-        let host_source = include_str!("services/host_operations.rs");
+        let host_source = normalized_fixture_source(include_str!("services/host_operations.rs"));
         for required in [
             "with_remote_codex_runtime_writer_lock(CODEX_UNINSTALL_SCRIPT)",
             "CODEX_OFFICIAL_INSTALL_SCRIPT\n                    )",
