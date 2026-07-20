@@ -21,7 +21,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.6-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.7-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -114,11 +114,11 @@ For the Linux desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.4.6_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.4.6_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.6 macOS artifact is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.4.7_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.4.7_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.4.7 macOS artifact is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
-* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.6_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
-* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.6_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian x86_64: install `CodexHub_0.4.7_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian arm64: install `CodexHub_0.4.7_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
 ## ⚡ Quick Start
@@ -152,7 +152,7 @@ For everyday use, download the latest stable build from this repository's Releas
 * PATH repair checks `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`, and adds an idempotent CodexHub-managed block only when no existing `$HOME/.local/bin` entry is present.
 * Official installer is tried first; mirror and local-upload fallbacks are logged.
 * After a successful install or update method, CodexHub keeps a verified standalone target on the executable selected through `~/.codex/packages/standalone/current` (`bin/codex` for legacy/local releases or `codex` for the current official layout) and verifies that the target, managed launcher, and login-shell `codex` command report the same version. Each writer takes a current-user PID/starttime lock, re-reads the runtime after locking, and rejects both the candidate and post-write state below the highest verified version floor.
-* After final verification, Install and Profile apply remove only obsolete, strictly marked managed releases. Update additionally adopts every direct `releases/<entry>` version that has one unambiguous executable layout, matches its binary-reported version, and is strictly older than the newly verified version, then moves each eligible release, launcher capture, and known residual launcher/helper link into `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`. The task result reports the safe backup ID; the backup is retained for manual inspection, so disk space is not reclaimed until that backup is explicitly deleted. Current, targeted, same/newer, invalid-marker, raced, active, or otherwise uncertain releases stay in place. All cleanup shares the runtime writer lock, rechecks current-UID processes, requires a same-filesystem no-replace move, and never overwrites an existing backup. Only this reversible staged-Update path may tolerate an unreadable `/proc/<pid>/exe` for a stable, double-read current-user `sshd`, `(sd-pam)`, `sftp-server`, or `fusermount3` session helper; its PID/starttime/comm/full argv0 snapshot must remain identical at every candidate check, and the task summary reports the ignored helper count. Install/Profile cleanup remains strict, while any new, changed, unknown, or Codex-like process still defers cleanup.
+* After final verification, Install and Profile apply remove only obsolete, strictly marked managed releases. Update additionally adopts every direct `releases/<entry>` version that has one unambiguous executable layout, matches its binary-reported version, and is strictly older than the newly verified version, then moves each eligible release, launcher capture, and known residual launcher/helper link into `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`. The task result reports the safe backup ID; the backup is retained for manual inspection, so disk space is not reclaimed until that backup is explicitly deleted. Current, targeted, same/newer, invalid-marker, raced, active, or otherwise uncertain releases stay in place. All cleanup shares the runtime writer lock, rechecks current-UID processes, requires a same-filesystem no-replace move, and never overwrites an existing backup. Only this reversible staged-Update path may tolerate an unreadable `/proc/<pid>/exe` for a stable, double-read current-user `sshd`, `(sd-pam)`, `sftp-server`, or `fusermount3` session helper; an exact `/usr/lib/systemd/systemd --user` or `/lib/systemd/systemd --user` process with no extra argument; or a zombie with state `Z`, an empty command line, `Threads: 1`, and only its leader TID. PID/starttime/state/comm/full-command-line identity and the zombie task proof where applicable must remain stable at every candidate check, and the task summary reports the ignored process count. Install/Profile cleanup remains strict, while any new, changed, unknown, multi-thread zombie, or Codex-like process still defers cleanup.
 
 ### Apply a Profile
 
@@ -174,8 +174,8 @@ For everyday use, download the latest stable build from this repository's Releas
 
 ## ⚠️ Known Limitations
 
-* The v0.4.6 macOS artifact remains unsigned/ad-hoc; Developer ID signing and notarization are not configured yet.
-* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.4.6.
+* The v0.4.7 macOS artifact remains unsigned/ad-hoc; Developer ID signing and notarization are not configured yet.
+* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.4.7.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub can reload the current SSH user's remote Codex processes after profile apply, but it cannot force the local ChatGPT/Codex App to reconnect or use private app IPC.
 * Remote reload is available only inside profile apply; there is no standalone Host reload button.

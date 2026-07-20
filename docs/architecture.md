@@ -1,6 +1,6 @@
 # CodexHub Architecture
 
-Date: 2026-07-17
+Date: 2026-07-20
 Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 plus arm64 Linux deb release-build support.
 
 ## Architecture Principle
@@ -188,7 +188,7 @@ type OperationLog = {
 
 ## Release Channel Data Isolation
 
-CodexHub v0.4.6 continues to define exactly two release channels: `stable` and `dev`.
+CodexHub v0.4.7 continues to define exactly two release channels: `stable` and `dev`.
 
 - `stable` is the public release channel. It uses `src-tauri/tauri.conf.json`, `productName: CodexHub`, `identifier: app.codexhub.desktop`, and window title `CodexHub`.
 - `dev` is for development, test runs, previews, and manual acceptance. It uses `src-tauri/tauri.dev.conf.json`, `productName: CodexHub Dev`, `identifier: dev.codexhub.desktop`, and window title `CodexHub Dev`.
