@@ -38,6 +38,10 @@ const requiredFiles = [
   "src/api/index.ts",
   "src/api/invoke.ts",
   "src/api/mock.ts",
+  "src/api/normalize.ts",
+  "src/api/desktop.test.ts",
+  "src/api/normalize.test.ts",
+  "src/ui/ProfileApplyFlow.test.tsx",
   "src/models.ts",
   "src/platform.ts",
   "src/settings.ts",
@@ -79,6 +83,7 @@ const requiredFiles = [
   "src-tauri/src/commands/updater.rs",
   "src-tauri/src/adapters/credentials.rs",
   "src-tauri/src/adapters/events.rs",
+  "src-tauri/src/services/codex_runtime.rs",
   "src-tauri/src/services/profile_links.rs",
   "src-tauri/src/services/host_operations.rs",
   "src-tauri/src/services/host_use_cases.rs",
@@ -264,6 +269,28 @@ const requiredText = [
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
+  [readme, "strictly matched Codex processes owned by the current remote SSH user"],
+  [readme, "executable selected through `~/.codex/packages/standalone/current`"],
+  [readme, "strictly marked managed releases"],
+  [zhReadme, "身份已严格确认的远端 Codex 进程"],
+  [zhReadme, "托管 target 继续跟随 `standalone/current`"],
+  [zhReadme, "版本低于新版本的 `releases/<entry>`"],
+  [architecture, "Remote Codex Reload Boundary"],
+  [architecture, "Managed Runtime Coordination And Release Cleanup"],
+  [architecture, "target, launcher, and login-shell `codex --version` values agree"],
+  [architecture, "/proc/<pid>/status"],
+  [architecture, "never raw process command lines"],
+  [mvp, "per-apply confirmation for remote Codex process activation"],
+  [mvp, "serialize CodexHub runtime writers with a current-UID/PID/starttime lock"],
+  [limitations, "there is no standalone Host reload button"],
+  [limitations, "Staged Update backups keep consuming the same disk space until the user explicitly deletes them after inspection"],
+  [architecture, "deletion-backups/update-<UTC>-<PID>"],
+  [mvp, "automatic permanent deletion of staged Update backups"],
+  [limitations, "codex-original.<timestamp>.<pid>"],
+  [limitations, ".codexhub-managed-capture"],
+  [limitations, "GNU `mv -T -n`"],
+  [limitations, "shared current-user writer lock"],
+  [limitations, "raw SSH stdout/stderr and process command lines are discarded"],
   [readme, "Windows tray / macOS menu bar / Linux tray status icon"],
   [readme, "MIT"],
   [zhReadme, "Windows 托盘 / macOS 菜单栏 / Linux 托盘状态图标"],
@@ -321,7 +348,7 @@ const requiredText = [
   [limitations, "Linux desktop support targets Ubuntu/Debian x86_64 and arm64"],
   [limitations, "direct GitHub repository URLs and GitHub"],
   [limitations, "CodexHub writes the value only to the selected host's `~/.codex-hub/env`"],
-  [limitations, "CodexHub must not write Codex App private state"],
+  [limitations, "CodexHub never reads or writes local ChatGPT/Codex App private files"],
   [limitations, "fixed maximum of six concurrent hosts"],
   [security, "CodexHub-managed remote `~/.codex-hub/env`"],
   [macosSupport, "Menu bar/status item restore behavior"],
@@ -405,6 +432,7 @@ const rustBackend = [
   "src-tauri/src/commands/updater.rs",
   "src-tauri/src/adapters/credentials.rs",
   "src-tauri/src/adapters/events.rs",
+  "src-tauri/src/services/codex_runtime.rs",
   "src-tauri/src/services/profile_links.rs",
   "src-tauri/src/services/host_operations.rs",
   "src-tauri/src/services/host_use_cases.rs",
@@ -423,6 +451,7 @@ const rustHostUseCases = read("src-tauri/src/services/host_use_cases.rs");
 const rustHostOperations = read("src-tauri/src/services/host_operations.rs");
 const rustSkillOperations = read("src-tauri/src/services/skill_operations.rs");
 const rustProfileOperations = read("src-tauri/src/services/profile_operations.rs");
+const rustCodexRuntime = read("src-tauri/src/services/codex_runtime.rs");
 const sshRs = read("src-tauri/src/ssh.rs");
 const rustPlatform = read("src-tauri/src/platform.rs");
 const tsPlatform = read("src/platform.ts");
@@ -466,6 +495,18 @@ for (const token of [
   "pub(crate) step_id: Option<String>"
 ]) {
   if (!rustBackend.includes(token)) fail(`missing task-step schema v4 token: ${token}`);
+}
+for (const token of [
+  "pub(crate) fn task_log_id",
+  "Task payload invariant violation",
+  "validate_task_payload",
+  "fail_running_task",
+  "is_payload_invariant_error"
+]) {
+  if (!rustBackend.includes(token)) fail(`missing durable task-log identity guard: ${token}`);
+}
+if (rustBackend.includes('id: format!("{task_id}-log')) {
+  fail("Rust task-log constructors must use the shared task_log_id allocator");
 }
 for (const token of [
   "HostOperationProgressEvent",
@@ -990,10 +1031,200 @@ for (const token of [
   "$HOME/.codex-hub/env",
   "CodexHub managed launcher",
   "CODEXHUB_REMOTE_ENV_CHANGED",
-  "CODEXHUB_CODEX_LAUNCHER_CHANGED",
+  "CODEXHUB_RUNTIME_LAUNCHER_CHANGED",
+  "reconcile_after_successful_remote_env_write",
   "shell_single_quote(&shell_single_quote(api_key))"
 ]) {
   if (!rustBackend.includes(token)) fail(`missing remote readiness probe token: ${token}`);
+}
+for (const token of [
+  "RemoteCodexReloadMode",
+  "RemoteCodexReloadStatus",
+  "RemoteCodexReloadResult",
+  "ProfileApplyOptions",
+  "ProfileApplyOutcome",
+  "remote_codex_reload_script",
+  "parse_remote_codex_reload_result",
+  "remote_codex_reload_log_message",
+  '"profile-apply"',
+  '"remote-codex-reload"',
+  '"runtime-reconcile"',
+  '"release-cleanup"'
+]) {
+  if (!rustBackend.includes(token)) fail(`missing remote Codex reload contract token: ${token}`);
+}
+const profileApplyHostFlow = rustProfileOperations.match(
+  /fn apply_profile_to_host[\s\S]*?\n}\r?\n\r?\nfn finish_failed_profile_apply/
+)?.[0] ?? "";
+if (!profileApplyHostFlow) fail("missing single-host profile apply flow");
+const profileApplyOrder = [
+  "let remote_env_configured",
+  "let api_key_env_present",
+  "let local_persist_error",
+  "let reload = if remote_apply_ready"
+].map((token) => profileApplyHostFlow.indexOf(token));
+if (profileApplyOrder.some((index) => index < 0) || profileApplyOrder.some((index, position) => position > 0 && index <= profileApplyOrder[position - 1])) {
+  fail("profile apply must verify env, persist confirmed state, then reload remote Codex processes");
+}
+const commitScriptSource = rustProfileOperations.match(
+  /pub\(crate\) fn profile_apply_commit_script[\s\S]*?\n}\r?\n\r?\npub\(crate\) fn profile_apply_metadata_script/
+)?.[0] ?? "";
+const metadataScriptSource = rustProfileOperations.match(
+  /pub\(crate\) fn profile_apply_metadata_script[\s\S]*?\n}\r?\n\r?\n\/\/ Reloads only identities/
+)?.[0] ?? "";
+for (const [name, source] of [["commit", commitScriptSource], ["metadata", metadataScriptSource]]) {
+  if (!source) fail(`missing profile ${name} script source`);
+  for (const forbidden of ["safe_reconnect", "CODEXHUB_RELOAD", "kill -TERM"]) {
+    if (source.includes(forbidden)) fail(`profile ${name} script must not embed process reload logic: ${forbidden}`);
+  }
+}
+const reloadScriptSource = rustProfileOperations.match(
+  /pub\(crate\) fn remote_codex_reload_script[\s\S]*?\n}\r?\n\r?\npub\(crate\) fn parse_remote_codex_reload_result/
+)?.[0] ?? "";
+if (!reloadScriptSource) fail("missing isolated remote Codex reload script source");
+for (const token of [
+  "for proc_dir in /proc/[0-9]*",
+  "proc_uid=$(awk '/^Uid:/",
+  "proc_start=$(sed 's/^[^)]*) //'",
+  "codex:codex:app-server",
+  "codex:codex:remote-control",
+  "preserved_cli=$((preserved_cli + 1))",
+  "[ \"$proc_start\" = \"$expected_start\" ]",
+  "kill -TERM \"$pid\"",
+  "[ \"$elapsed\" -lt 5 ]",
+  "[ \"$elapsed\" -lt 15 ]",
+  "manual-required old-process-still-running",
+  "manual-required unverified-process",
+  "reconnected replacement-observed"
+]) {
+  if (!reloadScriptSource.includes(token)) fail(`remote reload safety path is missing: ${token}`);
+}
+for (const forbidden of [
+  "pkill",
+  "killall",
+  "SIGKILL",
+  "kill -KILL",
+  "kill -9",
+  "kill -- -",
+  "kill -TERM -",
+  "kill -TERM 0",
+  "[[",
+  "]]",
+  "<(",
+  ">(",
+  "declare -a",
+  "function "
+]) {
+  if (reloadScriptSource.includes(forbidden)) fail(`remote reload script contains forbidden shell/process token: ${forbidden}`);
+}
+for (const line of reloadScriptSource.split(/\r?\n/u).filter((line) => line.includes("printf"))) {
+  if (/proc_(?:argv|arg1|arg2|comm)/u.test(line)) fail("remote reload protocol must not print a process command line");
+}
+const reloadLoggingSource = rustProfileOperations.match(
+  /pub\(crate\) fn reload_remote_codex_processes[\s\S]*?\n}\r?\n\r?\npub\(crate\) fn remote_codex_reload_log_message/
+)?.[0] ?? "";
+if (!reloadLoggingSource.includes("logs.push(basic_log(")) fail("remote reload logs must persist only a structured local summary");
+if (reloadLoggingSource.includes("command_log(")) fail("remote reload logs must not persist raw SSH command/stdout/stderr");
+const writerLockStart = rustCodexRuntime.indexOf("pub(crate) const REMOTE_CODEX_RUNTIME_WRITER_LOCK_PRELUDE");
+const runtimeScriptStart = rustCodexRuntime.indexOf("pub(crate) const REMOTE_CODEX_RUNTIME_RECONCILE_SCRIPT");
+const cleanupScriptStart = rustCodexRuntime.indexOf("pub(crate) const REMOTE_CODEX_RELEASE_CLEANUP_SCRIPT");
+const cleanupFunctionStart = rustCodexRuntime.indexOf("pub(crate) fn remote_codex_release_cleanup_script");
+if (writerLockStart < 0 || runtimeScriptStart <= writerLockStart || cleanupScriptStart <= runtimeScriptStart || cleanupFunctionStart <= cleanupScriptStart) {
+  fail("missing isolated managed-runtime reconcile/cleanup scripts");
+}
+const writerLockSource = rustCodexRuntime.slice(writerLockStart, runtimeScriptStart);
+const runtimeReconcileScriptSource = rustCodexRuntime.slice(runtimeScriptStart, cleanupScriptStart);
+const releaseCleanupScriptSource = rustCodexRuntime.slice(cleanupScriptStart, cleanupFunctionStart);
+for (const token of [
+  'codexhub_runtime_lock_path="$codexhub_runtime_lock_root/.codexhub-runtime-cleanup.lock"',
+  "codexhub_runtime_process_identity()",
+  'ln "$codexhub_runtime_lock_candidate" "$codexhub_runtime_lock_path"',
+  "codexhub_runtime_capture_locked_state()",
+  "codexhub_locked_runtime_floor",
+  "codexhub_runtime_verify_post_mutation_floor()",
+  'mv -T -n "$codexhub_runtime_lock_path" "$stale_lock"',
+  "trap 'exit 143' TERM"
+]) {
+  if (!writerLockSource.includes(token)) fail(`managed runtime writer lock path is missing: ${token}`);
+}
+for (const token of [
+  "select_verified_current_binary()",
+  "for current_relative in bin/codex codex; do",
+  '[ "$current_match_count" -eq 1 ] || return 1',
+  'standalone_current="$current_link/$saved_current_relative"',
+  'normalized_target_file_value="$standalone_current"',
+  'mark_verified_release "$legacy_release_dir" "$legacy_release_version"',
+  'capture_name="codex-original.$timestamp.$$"',
+  'capture_marker_suffix=".codexhub-managed-capture"',
+  'verify_managed_capture "$capture_path" "$capture_name"',
+  "restore_exact_current_floor()",
+  "trap runtime_signal_failure HUP INT TERM",
+  'source_moved=yes\n  if ! mv "$launcher" "$capture_path"',
+  'target_changed=yes\n  if ! mv "$target_tmp" "$target_file"',
+  'launcher_changed=yes\n  if ! mv "$launcher_tmp" "$launcher"',
+  'launcher_version=$(normalized_version_for_path "$launcher"',
+  "login_version=$(login_shell_version",
+  'target_version=$(normalized_version_for_path "$candidate"',
+  "runtime-version-mismatch",
+  "selected-target-would-downgrade",
+  "runtime-version-below-operation-start"
+]) {
+  if (!runtimeReconcileScriptSource.includes(token)) fail(`managed runtime anti-regression path is missing: ${token}`);
+}
+for (const token of [
+  'marker_name=".codexhub-managed-release"',
+  'cleanup_policy=${codexhub_cleanup_policy:-managed-only}',
+  "CODEXHUB_CLEANUP_ADOPTED=%s",
+  'capture_marker_suffix=".codexhub-managed-capture"',
+  'for candidate in "$release_root"/*',
+  'verify_release_identity "$candidate"',
+  'managed_marker_valid "$candidate" "$candidate_version"',
+  'version_is_strictly_lower "$candidate_version" "$cleanup_verified_version"',
+  'adopt_verified_release "$candidate" "$candidate_real" "$candidate_name" "$candidate_version"',
+  'ln "$marker_tmp" "$marker"',
+  '"$candidate_real" = "$protected_current"',
+  '"$candidate_real" = "$protected_target"',
+  "scan_current_uid_executables",
+  'release_in_use_now "$candidate_real"',
+  'quarantine="$release_root/.codexhub-quarantine.$candidate_name.$$"',
+  'mv -T -n "$candidate" "$quarantine"',
+  'release_in_use_now "$isolated_real"',
+  'rm -rf "$quarantine"',
+  'for candidate in "$hub_dir"/codex-original.*',
+  'verify_capture_candidate "$candidate"',
+  '"$candidate_real" = "$protected_capture"',
+  'capture_in_use_now "$isolated_real"',
+  'rm -f "$capture_marker"',
+  'cleanup_lock="$cleanup_lock_root/.codexhub-runtime-cleanup.lock"',
+  "verify_owned_cleanup_lock",
+  "proc_starttime_after",
+  "proc_exe_after",
+  "trap 'trap - EXIT; cleanup_work_dir; exit 143' TERM"
+]) {
+  if (!releaseCleanupScriptSource.includes(token)) fail(`managed release cleanup safety path is missing: ${token}`);
+}
+for (const forbidden of [
+  "find ",
+  "pkill",
+  "killall",
+  "SIGKILL",
+  'mv "$candidate" "$quarantine"',
+  'find "$release_root"',
+  'rm -rf "$release_root"',
+  'rm -rf "$candidate"'
+]) {
+  if (releaseCleanupScriptSource.includes(forbidden)) fail(`managed release cleanup contains forbidden broad action: ${forbidden}`);
+}
+for (const token of [
+  "CodexReleaseCleanupPolicy::ManagedOnly",
+  "CodexReleaseCleanupPolicy::VerifiedOlderThan",
+  "remote_codex_release_cleanup_script_with_policy"
+]) {
+  if (!rustCodexRuntime.includes(token)) fail(`missing release cleanup policy contract: ${token}`);
+}
+if (!rustHostOperations.includes("action == RemoteCodexAction::Update") ||
+    !rustHostOperations.includes("CodexReleaseCleanupPolicy::VerifiedOlderThan")) {
+  fail("Update must select verified-old-release adoption only after final verification");
 }
 const remoteReadinessApp = read("src/App.tsx");
 const remoteReadinessModels = read("src/models.ts");
@@ -1014,6 +1245,7 @@ for (const token of [
 }
 
 const app = read("src/App.tsx");
+const mockApiSource = read("src/api/mock.ts");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
 const operationProgressSource = read("src/ui/OperationProgress.tsx");
 const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
@@ -1263,6 +1495,15 @@ for (const token of [
 }
 if (!app.includes("OperationProgressModal")) fail("Host operations should use the shared step progress modal");
 if (!app.includes("HostOperationProgressEvent")) fail("Host operations should consume structured progress events");
+const managedMaintenanceStepIds = '["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "runtime-reconcile", "final-verification", "release-cleanup"]';
+for (const action of ["codex-install", "codex-update"]) {
+  if (!app.includes(`${JSON.stringify(action)}: ${managedMaintenanceStepIds}`)) {
+    fail(`${action} pending progress must use the stable runtime reconcile/verification/cleanup order`);
+  }
+}
+if (!mockApiSource.includes(`const installStepIds = ${managedMaintenanceStepIds}`)) {
+  fail("mock Codex maintenance must use the stable runtime reconcile/verification/cleanup order");
+}
 if (!app.includes("CodexUninstallConfirmModal") || !app.includes("uninstallCodexConfirmBody") || !app.includes('runRemoteCodexAction(target.hostAlias, "uninstall")')) fail("Remote Codex uninstall should require an explicit confirmation modal before execution");
 for (const token of [
   "OperationProgressModal",
@@ -1395,8 +1636,31 @@ for (const token of [
 ]) {
   if (!app.includes(token)) fail(`missing compact Profiles UI label: ${token}`);
 }
-for (const token of ["ProfileEditModal", "ProfileHostSelectModal", "ProfileApplyPreviewModal", "ProfileApplyOperationModal", "ProfileModelCombobox", "ProfileStorageBadge", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileRowActions", "profileApplyTable", "profileHostSelectModal", "profileFastModeSegment"]) {
+for (const token of ["ProfileEditModal", "ProfileHostSelectModal", "ProfileApplyPreviewModal", "ProfileApplyConfirmModal", "ProfileApplyOperationModal", "ProfileModelCombobox", "ProfileStorageBadge", "profileLibraryActions", "ccSwitchActionButton", "profileCcSwitchStatus", "profileRowActions", "profileApplyTable", "profileHostSelectModal", "profileFastModeSegment"]) {
   if (!app.includes(token)) fail(`missing Profiles modal/action token: ${token}`);
+}
+for (const token of [
+  'useState<RemoteCodexReloadMode>("app-services")',
+  'setReloadMode("app-services")',
+  'mode: "none"',
+  'mode: "app-services"',
+  'mode: "all-codex"',
+  'name="remote-codex-reload-mode"',
+  "allCodexSelected && !allCodexAcknowledged",
+  "onConfirm({ remoteCodexReloadMode: reloadMode })",
+  "onNext={requestProfileApply}",
+  "onNext={() => handleApply()}",
+  "handleApply([host.id])",
+  'status: "running"',
+  'result.outcome === "manual-reconnect"',
+  "copy.profiles.manualReconnectGuide",
+  "copy.feedback.viewTask",
+  "onOpenTask(taskId)"
+]) {
+  if (!app.includes(token)) fail(`missing profile apply confirmation/result behavior: ${token}`);
+}
+if ((app.match(/onRunProfileApply\(/gu) ?? []).length !== 1) {
+  fail("all profile apply entry points must converge on the single post-confirmation runner");
 }
 for (const token of [
   'const CODEX_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2", "gpt-5-codex"]',
@@ -1576,8 +1840,8 @@ if (!profileApplyTableBlock) fail("missing profile apply table block");
 if (profileApplyTableBlock.includes('type="checkbox"') || profileApplyTableBlock.includes("data-selected")) {
   fail("Profile apply table should not use checkbox or selected-row state for applied config");
 }
-for (const token of ["const alreadyApplied = selectedProfile ? profileMatchesConfirmedHostApiConfig(selectedProfile, host) : false", "disabled={!selectedProfile || alreadyApplied || profileApplyRunningHostIdSet.has(host.id)}"]) {
-  if (!profileApplyTableBlock.includes(token)) fail(`missing profile apply applied-state token: ${token}`);
+for (const token of ["disabled={!selectedProfile || profileApplyRunningHostIdSet.has(host.id)}", "handleApply([host.id])"]) {
+  if (!profileApplyTableBlock.includes(token)) fail(`missing profile re-apply token: ${token}`);
 }
 for (const token of ["setSelectedHostIds([])", "const alreadyApplied = profileMatchesConfirmedHostApiConfig(profile, host)", "const disabled = alreadyApplied || applying", "disabled={disabled}", "setSelectedHostIds(eligibleHostIds)"]) {
   if (!app.includes(token)) fail(`missing profile host picker eligibility token: ${token}`);
@@ -1713,6 +1977,19 @@ for (const token of [
 ]) {
   if (!api.includes(token)) fail(`missing Profile/API config token: ${token}`);
 }
+for (const token of [
+  "normalizeProfileApplyOptions",
+  "normalizeProfileApplyResult",
+  "options: normalizeProfileApplyOptions(options)",
+  "mockApplyProfile(profileId, hostIds, normalizeProfileApplyOptions(options))"
+]) {
+  if (!api.includes(token)) fail(`missing profile apply reload API boundary token: ${token}`);
+}
+for (const forbidden of ["remoteReloadCodex", "remote_reload_codex", "reloadRemoteCodexHost"]) {
+  if (`${api}\n${rustBackend}`.includes(forbidden)) {
+    fail(`remote Codex reload must not expose a standalone Host action: ${forbidden}`);
+  }
+}
 if (api.includes("exportProfiles")) fail("Profiles export API should be removed");
 for (const token of [
   "listSkillPacks",
@@ -1772,7 +2049,24 @@ for (const token of ["AppUpdateStatus", "AppUpdateState", "pending-configuration
 for (const token of ["SshBootstrapProgressEvent", "HostOperationProgressEvent", "TaskStep", "TaskStepStatus", "RemoteCodexMaintenanceResult", "RemoteProbeBatchResult", "RemoteCodexBatchResult", "check-version", "password_login", "verify_alias_login"]) {
   if (!models.includes(token)) fail(`missing bootstrap model token: ${token}`);
 }
-for (const token of ["apiKeyEnvVar", "credentialStored", "ProfileApiKeyResult", "ProfileApplyPreview", "ProfileApplyBatchResult", "ProfileApplyHostResult"]) {
+for (const token of [
+  "apiKeyEnvVar",
+  "credentialStored",
+  "ProfileApiKeyResult",
+  "ProfileApplyPreview",
+  "ProfileApplyBatchResult",
+  "ProfileApplyHostResult",
+  "ProfileApplyOptions",
+  "ProfileApplyOutcome",
+  "RemoteCodexReloadMode",
+  "RemoteCodexReloadStatus",
+  "RemoteCodexReloadResult",
+  "remoteCodexReloadMode",
+  "targetedCount",
+  "preservedCliCount",
+  "replacementObserved",
+  "manual-reconnect"
+]) {
   if (!models.includes(token)) fail(`missing Profile/API model token: ${token}`);
 }
 for (const token of ["HostResourceSnapshot", "GpuSnapshot", "GpuProcessSnapshot", "HostResourceBatchResult", "CpuSnapshot", "MemorySnapshot", "elapsedSeconds"]) {

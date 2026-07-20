@@ -20,6 +20,9 @@ import type {
   Profile,
   ProfileApiKeyResult,
   ProfileApplyBatchResult,
+  ProfileApplyHostResult,
+  ProfileApplyOptions,
+  ProfileApplyOutcome,
   ProfileApplyPreview,
   ProfileDraft,
   ProfileImportExport,
@@ -27,6 +30,8 @@ import type {
   CcSwitchDetection,
   RemoteCodexAction,
   RemoteCodexMaintenanceResult,
+  RemoteCodexReloadMode,
+  RemoteCodexReloadStatus,
   RemoteProbeBatchItem,
   RemoteProbeResult,
   RemoteSkill,
@@ -299,15 +304,23 @@ type MonitorDragState = {
   x: number;
   y: number;
 };
+export type ProfileApplyOperationStatus = "running" | ProfileApplyOutcome;
 type ProfileApplyOperationModalState = {
   requestId: string;
   profileName: string;
   hostNames: string[];
-  status: CodexOperationModalStatus;
+  status: ProfileApplyOperationStatus;
   logs: Array<{ level: "info" | "warn" | "error"; message: string }>;
+  results: ProfileApplyHostResult[];
   tasks: TaskRun[];
   message?: string;
   error?: string;
+};
+type ProfileApplyConfirmState = {
+  requestId: string;
+  profile: Profile;
+  hostIds: string[];
+  hostNames: string[];
 };
 
 const CODEX_MODEL_OPTIONS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.2", "gpt-5-codex"];
@@ -719,8 +732,34 @@ export const uiCopy = {
       perHostStatus: "Per-host status",
       previewApply: "Preview",
       applySelected: "Apply selected",
+      next: "Next",
       applyOne: "Apply",
       batchApply: "Batch apply",
+      applyConfirmTitle: "Apply configuration",
+      applyConfirmBody: (name: string, count: number) => `Apply ${name} to ${count} selected host${count === 1 ? "" : "s"} and choose how remote Codex processes should reload.`,
+      reloadChoiceTitle: "After applying",
+      reloadAppServices: "Reload Codex App services (recommended)",
+      reloadAppServicesBody: "Stops confirmed app-server and remote-control services while preserving interactive CLI and exec sessions.",
+      reloadNone: "Apply configuration only",
+      reloadNoneBody: "Leaves all remote Codex processes running. Existing App connections may keep the previous API key.",
+      reloadAll: "Stop all remote Codex sessions",
+      reloadAllBody: "Also stops confirmed interactive, exec, login, resume, and automated Codex sessions for the remote SSH user.",
+      reloadAllWarning: "All confirmed remote Codex sessions on the selected hosts will be interrupted.",
+      reloadAllAcknowledge: "I understand existing CLI, exec, and automated tasks will be interrupted",
+      confirmApply: "Apply configuration",
+      configurationResult: "Configuration",
+      reloadResult: "Codex reload",
+      configStatusPending: "Waiting",
+      configStatusSuccess: "Applied",
+      configStatusNoChange: "No changes",
+      configStatusFailed: "Failed",
+      reloadStatusNotRequested: "Not requested",
+      reloadStatusSkipped: "Skipped",
+      reloadStatusNotRunning: "Not running",
+      reloadStatusReloaded: "Reloaded",
+      reloadStatusReconnected: "Reconnected",
+      reloadStatusManualRequired: "Manual reconnect required",
+      reloadStatusFailed: "Failed",
       backupExpected: "backup",
       noChangeExpected: "no change",
       noPreview: "Select hosts and preview before applying.",
@@ -732,7 +771,10 @@ export const uiCopy = {
       applyOperationStarted: (name: string, count: number) => `Applying ${name} to ${count} selected host${count === 1 ? "" : "s"}.`,
       applyOperationWaiting: "Running remote config scripts...",
       applyOperationSuccess: (name: string, count: number) => `${name} finished on ${count} host${count === 1 ? "" : "s"}.`,
+      applyOperationPartial: (completed: number, total: number) => `Configuration applied on ${completed}/${total} hosts; review the remaining failures.`,
+      applyOperationManualReconnect: "Configuration was applied, but one or more remote Codex App services did not reconnect automatically.",
       applyOperationFailed: "One or more hosts failed to apply this API config.",
+      manualReconnectGuide: "Successfully saved configuration remains active. In the local ChatGPT/Codex App, open Settings > Codex > Connections and manually reconnect any host whose App service did not recover.",
       alreadyApplied: "Already applied",
       importReady: (count: number) => `${count} profiles imported.`,
       deleteConfirm: (name: string) => `Delete profile ${name}?`,
@@ -756,6 +798,7 @@ export const uiCopy = {
       success: "Completed",
       failed: "Failed",
       partial: "Partially completed",
+      manualReconnect: "Manual reconnect required",
       pending: "Waiting",
       skipped: "Not required",
       progress: "Progress",
@@ -767,7 +810,7 @@ export const uiCopy = {
       batchUpdateStarted: (count: number) => `Updating Codex on ${count} hosts with up to six running at once.`,
       waiting: "Waiting for remote output...",
       installHint: "Install tries the official installer, remote native mirror, remote npm mirror, local upload, then final verification.",
-      updateHint: "Update tries the official installer, remote native mirror, remote npm mirror, local upload, then final verification.",
+      updateHint: "Update tries the official installer, remote native mirror, remote npm mirror, local upload, then final verification and staged backup of verified older runtimes under ~/.codex-hub/deletion-backups/.",
       uninstallHint: "Uninstall permanently deletes remote Codex files, config, and CodexHub-managed env/API key files.",
       noLogs: "No task log returned yet.",
       technicalDetails: "Technical details",
@@ -790,7 +833,11 @@ export const uiCopy = {
         "remote-npm-mirror": ["Remote npm mirror", "Install Codex into the user directory through the configured npm mirror."],
         "local-upload": ["Local download and upload", "Download and verify locally, upload with SCP, then install remotely."],
         uninstall: ["Uninstall Codex", "Remove the scoped remote Codex installation and managed files."],
-        "final-verification": ["Final verification", "Verify the final path, version, shell availability, and PATH state."]
+        "runtime-reconcile": ["Runtime reconciliation", "Keep the managed target on standalone/current and verify the launcher and login shell use the same Codex version."],
+        "final-verification": ["Final verification", "Verify the final path, version, shell availability, and PATH state."],
+        "release-cleanup": ["Managed runtime cleanup", "Install/Profile remove eligible managed versions. Update moves strictly verified lower releases into ~/.codex-hub/deletion-backups/ after checking current, target, and process references."],
+        "profile-apply": ["Profile apply", "Apply and verify config, metadata, the API environment, and the managed launcher."],
+        "remote-codex-reload": ["Remote Codex reload", "Stop only the confirmed remote Codex processes selected for this apply."]
       } as Record<string, readonly [string, string]>,
       hide: "Hide",
       close: "Close",
@@ -1478,8 +1525,34 @@ export const uiCopy = {
       perHostStatus: "单主机状态",
       previewApply: "预览",
       applySelected: "应用所选",
+      next: "下一步",
       applyOne: "应用",
       batchApply: "批量应用",
+      applyConfirmTitle: "应用配置",
+      applyConfirmBody: (name: string, count: number) => `将 ${name} 应用到 ${count} 台已选主机，并选择远端 Codex 进程的重载方式。`,
+      reloadChoiceTitle: "应用后处理",
+      reloadAppServices: "仅重载 Codex App 服务（推荐）",
+      reloadAppServicesBody: "仅停止已确认的 app-server 和 remote-control 服务，保留交互式 CLI 与 exec 会话。",
+      reloadNone: "仅应用配置，不重载",
+      reloadNoneBody: "保留全部远端 Codex 进程；现有 App 连接可能继续使用旧 API key。",
+      reloadAll: "终止全部远端 Codex 会话",
+      reloadAllBody: "同时停止当前远端 SSH 用户已确认的交互、exec、login、resume 与自动 Codex 任务。",
+      reloadAllWarning: "所选主机上的全部已确认远端 Codex 会话都会被中断。",
+      reloadAllAcknowledge: "我理解现有 CLI、exec 和自动任务会被中断",
+      confirmApply: "应用配置",
+      configurationResult: "配置应用",
+      reloadResult: "Codex 重载",
+      configStatusPending: "等待中",
+      configStatusSuccess: "已应用",
+      configStatusNoChange: "无变化",
+      configStatusFailed: "失败",
+      reloadStatusNotRequested: "未请求",
+      reloadStatusSkipped: "已跳过",
+      reloadStatusNotRunning: "未运行",
+      reloadStatusReloaded: "已重载",
+      reloadStatusReconnected: "已重连",
+      reloadStatusManualRequired: "需要手动重连",
+      reloadStatusFailed: "失败",
       backupExpected: "备份",
       noChangeExpected: "无变化",
       noPreview: "选择主机并预览后再应用。",
@@ -1491,7 +1564,10 @@ export const uiCopy = {
       applyOperationStarted: (name: string, count: number) => `正在将 ${name} 应用到 ${count} 台已选主机。`,
       applyOperationWaiting: "正在执行远端配置脚本...",
       applyOperationSuccess: (name: string, count: number) => `${name} 已在 ${count} 台主机完成。`,
+      applyOperationPartial: (completed: number, total: number) => `${completed}/${total} 台主机已应用配置，请检查其余失败项。`,
+      applyOperationManualReconnect: "配置已应用，但部分远端 Codex App 服务未自动恢复连接。",
       applyOperationFailed: "部分主机应用 API 配置失败。",
+      manualReconnectGuide: "已成功落盘的配置保持生效。请在本地 ChatGPT/Codex App 中打开 Settings > Codex > Connections，手动重连 App 服务未恢复的主机。",
       alreadyApplied: "已应用",
       importReady: (count: number) => `已导入 ${count} 个配置。`,
       deleteConfirm: (name: string) => `删除配置 ${name}？`,
@@ -1515,6 +1591,7 @@ export const uiCopy = {
       success: "已完成",
       failed: "失败",
       partial: "部分完成",
+      manualReconnect: "需要手动重连",
       pending: "等待中",
       skipped: "无需执行",
       progress: "进程",
@@ -1526,7 +1603,7 @@ export const uiCopy = {
       batchUpdateStarted: (count: number) => `正在更新 ${count} 台主机的 Codex，同时最多运行 6 台。`,
       waiting: "正在等待远端输出...",
       installHint: "安装会依次尝试官方安装器、远端原生镜像、远端 npm 镜像、本地上传，然后最终验证。",
-      updateHint: "更新会依次尝试官方安装器、远端原生镜像、远端 npm 镜像、本地上传，然后最终验证。",
+      updateHint: "更新会依次尝试官方安装器、远端原生镜像、远端 npm 镜像、本地上传，完成最终验证后将已确认的旧运行时移入 ~/.codex-hub/deletion-backups/。",
       uninstallHint: "卸载会永久删除远端 Codex 文件、配置以及 CodexHub 管理的 env/API key 文件。",
       noLogs: "尚未返回任务日志。",
       technicalDetails: "技术详情",
@@ -1549,7 +1626,11 @@ export const uiCopy = {
         "remote-npm-mirror": ["远端 npm 镜像", "通过 npm 镜像将 Codex 安装到用户目录。"],
         "local-upload": ["本地下载并上传", "在本机下载校验，通过 SCP 上传后在远端安装。"],
         uninstall: ["执行卸载", "删除指定范围内的远端 Codex 安装及受管理文件。"],
-        "final-verification": ["最终验证", "验证最终路径、版本、Shell 命令可用性和 PATH。"]
+        "runtime-reconcile": ["协调运行时", "使托管 target 跟随 standalone/current，并验证启动器与登录 Shell 使用同一 Codex 版本。"],
+        "final-verification": ["最终验证", "验证最终路径、版本、Shell 命令可用性和 PATH。"],
+        "release-cleanup": ["清理托管运行时", "Install/Profile 清理合格托管版本；Update 在确认不属于 current/target 且无进程使用后，将严格确认的低版本移入 ~/.codex-hub/deletion-backups/。"],
+        "profile-apply": ["应用配置", "应用并验证 config、metadata、API 环境和托管启动器。"],
+        "remote-codex-reload": ["重载远端 Codex", "仅停止本次应用所选择且身份已确认的远端 Codex 进程。"]
       } as Record<string, readonly [string, string]>,
       hide: "隐藏",
       close: "关闭",
@@ -1867,7 +1948,7 @@ export const uiCopy = {
   }
 } as const;
 
-type UICopy = (typeof uiCopy)[Locale];
+export type UICopy = (typeof uiCopy)[Locale];
 
 function visibleSshConfigHostsForHosts(configHosts: SshConfigHost[], appHosts: Host[]) {
   const aliases = new Set(appHosts.map((host) => host.hostAlias.toLowerCase()));
@@ -2559,6 +2640,9 @@ function App() {
   const setErrorNotice = useCallback((message: string, taskId?: string) => {
     notify({ message: localizeFeedbackMessage(message, copy, "error"), taskId, tone: "error" });
   }, [copy, notify]);
+  const setWarningNotice = useCallback((message: string, taskId?: string) => {
+    notify({ message, taskId, tone: "warning" });
+  }, [notify]);
   const runtimePlatform = useMemo(() => getPlatform(), []);
   const effectivePlatform = resolvePlatformAppearance(settings.platformAppearance);
   const usesCustomTitleBar = isWindows(runtimePlatform);
@@ -3836,19 +3920,27 @@ function App() {
     return runSectionOperation(section, () => api.previewProfileApply(profileId, hostIds));
   };
 
-  const handleApplyProfile = async (profileId: string, hostIds: string[]) => {
+  const handleApplyProfile = async (profileId: string, hostIds: string[], options: ProfileApplyOptions) => {
     const section = activeSection;
     return runSectionOperation(section, async () => {
-      const result = await api.applyProfile(profileId, hostIds);
+      const result = await api.applyProfile(profileId, hostIds, options);
       if (result.tasks.length > 0) setTasks((current) => mergeTaskRunsForUi(normalizeTaskRunsForUi(result.tasks), current));
       const profileName =
         result.profiles.find((profile) => profile.id === profileId)?.name ??
         profiles.find((profile) => profile.id === profileId)?.name ??
         profileId;
+      const completedCount = result.results.filter((entry) => entry.status === "success" || entry.status === "no-change").length;
+      const resultTaskId = result.tasks.find((task) => task.status === "failed")?.id ?? result.tasks[0]?.id;
+      const announceOutcome = () => {
+        if (result.outcome === "success") setNotice(`${profileName}: ${copy.profiles.applySelected}`);
+        else if (result.outcome === "manual-reconnect") setWarningNotice(copy.profiles.applyOperationManualReconnect, resultTaskId);
+        else if (result.outcome === "partial") setWarningNotice(copy.profiles.applyOperationPartial(completedCount, result.results.length), resultTaskId);
+        else setErrorNotice(result.results.find((entry) => entry.status === "failed")?.message ?? copy.profiles.applyOperationFailed, resultTaskId);
+      };
       if (result.profiles.length > 0 || result.hosts.length > 0) {
         if (result.profiles.length > 0) setProfiles(result.profiles);
         if (result.hosts.length > 0) setHosts(result.hosts);
-        setNotice(`${profileName}: ${copy.profiles.applySelected}`);
+        announceOutcome();
         void refreshLatestCodex(true);
         return result;
       }
@@ -3907,7 +3999,7 @@ function App() {
             : host
         )
       );
-      setNotice(`${profileName}: ${copy.profiles.applySelected}`);
+      announceOutcome();
       void refreshLatestCodex(true);
       return result;
     });
@@ -4160,6 +4252,7 @@ function App() {
             onGetProfileApiKey={handleGetProfileApiKey}
             onImportCcSwitchProfiles={handleImportCcSwitchProfiles}
             onImportProfiles={handleImportProfiles}
+            onOpenTask={openTaskDetail}
             onPreviewProfileApply={handlePreviewProfileApply}
             onRunProfileApply={handleApplyProfile}
             onSetProfileApiKey={handleSetProfileApiKey}
@@ -6201,15 +6294,15 @@ function HostDetailsPanel({
 function profileApplyEligibleHostIds(profile: Profile | null, hosts: Host[], hostIds: string[]) {
   if (!profile) return [];
   const requested = new Set(hostIds);
-  // Only hosts not already confirmed on this API config should be sent to apply.
-  return hosts.filter((host) => requested.has(host.id) && !profileMatchesConfirmedHostApiConfig(profile, host)).map((host) => host.id);
+  // Re-applying an unchanged profile is valid because it can retry the requested process reload.
+  return hosts.filter((host) => requested.has(host.id)).map((host) => host.id);
 }
 
 function profileApplyHostDisplayName(host: Host) {
   return host.name === host.hostAlias ? host.name : `${host.name} (${host.hostAlias})`;
 }
 
-function ProfilesView({
+export function ProfilesView({
   copy,
   hosts,
   latestCodexVersion,
@@ -6222,6 +6315,7 @@ function ProfilesView({
   onGetProfileApiKey,
   onImportCcSwitchProfiles,
   onImportProfiles,
+  onOpenTask,
   onPreviewProfileApply,
   onRunProfileApply,
   onSetProfileApiKey,
@@ -6239,8 +6333,9 @@ function ProfilesView({
   onGetProfileApiKey: (profileId: string) => Promise<ProfileApiKeyResult>;
   onImportCcSwitchProfiles: (detection: CcSwitchDetection) => Promise<ProfileImportExport>;
   onImportProfiles: (bundle: ProfileImportExport) => Promise<ProfileImportExport>;
+  onOpenTask: (taskId: string) => void;
   onPreviewProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyPreview>;
-  onRunProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyBatchResult>;
+  onRunProfileApply: (profileId: string, hostIds: string[], options: ProfileApplyOptions) => Promise<ProfileApplyBatchResult>;
   onSetProfileApiKey: (profileId: string, apiKey: string) => Promise<Profile>;
   onUpdateProfile: (id: string, patch: ProfilePatch) => Promise<Profile>;
 }) {
@@ -6251,6 +6346,7 @@ function ProfilesView({
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [preview, setPreview] = useState<ProfileApplyPreview | null>(null);
   const [applyResult, setApplyResult] = useState<ProfileApplyBatchResult | null>(null);
+  const [profileApplyConfirm, setProfileApplyConfirm] = useState<ProfileApplyConfirmState | null>(null);
   const [profileApplyOperation, setProfileApplyOperation] = useState<ProfileApplyOperationModalState | null>(null);
   const [profileApplyRunningHostIds, setProfileApplyRunningHostIds] = useState<string[]>([]);
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
@@ -6384,7 +6480,24 @@ function ProfilesView({
     setPreview(result);
   };
 
-  const runProfileApply = async (profile: Profile, hostIds: string[]) => {
+  const requestProfileApply = (profile: Profile, hostIds: string[]) => {
+    const targetHostIds = profileApplyEligibleHostIds(profile, hosts, hostIds);
+    if (targetHostIds.length === 0) return;
+    const targetHostIdSet = new Set(targetHostIds);
+    const targetHosts = hosts.filter((host) => targetHostIdSet.has(host.id));
+    setSelectedProfileId(profile.id);
+    setSelectedHostIds(targetHostIds);
+    setHostPickerProfileId((current) => (current === profile.id ? null : current));
+    setPreviewModalOpen(false);
+    setProfileApplyConfirm({
+      requestId: `profile-apply-confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      profile,
+      hostIds: targetHostIds,
+      hostNames: targetHosts.map(profileApplyHostDisplayName)
+    });
+  };
+
+  const runProfileApply = async (profile: Profile, hostIds: string[], options: ProfileApplyOptions) => {
     const targetHostIds = profileApplyEligibleHostIds(profile, hosts, hostIds);
     if (targetHostIds.length === 0) return null;
     const targetHostIdSet = new Set(targetHostIds);
@@ -6403,6 +6516,7 @@ function ProfilesView({
       hostNames,
       status: "running",
       tasks: [],
+      results: [],
       message: copy.profiles.applyOperationStarted(profile.name, targetHostIds.length),
       logs: [
         { level: "info", message: copy.profiles.applyOperationStarted(profile.name, targetHostIds.length) },
@@ -6411,24 +6525,42 @@ function ProfilesView({
     });
     await waitForNextFrame();
     try {
-      const result = await onRunProfileApply(profile.id, targetHostIds);
+      const result = await onRunProfileApply(profile.id, targetHostIds, options);
       setApplyResult(result);
       setPreview((current) => (current && current.profileId === profile.id ? { ...current, hostResults: result.results } : current));
       const completedCount = result.results.filter((row) => row.status === "success" || row.status === "no-change").length;
       const failedMessage = result.results.find((row) => row.status === "failed")?.message;
-      const resultLogs = result.results.map((row) => ({
-        level: row.status === "failed" ? ("error" as const) : ("info" as const),
-        message: `${row.hostName}: ${row.message}`
-      }));
+      const resultLogs = result.results.flatMap((row) => {
+        const reloadLevel = row.reload.status === "failed"
+          ? "error" as const
+          : row.reload.status === "manual-required" || row.reload.status === "skipped"
+            ? "warn" as const
+            : "info" as const;
+        return [
+          {
+            level: row.status === "failed" ? ("error" as const) : ("info" as const),
+            message: `${row.hostName}: ${row.message}`
+          },
+          {
+            level: reloadLevel,
+            message: `${row.hostName}: ${row.reload.message || copy.profiles.reloadResult}`
+          }
+        ];
+      });
       setProfileApplyOperation((current) =>
         current?.requestId === requestId
           ? {
               ...current,
-              status: result.ok ? "success" : "failed",
+              status: result.outcome,
               tasks: result.tasks,
-              message: result.ok
+              results: result.results,
+              message: result.outcome === "success"
                 ? copy.profiles.applyOperationSuccess(profile.name, completedCount)
-                : failedMessage ?? copy.profiles.applyOperationFailed,
+                : result.outcome === "manual-reconnect"
+                  ? copy.profiles.applyOperationManualReconnect
+                  : result.outcome === "partial"
+                    ? copy.profiles.applyOperationPartial(completedCount, result.results.length)
+                    : failedMessage ?? copy.profiles.applyOperationFailed,
               logs: [...current.logs, ...resultLogs].slice(-80)
             }
           : current
@@ -6452,9 +6584,16 @@ function ProfilesView({
     }
   };
 
-  const handleApply = async (hostIds = selectedHostIds) => {
-    if (!selectedProfile || hostIds.length === 0) return null;
-    return runProfileApply(selectedProfile, hostIds);
+  const handleApply = (hostIds = selectedHostIds) => {
+    if (!selectedProfile || hostIds.length === 0) return;
+    requestProfileApply(selectedProfile, hostIds);
+  };
+
+  const confirmProfileApply = (options: ProfileApplyOptions) => {
+    if (!profileApplyConfirm) return;
+    const request = profileApplyConfirm;
+    setProfileApplyConfirm(null);
+    void runProfileApply(request.profile, request.hostIds, options);
   };
 
   const previewWithResults = preview && applyResult ? { ...preview, hostResults: applyResult.results } : preview;
@@ -6589,7 +6728,6 @@ function ProfilesView({
               </thead>
               <tbody>
                 {hosts.map((host) => {
-                  const alreadyApplied = selectedProfile ? profileMatchesConfirmedHostApiConfig(selectedProfile, host) : false;
                   const codexStatus = hostCodexStatus(copy, host, undefined, hosts, latestCodexVersion);
                   return (
                     <tr
@@ -6607,7 +6745,7 @@ function ProfilesView({
                           <button className="miniButton" disabled={!selectedProfile || busy === "preview"} type="button" onClick={(event) => { event.stopPropagation(); void handlePreview([host.id]); }}>
                             {copy.profiles.previewApply}
                           </button>
-                          <button className="miniButton" disabled={!selectedProfile || alreadyApplied || profileApplyRunningHostIdSet.has(host.id)} type="button" onClick={(event) => { event.stopPropagation(); void handleApply([host.id]); }}>
+                          <button className="miniButton" disabled={!selectedProfile || profileApplyRunningHostIdSet.has(host.id)} type="button" onClick={(event) => { event.stopPropagation(); handleApply([host.id]); }}>
                             {copy.profiles.applyOne}
                           </button>
                         </CommandGroup>
@@ -6639,7 +6777,7 @@ function ProfilesView({
         open={Boolean(hostPickerProfile)}
         profile={hostPickerProfile}
         profileById={profileById}
-        onApply={(profile, hostIds) => runProfileApply(profile, hostIds)}
+        onNext={requestProfileApply}
         onClose={() => setHostPickerProfileId(null)}
       />
 
@@ -6649,14 +6787,26 @@ function ProfilesView({
         open={previewModalOpen}
         preview={previewWithResults}
         selectedCount={selectedApplyHostIds.length}
-        onApplySelected={() => void handleApply()}
+        onNext={() => handleApply()}
         onClose={() => setPreviewModalOpen(false)}
       />
+      {profileApplyConfirm ? (
+        <ProfileApplyConfirmModal
+          copy={copy}
+          request={profileApplyConfirm}
+          onClose={() => setProfileApplyConfirm(null)}
+          onConfirm={confirmProfileApply}
+        />
+      ) : null}
       {profileApplyOperation ? (
         <ProfileApplyOperationModal
           copy={copy}
           operation={profileApplyOperation}
           onClose={() => setProfileApplyOperation(null)}
+          onViewTask={(taskId) => {
+            setProfileApplyOperation(null);
+            onOpenTask(taskId);
+          }}
         />
       ) : null}
       {deleteProfile ? (
@@ -6680,7 +6830,7 @@ function ProfileHostSelectModal({
   open,
   profile,
   profileById,
-  onApply,
+  onNext,
   onClose
 }: {
   applyingHostIds: string[];
@@ -6689,7 +6839,7 @@ function ProfileHostSelectModal({
   open: boolean;
   profile: Profile | null;
   profileById: Map<string, Profile>;
-  onApply: (profile: Profile, hostIds: string[]) => Promise<ProfileApplyBatchResult | null>;
+  onNext: (profile: Profile, hostIds: string[]) => void;
   onClose: () => void;
 }) {
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
@@ -6704,6 +6854,7 @@ function ProfileHostSelectModal({
     () => selectedHostIds.filter((hostId) => eligibleHostIdSet.has(hostId)),
     [eligibleHostIdSet, selectedHostIds]
   );
+  const selectedEligibleHostIdSet = useMemo(() => new Set(selectedEligibleHostIds), [selectedEligibleHostIds]);
 
   useEffect(() => {
     if (!open || !profile) return;
@@ -6718,9 +6869,9 @@ function ProfileHostSelectModal({
     setSelectedHostIds((current) => (current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]));
   };
 
-  const handleApply = () => {
+  const handleNext = () => {
     if (selectedEligibleHostIds.length === 0) return;
-    void onApply(profile, selectedEligibleHostIds);
+    onNext(profile, selectedEligibleHostIds);
     onClose();
   };
 
@@ -6738,7 +6889,7 @@ function ProfileHostSelectModal({
 
         <div className="profileHostSelectList">
           {hosts.map((host) => {
-            const selected = selectedHostIds.includes(host.id);
+            const selected = selectedEligibleHostIdSet.has(host.id);
             const alreadyApplied = profileMatchesConfirmedHostApiConfig(profile, host);
             const applying = applyingHostIdSet.has(host.id);
             const disabled = alreadyApplied || applying;
@@ -6761,8 +6912,8 @@ function ProfileHostSelectModal({
           }}>
             {copy.profiles.selectAll}
           </button>
-          <button className="primaryButton" disabled={selectedEligibleHostIds.length === 0} type="button" onClick={handleApply}>
-            {copy.profiles.applySelected}
+          <button className="primaryButton" disabled={selectedEligibleHostIds.length === 0} type="button" onClick={handleNext}>
+            {copy.profiles.next}
           </button>
         </ModalActions>
       </ModalFrame>
@@ -6770,16 +6921,165 @@ function ProfileHostSelectModal({
   );
 }
 
+function ProfileApplyConfirmModal({
+  copy,
+  request,
+  onClose,
+  onConfirm
+}: {
+  copy: UICopy;
+  request: ProfileApplyConfirmState;
+  onClose: () => void;
+  onConfirm: (options: ProfileApplyOptions) => void;
+}) {
+  const [reloadMode, setReloadMode] = useState<RemoteCodexReloadMode>("app-services");
+  const [allCodexAcknowledged, setAllCodexAcknowledged] = useState(false);
+
+  useEffect(() => {
+    // Confirmation choices are intentionally per-run and never persisted in Settings.
+    setReloadMode("app-services");
+    setAllCodexAcknowledged(false);
+  }, [request.requestId]);
+
+  const options: Array<{ mode: RemoteCodexReloadMode; label: string; description: string; danger?: boolean }> = [
+    {
+      mode: "app-services",
+      label: copy.profiles.reloadAppServices,
+      description: copy.profiles.reloadAppServicesBody
+    },
+    {
+      mode: "none",
+      label: copy.profiles.reloadNone,
+      description: copy.profiles.reloadNoneBody
+    },
+    {
+      mode: "all-codex",
+      label: copy.profiles.reloadAll,
+      description: copy.profiles.reloadAllBody,
+      danger: true
+    }
+  ];
+  const allCodexSelected = reloadMode === "all-codex";
+
+  return (
+    <AlertModalFrame
+      className="sshHostModal profileApplyConfirmModal ProfileApplyConfirmModal"
+      descriptionId="profile-apply-confirm-description"
+      titleId="profile-apply-confirm-title"
+      onCancel={onClose}
+    >
+      <ModalHeader
+        className="modalHero"
+        titleId="profile-apply-confirm-title"
+        title={copy.profiles.applyConfirmTitle}
+        icon={allCodexSelected ? "warning" : "profiles"}
+        closeAriaLabel={copy.setupGuide.close}
+        onClose={onClose}
+      />
+
+      <p className="modalLead" id="profile-apply-confirm-description">
+        {copy.profiles.applyConfirmBody(request.profile.name, request.hostIds.length)}
+      </p>
+      <small className="profileApplyConfirmHosts">{request.hostNames.join(", ")}</small>
+
+      <fieldset className="profileReloadOptions">
+        <legend>{copy.profiles.reloadChoiceTitle}</legend>
+        {options.map((option) => (
+          <label
+            className="profileReloadOption"
+            data-danger={option.danger || undefined}
+            data-selected={reloadMode === option.mode}
+            key={option.mode}
+          >
+            <input
+              checked={reloadMode === option.mode}
+              name="remote-codex-reload-mode"
+              type="radio"
+              value={option.mode}
+              onChange={() => {
+                setReloadMode(option.mode);
+                if (option.mode !== "all-codex") setAllCodexAcknowledged(false);
+              }}
+            />
+            <span>
+              <strong>{option.label}</strong>
+              <small>{option.description}</small>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+
+      {allCodexSelected ? (
+        <div className="profileReloadWarning" role="alert">
+          <strong>{copy.profiles.reloadAllWarning}</strong>
+          <label>
+            <input
+              checked={allCodexAcknowledged}
+              type="checkbox"
+              onChange={(event) => setAllCodexAcknowledged(event.currentTarget.checked)}
+            />
+            <span>{copy.profiles.reloadAllAcknowledge}</span>
+          </label>
+        </div>
+      ) : null}
+
+      <ModalActions>
+        <button className="secondaryButton" data-alert-cancel type="button" onClick={onClose}>
+          {copy.hosts.cancel}
+        </button>
+        <button
+          className={allCodexSelected ? "primaryButton dangerButton" : "primaryButton"}
+          disabled={allCodexSelected && !allCodexAcknowledged}
+          type="button"
+          onClick={() => onConfirm({ remoteCodexReloadMode: reloadMode })}
+        >
+          {copy.profiles.confirmApply}
+        </button>
+      </ModalActions>
+    </AlertModalFrame>
+  );
+}
+
+function profileApplyStatusPresentation(copy: UICopy, status: ProfileApplyHostResult["status"]): { label: string; tone: BadgeTone } {
+  if (status === "success") return { label: copy.profiles.configStatusSuccess, tone: "green" };
+  if (status === "no-change") return { label: copy.profiles.configStatusNoChange, tone: "gray" };
+  if (status === "pending") return { label: copy.profiles.configStatusPending, tone: "blue" };
+  return { label: copy.profiles.configStatusFailed, tone: "red" };
+}
+
+function reloadStatusPresentation(copy: UICopy, status: RemoteCodexReloadStatus): { label: string; tone: BadgeTone } {
+  if (status === "reconnected") return { label: copy.profiles.reloadStatusReconnected, tone: "green" };
+  if (status === "reloaded") return { label: copy.profiles.reloadStatusReloaded, tone: "green" };
+  if (status === "not-running") return { label: copy.profiles.reloadStatusNotRunning, tone: "gray" };
+  if (status === "not-requested") return { label: copy.profiles.reloadStatusNotRequested, tone: "gray" };
+  if (status === "skipped") return { label: copy.profiles.reloadStatusSkipped, tone: "yellow" };
+  if (status === "manual-required") return { label: copy.profiles.reloadStatusManualRequired, tone: "yellow" };
+  return { label: copy.profiles.reloadStatusFailed, tone: "red" };
+}
+
+export function profileApplyOperationPresentation(copy: UICopy, status: ProfileApplyOperationStatus) {
+  if (status === "running") return { label: copy.codexOperation.running, tone: "blue" as const, showManualGuide: false };
+  if (status === "success") return { label: copy.codexOperation.success, tone: "green" as const, showManualGuide: false };
+  if (status === "partial") return { label: copy.codexOperation.partial, tone: "yellow" as const, showManualGuide: true };
+  if (status === "manual-reconnect") {
+    return { label: copy.codexOperation.manualReconnect, tone: "yellow" as const, showManualGuide: true };
+  }
+  return { label: copy.codexOperation.failed, tone: "red" as const, showManualGuide: false };
+}
+
 function ProfileApplyOperationModal({
   copy,
   operation,
-  onClose
+  onClose,
+  onViewTask
 }: {
   copy: UICopy;
   operation: ProfileApplyOperationModalState;
   onClose: () => void;
+  onViewTask: (taskId: string) => void;
 }) {
-  const statusTone = operation.status === "success" ? "green" : operation.status === "failed" ? "red" : "yellow";
+  const presentation = profileApplyOperationPresentation(copy, operation.status);
+  const taskToView = operation.tasks.find((task) => task.status === "failed") ?? operation.tasks[0];
   const logRows = operation.logs.slice(-24);
   const logRowsRef = useRef<HTMLDivElement | null>(null);
 
@@ -6797,16 +7097,47 @@ function ProfileApplyOperationModal({
           titleId="profile-apply-operation-title"
           title={copy.profiles.applyOperationTitle}
           icon="profiles"
-          badge={<Badge tone={statusTone}>{copy.codexOperation[operation.status]}</Badge>}
+          badge={<Badge tone={presentation.tone}>{presentation.label}</Badge>}
           closeAriaLabel={operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
           onClose={onClose}
         />
 
         <div className="codexOperationSummary">
           <span>{copy.codexOperation.summary}</span>
-          <strong>{operation.message ?? operation.error ?? copy.profiles.applyOperationWaiting}</strong>
+          <strong>{operation.error ?? operation.message ?? copy.profiles.applyOperationWaiting}</strong>
           <small>{operation.hostNames.join(", ")}</small>
         </div>
+
+        {operation.results.length > 0 ? (
+          <div className="profileApplyResultList" aria-label={copy.profiles.perHostStatus} role="list">
+            {operation.results.map((result) => {
+              const config = profileApplyStatusPresentation(copy, result.status);
+              const reload = reloadStatusPresentation(copy, result.reload.status);
+              return (
+                <div className="profileApplyResultRow" key={result.hostId || result.hostAlias} role="listitem">
+                  <strong>{result.hostName}</strong>
+                  <div>
+                    <span>{copy.profiles.configurationResult}</span>
+                    <Badge tone={config.tone}>{config.label}</Badge>
+                    <small>{result.message}</small>
+                  </div>
+                  <div>
+                    <span>{copy.profiles.reloadResult}</span>
+                    <Badge tone={reload.tone}>{reload.label}</Badge>
+                    <small>{result.reload.message}</small>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
+        {presentation.showManualGuide ? (
+          <div className="profileManualReconnectGuide" role="status">
+            <strong>{copy.codexOperation.manualReconnect}</strong>
+            <span>{copy.profiles.manualReconnectGuide}</span>
+          </div>
+        ) : null}
 
         <div className="codexOperationLog">
           <div className="codexOperationLogTitle">
@@ -6829,6 +7160,11 @@ function ProfileApplyOperationModal({
         </div>
 
         <ModalActions className="codexOperationActions">
+          {presentation.showManualGuide && taskToView ? (
+            <button className="secondaryButton" type="button" onClick={() => onViewTask(taskToView.id)}>
+              {copy.feedback.viewTask}
+            </button>
+          ) : null}
           <button className="secondaryButton" type="button" onClick={onClose}>
             {operation.status === "running" ? copy.codexOperation.hide : copy.codexOperation.close}
           </button>
@@ -7133,7 +7469,7 @@ function ProfileApplyPreviewModal({
   open,
   preview,
   selectedCount,
-  onApplySelected,
+  onNext,
   onClose
 }: {
   busy: string | null;
@@ -7141,7 +7477,7 @@ function ProfileApplyPreviewModal({
   open: boolean;
   preview: ProfileApplyPreview | null;
   selectedCount: number;
-  onApplySelected: () => void;
+  onNext: () => void;
   onClose: () => void;
 }) {
   if (!open) return null;
@@ -7190,8 +7526,8 @@ function ProfileApplyPreviewModal({
         </div>
 
         <ModalActions>
-          <button className="primaryButton" disabled={!preview || selectedCount === 0 || busy === "apply"} type="button" onClick={onApplySelected}>
-            {copy.profiles.applySelected}
+          <button className="primaryButton" disabled={!preview || selectedCount === 0 || busy === "apply"} type="button" onClick={onNext}>
+            {copy.profiles.next}
           </button>
         </ModalActions>
       </ModalFrame>
@@ -9447,8 +9783,8 @@ function remoteCodexButtonLabel(copy: UICopy, busy: HostBusyAction | undefined, 
 
 const hostOperationStepIds: Record<HostOperationKind, string[]> = {
   "host-test": ["ssh-check", "system", "codex", "api", "skills"],
-  "codex-install": ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "final-verification"],
-  "codex-update": ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "final-verification"],
+  "codex-install": ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "runtime-reconcile", "final-verification", "release-cleanup"],
+  "codex-update": ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "runtime-reconcile", "final-verification", "release-cleanup"],
   "codex-uninstall": ["preparation", "uninstall", "final-verification"]
 };
 

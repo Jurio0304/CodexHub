@@ -1,6 +1,10 @@
 use crate::tasks::{TaskStep, TaskStepStatus};
 use crate::*;
 
+use super::codex_runtime::{
+    self, CodexReleaseCleanupPolicy, CodexReleaseCleanupStatus, CodexRuntimeReconcileStatus,
+};
+
 const PROBE_STEP_IDS: &[(&str, &str)] = &[
     ("ssh-check", "Checking SSH connectivity."),
     ("system", "Reading the remote system environment."),
@@ -24,8 +28,16 @@ const INSTALL_STEP_IDS: &[(&str, &str)] = &[
         "Waiting to download and upload a native package.",
     ),
     (
+        "runtime-reconcile",
+        "Waiting to reconcile the managed Codex runtime.",
+    ),
+    (
         "final-verification",
         "Waiting to verify the final Codex installation.",
+    ),
+    (
+        "release-cleanup",
+        "Waiting to clean eligible managed Codex releases.",
     ),
 ];
 const UNINSTALL_STEP_IDS: &[(&str, &str)] = &[
@@ -198,20 +210,48 @@ fn final_verification_failures(
     method_succeeded: bool,
     has_path: bool,
     has_version: bool,
-    current_shell_available: bool,
+    _current_shell_available: bool,
     login_shell_available: bool,
 ) -> Vec<&'static str> {
+    // Non-login SSH shells may skip user PATH startup files. The verified login
+    // shell is therefore the command-availability gate; current-shell failure is diagnostic.
     let checks = [
         (method_succeeded, "verified installation method"),
         (has_path, "Codex path"),
         (has_version, "Codex version"),
-        (current_shell_available, "current-shell command"),
         (login_shell_available, "login-shell command"),
     ];
     checks
         .into_iter()
         .filter_map(|(passed, label)| (!passed).then_some(label))
         .collect()
+}
+
+fn codex_command_available_in_any_shell(
+    current_shell_available: bool,
+    login_shell_available: bool,
+) -> bool {
+    current_shell_available || login_shell_available
+}
+
+fn final_verification_success_message(
+    action_label: &str,
+    alias: &str,
+    version_label: &str,
+    current_shell_available: bool,
+) -> String {
+    let completed = format!("{action_label} completed on {alias}: {version_label}.");
+    if current_shell_available {
+        completed
+    } else {
+        format!(
+            "{completed} Warning: the current non-login SSH shell cannot resolve `codex`; its PATH may not include `~/.local/bin`, while the verified login shell is usable."
+        )
+    }
+}
+
+fn detected_codex_installed(has_path: bool, has_version: bool) -> bool {
+    has_path && has_version
 }
 
 fn uninstall_target_reached(
@@ -1976,6 +2016,7 @@ fn run_codex_state_checks_parallel(alias: &str, timeout: u64, phase: &str) -> Co
 fn append_state_check_logs(
     task_id: &str,
     logs: &mut Vec<TaskLog>,
+    next_log_index: &mut usize,
     checks: &CodexStateChecks,
     phase: &str,
 ) {
@@ -2006,11 +2047,12 @@ fn append_state_check_logs(
         };
         logs.push(command_log(
             task_id,
-            logs.len() + 1,
+            *next_log_index,
             level,
             &message,
             output,
         ));
+        *next_log_index += 1;
     }
 }
 
@@ -2098,9 +2140,10 @@ pub(crate) fn run_remote_manage_codex(
     let check_ok = check_output.success() && check_output.stdout.trim() == "ok";
     let check_message = ssh_check_message(&alias, &check_output, check_ok, timeout);
     let mut logs = running.logs;
+    let mut next_log_index = logs.len() + 1;
     logs.push(command_log(
         &task_id,
-        logs.len() + 1,
+        next_log_index,
         if check_ok {
             TaskLogLevel::Info
         } else {
@@ -2109,6 +2152,7 @@ pub(crate) fn run_remote_manage_codex(
         &check_message,
         &check_output,
     ));
+    next_log_index += 1;
     if let Some(log) = logs.last_mut() {
         log.step_id = Some("preparation".into());
     }
@@ -2208,7 +2252,13 @@ pub(crate) fn run_remote_manage_codex(
         });
         (before_checks, preparation_output)
     });
-    append_state_check_logs(&task_id, &mut logs, &before_checks, "before maintenance");
+    append_state_check_logs(
+        &task_id,
+        &mut logs,
+        &mut next_log_index,
+        &before_checks,
+        "before maintenance",
+    );
     let state_check_log_end = logs.len();
     let preparation_data = if preparation_output.success() {
         parse_preparation_probe(&preparation_output)
@@ -2224,7 +2274,7 @@ pub(crate) fn run_remote_manage_codex(
     };
     logs.push(command_log(
         &task_id,
-        logs.len() + 1,
+        next_log_index,
         if preparation_data.is_ok() {
             TaskLogLevel::Info
         } else {
@@ -2233,7 +2283,7 @@ pub(crate) fn run_remote_manage_codex(
         &preparation_message,
         &preparation_output,
     ));
-    let mut next_log_index = logs.len() + 1;
+    next_log_index += 1;
     let before_command_available = before_checks.current_command_available.success()
         || before_checks.login_command_available.success();
     let before_version = output_trimmed(&before_checks.version);
@@ -2424,13 +2474,15 @@ pub(crate) fn run_remote_manage_codex(
             None,
         )?;
         let uninstall_log_start = logs.len();
+        let uninstall_script =
+            codex_runtime::with_remote_codex_runtime_writer_lock(CODEX_UNINSTALL_SCRIPT);
         let uninstall_output = run_codex_step(
             &alias,
             &task_id,
             &mut logs,
             &mut next_log_index,
             action_label,
-            CODEX_UNINSTALL_SCRIPT,
+            &uninstall_script,
             timeout,
             TaskLogLevel::Error,
             Some(&progress),
@@ -2467,7 +2519,13 @@ pub(crate) fn run_remote_manage_codex(
         )?;
         let verification_log_start = logs.len();
         let after_checks = run_codex_state_checks_parallel(&alias, timeout, "after uninstall");
-        append_state_check_logs(&task_id, &mut logs, &after_checks, "after uninstall");
+        append_state_check_logs(
+            &task_id,
+            &mut logs,
+            &mut next_log_index,
+            &after_checks,
+            "after uninstall",
+        );
         persist_step_logs(
             &host_progress,
             "final-verification",
@@ -2576,22 +2634,54 @@ pub(crate) fn run_remote_manage_codex(
         });
     }
 
-    let prerequisites_ready = install_prerequisites_ready(&preparation_data);
+    let strict_current_runtime =
+        codex_runtime::probe_remote_strict_current_version(&alias, timeout);
+    let current_floor_message = match &strict_current_runtime {
+        Ok(Some(runtime)) => format!(
+            "Verified standalone/current {} as an additional update downgrade floor.",
+            runtime.version
+        ),
+        Ok(None) => "No standalone/current release was present before maintenance.".into(),
+        Err(error) => format!(
+            "Could not establish a safe standalone/current update floor: {}",
+            redact_error_text(error)
+        ),
+    };
+    logs.push(basic_log(
+        &task_id,
+        next_log_index,
+        if strict_current_runtime.is_ok() {
+            TaskLogLevel::Info
+        } else {
+            TaskLogLevel::Error
+        },
+        &current_floor_message,
+    ));
+    next_log_index += 1;
+    let prerequisites_ready =
+        install_prerequisites_ready(&preparation_data) && strict_current_runtime.is_ok();
     if !prerequisites_ready {
         persist_step_logs(
             &host_progress,
             "preparation",
             &mut logs[preparation_log_start..],
         )?;
-        let message = match preparation_data {
-            Ok(data) => format!(
-                "{action_label} cannot start because host prerequisites are not satisfied: {}.",
-                data.detail
-            ),
-            Err(error) => format!(
+        let message = if let Err(error) = &strict_current_runtime {
+            format!(
+                "{action_label} cannot start because standalone/current could not be verified safely: {}",
+                redact_error_text(error)
+            )
+        } else {
+            match preparation_data {
+                Ok(data) => format!(
+                    "{action_label} cannot start because host prerequisites are not satisfied: {}.",
+                    data.detail
+                ),
+                Err(error) => format!(
                 "{action_label} cannot start because host prerequisites could not be checked: {}",
                 redact_error_text(&error)
             ),
+            }
         };
         persist_and_emit_step(
             &host_progress,
@@ -2640,6 +2730,8 @@ pub(crate) fn run_remote_manage_codex(
             task,
         });
     }
+    let strict_current_runtime = strict_current_runtime
+        .expect("strict current version was checked by the preparation guard");
 
     let path_repair_output = run_codex_step(
         &alias,
@@ -2748,6 +2840,10 @@ pub(crate) fn run_remote_manage_codex(
                 &mut logs,
                 &mut next_log_index,
                 timeout,
+                before_version.as_deref(),
+                strict_current_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.version.as_str()),
                 Some(&progress),
             ),
             "remote-native-mirror" => run_remote_native_mirror_install(
@@ -2756,6 +2852,10 @@ pub(crate) fn run_remote_manage_codex(
                 &mut logs,
                 &mut next_log_index,
                 timeout,
+                before_version.as_deref(),
+                strict_current_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.version.as_str()),
                 Some(&progress),
             ),
             "remote-npm-mirror" => run_remote_npm_mirror_install(
@@ -2764,6 +2864,10 @@ pub(crate) fn run_remote_manage_codex(
                 &mut logs,
                 &mut next_log_index,
                 timeout,
+                before_version.as_deref(),
+                strict_current_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.version.as_str()),
                 Some(&progress),
             ),
             "local-upload" => run_local_upload_codex_fallback(
@@ -2773,6 +2877,10 @@ pub(crate) fn run_remote_manage_codex(
                 &mut logs,
                 &mut next_log_index,
                 timeout,
+                before_version.as_deref(),
+                strict_current_runtime
+                    .as_ref()
+                    .map(|runtime| runtime.version.as_str()),
                 Some(&progress),
             ),
             _ => unreachable!("stable installation step"),
@@ -2875,6 +2983,97 @@ pub(crate) fn run_remote_manage_codex(
         )?;
     }
     let install_method = successful_install.clone();
+    let has_runtime_recovery_floor = before_version.is_some() || strict_current_runtime.is_some();
+    let should_reconcile_runtime = successful_install.is_some() || has_runtime_recovery_floor;
+
+    let runtime_reconcile_result = if should_reconcile_runtime {
+        persist_and_emit_step(
+            &host_progress,
+            "runtime-reconcile",
+            TaskStepStatus::Running,
+            if successful_install.is_some() {
+                "Reconciling the managed launcher, runtime target, and login-shell command."
+            } else {
+                "Restoring and verifying the pre-maintenance Codex runtime after all installation methods failed."
+            },
+            None,
+        )?;
+        let result = codex_runtime::reconcile_remote_codex_runtime(
+            &alias,
+            timeout,
+            before_version.as_deref(),
+            strict_current_runtime.as_ref(),
+        );
+        match result {
+            Ok(result)
+                if result.completed()
+                    && matches!(
+                        result.status,
+                        CodexRuntimeReconcileStatus::Coordinated
+                            | CodexRuntimeReconcileStatus::Unchanged
+                    ) =>
+            {
+                let summary = result.safe_summary();
+                let mut log = basic_log(&task_id, next_log_index, TaskLogLevel::Info, &summary);
+                next_log_index += 1;
+                log.step_id = Some("runtime-reconcile".into());
+                logs.push(log.clone());
+                persist_and_emit_step(
+                    &host_progress,
+                    "runtime-reconcile",
+                    TaskStepStatus::Success,
+                    summary,
+                    Some(log),
+                )?;
+                Some(result)
+            }
+            Ok(result) => {
+                let summary = format!(
+                    "Managed runtime reconciliation did not produce a verified installed runtime: {}",
+                    result.safe_summary()
+                );
+                let mut log = basic_log(&task_id, next_log_index, TaskLogLevel::Error, &summary);
+                next_log_index += 1;
+                log.step_id = Some("runtime-reconcile".into());
+                logs.push(log.clone());
+                persist_and_emit_step(
+                    &host_progress,
+                    "runtime-reconcile",
+                    TaskStepStatus::Failed,
+                    summary,
+                    Some(log),
+                )?;
+                None
+            }
+            Err(error) => {
+                let summary = format!(
+                    "Managed runtime reconciliation failed: {}",
+                    redact_error_text(&error)
+                );
+                let mut log = basic_log(&task_id, next_log_index, TaskLogLevel::Error, &summary);
+                next_log_index += 1;
+                log.step_id = Some("runtime-reconcile".into());
+                logs.push(log.clone());
+                persist_and_emit_step(
+                    &host_progress,
+                    "runtime-reconcile",
+                    TaskStepStatus::Failed,
+                    summary,
+                    Some(log),
+                )?;
+                None
+            }
+        }
+    } else {
+        persist_and_emit_step(
+            &host_progress,
+            "runtime-reconcile",
+            TaskStepStatus::Skipped,
+            "Not run because no installation method produced a verified candidate and no pre-maintenance runtime floor was available.",
+            None,
+        )?;
+        None
+    };
 
     persist_and_emit_step(
         &host_progress,
@@ -2885,7 +3084,13 @@ pub(crate) fn run_remote_manage_codex(
     )?;
     let verification_log_start = logs.len();
     let after_checks = run_codex_state_checks_parallel(&alias, timeout, "after maintenance");
-    append_state_check_logs(&task_id, &mut logs, &after_checks, "after maintenance");
+    append_state_check_logs(
+        &task_id,
+        &mut logs,
+        &mut next_log_index,
+        &after_checks,
+        "after maintenance",
+    );
     persist_step_logs(
         &host_progress,
         "final-verification",
@@ -2895,22 +3100,44 @@ pub(crate) fn run_remote_manage_codex(
     let codex_path = output_trimmed(&after_checks.codex_path);
     let current_command_available = after_checks.current_command_available.success();
     let login_command_available = after_checks.login_command_available.success();
-    let codex_command_available = current_command_available && login_command_available;
+    let codex_command_available =
+        codex_command_available_in_any_shell(current_command_available, login_command_available);
     let after_version = output_trimmed(&after_checks.version);
-    let installed = successful_install.is_some() && codex_path.is_some() && after_version.is_some();
-    let verification_failures = final_verification_failures(
+    // Persist the final remote truth independently from whether this operation
+    // installed anything. A failed update can still restore a valid old runtime.
+    let detected_installed =
+        detected_codex_installed(codex_path.is_some(), after_version.is_some());
+    let mut verification_failures = final_verification_failures(
         successful_install.is_some(),
         codex_path.is_some(),
         after_version.is_some(),
         current_command_available,
         login_command_available,
     );
-    let ok = verification_failures.is_empty();
+    if runtime_reconcile_result.is_none() {
+        verification_failures.push("managed runtime reconciliation");
+    }
+    let runtime_version_matches = runtime_reconcile_result.as_ref().is_some_and(|result| {
+        let target = result.target_version.as_deref();
+        let after = after_version
+            .as_deref()
+            .and_then(codex_runtime::normalized_codex_version);
+        target == after.as_deref()
+    });
+    if runtime_reconcile_result.is_some() && !runtime_version_matches {
+        verification_failures.push("reconciled runtime version");
+    }
+    let verification_ok = verification_failures.is_empty();
     let version_label = after_version
         .clone()
         .unwrap_or_else(|| "not installed".into());
-    let message = if ok {
-        format!("{action_label} completed on {alias}: {version_label}.")
+    let verification_message = if verification_ok {
+        final_verification_success_message(
+            action_label,
+            &alias,
+            &version_label,
+            current_command_available,
+        )
     } else if successful_install.is_none() {
         format!(
             "{action_label} failed on {alias}: no installation method produced a verifiable Codex candidate. Last failure: {}",
@@ -2927,14 +3154,114 @@ pub(crate) fn run_remote_manage_codex(
     persist_and_emit_step(
         &host_progress,
         "final-verification",
-        if ok {
+        if verification_ok {
             TaskStepStatus::Success
         } else {
             TaskStepStatus::Failed
         },
-        message.clone(),
+        verification_message.clone(),
         None,
     )?;
+
+    let cleanup_ok = if verification_ok {
+        let update_cleanup = action == RemoteCodexAction::Update;
+        persist_and_emit_step(
+            &host_progress,
+            "release-cleanup",
+            TaskStepStatus::Running,
+            if update_cleanup {
+                "Adopting strictly identifiable older releases and moving them into a verified staged backup."
+            } else {
+                "Checking obsolete managed standalone releases and launcher captures for safe removal."
+            },
+            None,
+        )?;
+        let cleanup_result = if update_cleanup {
+            after_version.as_ref().map_or_else(
+                || {
+                    Err(
+                        "The verified update version is unavailable for old-release cleanup."
+                            .into(),
+                    )
+                },
+                |version| {
+                    codex_runtime::cleanup_remote_codex_releases(
+                        &alias,
+                        timeout,
+                        CodexReleaseCleanupPolicy::VerifiedOlderThan(version.clone()),
+                    )
+                },
+            )
+        } else {
+            codex_runtime::cleanup_remote_codex_releases(
+                &alias,
+                timeout,
+                CodexReleaseCleanupPolicy::ManagedOnly,
+            )
+        };
+        match cleanup_result {
+            Ok(result) => {
+                let cleanup_ok = !result.hard_failed();
+                let level = match result.status {
+                    CodexReleaseCleanupStatus::Deferred => TaskLogLevel::Warn,
+                    CodexReleaseCleanupStatus::Failed => TaskLogLevel::Error,
+                    _ => TaskLogLevel::Info,
+                };
+                let summary = result.safe_summary();
+                let mut log = basic_log(&task_id, next_log_index, level, &summary);
+                log.step_id = Some("release-cleanup".into());
+                logs.push(log.clone());
+                let step_status = match result.status {
+                    CodexReleaseCleanupStatus::Deferred => TaskStepStatus::Skipped,
+                    CodexReleaseCleanupStatus::Failed => TaskStepStatus::Failed,
+                    CodexReleaseCleanupStatus::Completed
+                    | CodexReleaseCleanupStatus::NotApplicable => TaskStepStatus::Success,
+                };
+                persist_and_emit_step(
+                    &host_progress,
+                    "release-cleanup",
+                    step_status,
+                    summary,
+                    Some(log),
+                )?;
+                cleanup_ok
+            }
+            Err(error) => {
+                let summary = format!(
+                    "Managed runtime cleanup could not be verified: {}",
+                    redact_error_text(&error)
+                );
+                let mut log = basic_log(&task_id, next_log_index, TaskLogLevel::Error, &summary);
+                log.step_id = Some("release-cleanup".into());
+                logs.push(log.clone());
+                persist_and_emit_step(
+                    &host_progress,
+                    "release-cleanup",
+                    TaskStepStatus::Failed,
+                    summary,
+                    Some(log),
+                )?;
+                false
+            }
+        }
+    } else {
+        persist_and_emit_step(
+            &host_progress,
+            "release-cleanup",
+            TaskStepStatus::Skipped,
+            "Not run because final runtime verification failed.",
+            None,
+        )?;
+        true
+    };
+    let ok = verification_ok && cleanup_ok;
+    let message = if verification_ok && !cleanup_ok {
+        format!(
+            "{verification_message} The verified new runtime remains active, but managed runtime cleanup failed."
+        )
+    } else {
+        verification_message
+    };
     let mut task = codex_maintenance_task(
         &task_id,
         &host_id,
@@ -2956,7 +3283,7 @@ pub(crate) fn run_remote_manage_codex(
     update_host_codex_status(
         state,
         &alias,
-        installed,
+        detected_installed,
         &version_label,
         path_has_local_bin(output_trimmed(&after_checks.shell_path).as_deref()),
         codex_command_available,
@@ -3100,15 +3427,30 @@ pub(crate) fn run_official_codex_installer(
     logs: &mut Vec<TaskLog>,
     next_log_index: &mut usize,
     timeout: u64,
+    minimum_version: Option<&str>,
+    minimum_current_version: Option<&str>,
     progress: Option<&CodexProgressContext<'_>>,
 ) -> ssh::SshCommandOutput {
+    let script =
+        codex_runtime::remote_version_floor_prelude(minimum_version, minimum_current_version)
+            .map(|prelude| {
+                format!(
+                    "{prelude}\n{}",
+                    codex_runtime::with_remote_codex_runtime_writer_lock(
+                        CODEX_OFFICIAL_INSTALL_SCRIPT
+                    )
+                )
+            })
+            .unwrap_or_else(|_| {
+                "printf 'Codex update version floor was invalid.\\n' >&2; exit 69".into()
+            });
     run_codex_step(
         alias,
         task_id,
         logs,
         next_log_index,
         "official Codex installer",
-        CODEX_OFFICIAL_INSTALL_SCRIPT,
+        &script,
         timeout,
         TaskLogLevel::Error,
         progress,
@@ -3121,15 +3463,30 @@ pub(crate) fn run_remote_native_mirror_install(
     logs: &mut Vec<TaskLog>,
     next_log_index: &mut usize,
     timeout: u64,
+    minimum_version: Option<&str>,
+    minimum_current_version: Option<&str>,
     progress: Option<&CodexProgressContext<'_>>,
 ) -> ssh::SshCommandOutput {
+    let script =
+        codex_runtime::remote_version_floor_prelude(minimum_version, minimum_current_version)
+            .map(|prelude| {
+                format!(
+                    "{prelude}\n{}",
+                    codex_runtime::with_remote_codex_runtime_writer_lock(
+                        CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
+                    )
+                )
+            })
+            .unwrap_or_else(|_| {
+                "printf 'Codex update version floor was invalid.\\n' >&2; exit 69".into()
+            });
     run_codex_step(
         alias,
         task_id,
         logs,
         next_log_index,
         "remote npmmirror native package",
-        CODEX_REMOTE_NATIVE_MIRROR_SCRIPT,
+        &script,
         timeout,
         TaskLogLevel::Error,
         progress,
@@ -3142,15 +3499,30 @@ pub(crate) fn run_remote_npm_mirror_install(
     logs: &mut Vec<TaskLog>,
     next_log_index: &mut usize,
     timeout: u64,
+    minimum_version: Option<&str>,
+    minimum_current_version: Option<&str>,
     progress: Option<&CodexProgressContext<'_>>,
 ) -> ssh::SshCommandOutput {
+    let script =
+        codex_runtime::remote_version_floor_prelude(minimum_version, minimum_current_version)
+            .map(|prelude| {
+                format!(
+                    "{prelude}\n{}",
+                    codex_runtime::with_remote_codex_runtime_writer_lock(
+                        CODEX_REMOTE_NPM_MIRROR_SCRIPT
+                    )
+                )
+            })
+            .unwrap_or_else(|_| {
+                "printf 'Codex update version floor was invalid.\\n' >&2; exit 69".into()
+            });
     run_codex_step(
         alias,
         task_id,
         logs,
         next_log_index,
         "remote npm mirror installation",
-        CODEX_REMOTE_NPM_MIRROR_SCRIPT,
+        &script,
         timeout,
         TaskLogLevel::Error,
         progress,
@@ -3320,6 +3692,8 @@ pub(crate) fn run_local_upload_codex_fallback(
     logs: &mut Vec<TaskLog>,
     next_log_index: &mut usize,
     timeout: u64,
+    minimum_version: Option<&str>,
+    minimum_current_version: Option<&str>,
     progress: Option<&CodexProgressContext<'_>>,
 ) -> ssh::SshCommandOutput {
     let platform_output = run_codex_step(
@@ -3484,7 +3858,21 @@ pub(crate) fn run_local_upload_codex_fallback(
     }
 
     let install_script =
-        codex_install_uploaded_package_script(&remote_tarball, &package.version, &package.target);
+        codex_runtime::remote_version_floor_prelude(minimum_version, minimum_current_version)
+            .map(|prelude| {
+                let install = codex_install_uploaded_package_script(
+                    &remote_tarball,
+                    &package.version,
+                    &package.target,
+                );
+                format!(
+                    "{prelude}\n{}",
+                    codex_runtime::with_remote_codex_runtime_writer_lock(&install)
+                )
+            })
+            .unwrap_or_else(|_| {
+                "printf 'Codex update version floor was invalid.\\n' >&2; exit 69".into()
+            });
     let install_output = run_codex_step(
         alias,
         task_id,
@@ -4073,8 +4461,98 @@ version=__VERSION__
 target=__TARGET__
 tmp_dir="${TMPDIR:-/tmp}/codexhub-upload-install.$$"
 stage_dir=""
-mkdir -p "$CODEX_INSTALL_DIR" "$CODEX_HOME/packages/standalone/releases" "$tmp_dir"
-trap 'rm -rf "$tmp_dir"; [ -n "${stage_dir:-}" ] && rm -rf "$stage_dir"; rm -f "$remote_tarball"' EXIT HUP INT TERM
+release_root="$CODEX_HOME/packages/standalone/releases"
+marker_name=".codexhub-managed-release"
+mkdir -p "$CODEX_INSTALL_DIR" "$release_root"
+mkdir "$tmp_dir" || exit 70
+trap 'codexhub_exit_status=$?; trap - EXIT; rm -rf "$tmp_dir"; [ -n "${stage_dir:-}" ] && rm -rf "$stage_dir"; rm -f "$remote_tarball"; if [ "$codexhub_exit_status" -ne 0 ]; then codexhub_runtime_restore_locked_current >/dev/null 2>&1 || codexhub_exit_status=76; fi; codexhub_runtime_lock_release >/dev/null 2>&1 || true; exit "$codexhub_exit_status"' EXIT
+
+is_safe_release_name() {
+  codexhub_safe_release_name_value=$1
+  case "$codexhub_safe_release_name_value" in "" | "." | ".." | */* | *[!A-Za-z0-9.+-]*) return 1 ;; esac
+  printf '%s\n' "$codexhub_safe_release_name_value" | awk '
+    BEGIN { ok = 0 }
+    {
+      split($0, build_parts, "+")
+      split(build_parts[1], prerelease_parts, "-")
+      count = split(prerelease_parts[1], numbers, ".")
+      if (count < 2 || count > 4) exit 1
+      for (component_index = 1; component_index <= count; component_index += 1) if (numbers[component_index] !~ /^[0-9]+$/) exit 1
+      ok = 1
+    }
+    END { exit(ok ? 0 : 1) }
+  '
+}
+
+binary_version() {
+  codexhub_binary_version_path=$1
+  "$codexhub_binary_version_path" --version 2>/dev/null | awk '
+    NF { count += 1; value = $NF }
+    END {
+      sub(/^v/, "", value)
+      if (count != 1 || value !~ /^[0-9A-Za-z.+-]+$/) exit 1
+      print value
+    }
+  '
+}
+
+# POSIX sh has no portable local variables, so helper scratch names stay prefixed.
+marker_valid() {
+  codexhub_marker_check_dir=$1
+  codexhub_marker_check_version=$2
+  codexhub_marker_check_path="$codexhub_marker_check_dir/$marker_name"
+  [ -f "$codexhub_marker_check_path" ] && [ ! -L "$codexhub_marker_check_path" ] || return 1
+  [ "$(wc -l <"$codexhub_marker_check_path" 2>/dev/null | tr -d '[:space:]')" = 2 ] || return 1
+  [ "$(sed -n '1p' "$codexhub_marker_check_path" 2>/dev/null)" = "CodexHub managed standalone release v1" ] || return 1
+  [ "$(sed -n '2p' "$codexhub_marker_check_path" 2>/dev/null)" = "version=$codexhub_marker_check_version" ] || return 1
+}
+
+write_verified_marker() {
+  codexhub_marker_write_dir=$1
+  codexhub_marker_write_version=$2
+  codexhub_marker_write_path="$codexhub_marker_write_dir/$marker_name"
+  if [ -e "$codexhub_marker_write_path" ] || [ -L "$codexhub_marker_write_path" ]; then
+    marker_valid "$codexhub_marker_write_dir" "$codexhub_marker_write_version"
+    return $?
+  fi
+  codexhub_marker_write_tmp="$codexhub_marker_write_dir/$marker_name.tmp.$$"
+  [ ! -e "$codexhub_marker_write_tmp" ] && [ ! -L "$codexhub_marker_write_tmp" ] || return 1
+  {
+    printf 'CodexHub managed standalone release v1\n'
+    printf 'version=%s\n' "$codexhub_marker_write_version"
+  } >"$codexhub_marker_write_tmp" || return 1
+  chmod 600 "$codexhub_marker_write_tmp" || { rm -f "$codexhub_marker_write_tmp"; return 1; }
+  mv "$codexhub_marker_write_tmp" "$codexhub_marker_write_path"
+}
+
+is_safe_existing_release() {
+  codexhub_existing_dir=$1
+  codexhub_existing_version=$2
+  [ -d "$codexhub_existing_dir" ] && [ ! -L "$codexhub_existing_dir" ] || return 1
+  codexhub_existing_root_real=$(readlink -f "$release_root" 2>/dev/null) || return 1
+  codexhub_existing_real=$(readlink -f "$codexhub_existing_dir" 2>/dev/null) || return 1
+  [ "$codexhub_existing_real" = "$codexhub_existing_root_real/$codexhub_existing_version" ] || return 1
+  codexhub_existing_layout_count=0
+  codexhub_existing_selected_binary=""
+  codexhub_existing_selected_relative=""
+  # A second direct path is ambiguous even when it is invalid or a broken symlink.
+  for codexhub_existing_relative in bin/codex codex; do
+    codexhub_existing_binary="$codexhub_existing_dir/$codexhub_existing_relative"
+    if [ -e "$codexhub_existing_binary" ] || [ -L "$codexhub_existing_binary" ]; then
+      codexhub_existing_layout_count=$((codexhub_existing_layout_count + 1))
+      codexhub_existing_selected_binary=$codexhub_existing_binary
+      codexhub_existing_selected_relative=$codexhub_existing_relative
+    fi
+  done
+  [ "$codexhub_existing_layout_count" -eq 1 ] || return 1
+  [ "$codexhub_existing_selected_relative" = bin/codex ] || return 1
+  [ -f "$codexhub_existing_selected_binary" ] && [ -x "$codexhub_existing_selected_binary" ] && [ ! -L "$codexhub_existing_selected_binary" ] || return 1
+  codexhub_existing_binary_real=$(readlink -f "$codexhub_existing_selected_binary" 2>/dev/null) || return 1
+  [ "$codexhub_existing_binary_real" = "$codexhub_existing_real/$codexhub_existing_selected_relative" ] || return 1
+  codexhub_existing_reported_version=$(binary_version "$codexhub_existing_selected_binary") || return 1
+  [ "$codexhub_existing_reported_version" = "$codexhub_existing_version" ] || return 1
+  write_verified_marker "$codexhub_existing_dir" "$codexhub_existing_version"
+}
 
 if [ ! -s "$remote_tarball" ]; then
   printf 'Uploaded Codex native package is missing or empty: %s\n' "$remote_tarball" >&2
@@ -4090,11 +4568,13 @@ if tar -tzf "$remote_tarball" | grep -Eq '(^|/)\.\.(/|$)|^/'; then
 fi
 
 extract_dir="$tmp_dir/native-extract"
-release_dir="$CODEX_HOME/packages/standalone/releases/$version"
+is_safe_release_name "$version" || { printf 'Uploaded Codex version is unsafe.\n' >&2; exit 2; }
+codexhub_version_meets_floors "$version" || { printf 'Uploaded Codex version is below a verified pre-operation runtime floor.\n' >&2; exit 69; }
+[ -d "$release_root" ] && [ ! -L "$release_root" ] || { printf 'Standalone release root identity is unsafe.\n' >&2; exit 2; }
+release_dir="$release_root/$version"
 stage_dir="$release_dir.tmp.$$"
-rm -rf "$extract_dir" "$stage_dir"
-mkdir -p "$extract_dir" "$stage_dir"
-tar -xzf "$remote_tarball" -C "$extract_dir"
+mkdir "$extract_dir" "$stage_dir" || { printf 'Could not create isolated Codex release staging directories.\n' >&2; exit 2; }
+tar -xzf "$remote_tarball" -C "$extract_dir" || { printf 'Could not extract the uploaded Codex package.\n' >&2; exit 2; }
 vendor_dir="$extract_dir/package/vendor/$target"
 if [ ! -x "$vendor_dir/bin/codex" ]; then
   printf 'Uploaded Codex native package did not contain vendor/%s/bin/codex.\n' "$target" >&2
@@ -4105,11 +4585,28 @@ cp -R "$vendor_dir/." "$stage_dir/"
 chmod 0755 "$stage_dir/bin/codex"
 [ -f "$stage_dir/codex-path/rg" ] && chmod 0755 "$stage_dir/codex-path/rg"
 [ -f "$stage_dir/codex-resources/bwrap" ] && chmod 0755 "$stage_dir/codex-resources/bwrap"
-rm -rf "$release_dir"
-mv "$stage_dir" "$release_dir"
-stage_dir=""
+staged_version=$(binary_version "$stage_dir/bin/codex") || { printf 'Uploaded Codex binary version could not be verified.\n' >&2; exit 2; }
+[ "$staged_version" = "$version" ] || { printf 'Uploaded Codex binary version did not match package metadata.\n' >&2; exit 2; }
+write_verified_marker "$stage_dir" "$version" || { printf 'Could not write the managed release marker.\n' >&2; exit 2; }
+if [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
+  if ! is_safe_existing_release "$release_dir" "$version"; then
+    printf 'Existing same-version release directory is not safely adoptable.\n' >&2
+    exit 2
+  fi
+else
+  stage_basename=${stage_dir##*/}
+  mv "$stage_dir" "$release_dir" || { printf 'Could not commit the staged Codex release.\n' >&2; exit 2; }
+  if [ -e "$release_dir/$stage_basename" ] || [ -L "$release_dir/$stage_basename" ]; then
+    stage_dir=""
+    printf 'The same-version release directory changed during commit; refusing the raced identity.\n' >&2
+    exit 2
+  fi
+  stage_dir=""
+  is_safe_existing_release "$release_dir" "$version" || { printf 'Committed Codex release identity could not be re-verified.\n' >&2; exit 2; }
+fi
 ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
 ln -sfn "$release_dir/bin/codex" "$CODEX_INSTALL_DIR/codex"
+codexhub_runtime_verify_post_mutation_floor || { printf 'The uploaded native runtime did not preserve the locked version floor.\n' >&2; exit 69; }
 printf 'CODEXHUB_INSTALL_METHOD=npm-mirror-native-local-upload\n'
 "#
     .replace("__REMOTE_TARBALL__", &shell_single_quote(remote_tarball))
@@ -4291,8 +4788,9 @@ mod host_operation_tests {
     }
 
     #[test]
-    fn final_verification_requires_method_path_version_and_both_shells() {
+    fn final_verification_requires_method_path_version_and_login_shell() {
         assert!(final_verification_failures(true, true, true, true, true).is_empty());
+        assert!(final_verification_failures(true, true, true, false, true).is_empty());
         let cases = [
             (
                 false,
@@ -4304,13 +4802,41 @@ mod host_operation_tests {
             ),
             (true, false, true, true, true, "Codex path"),
             (true, true, false, true, true, "Codex version"),
-            (true, true, true, false, true, "current-shell command"),
             (true, true, true, true, false, "login-shell command"),
+            (true, true, true, false, false, "login-shell command"),
         ];
         for (method, path, version, current, login, expected) in cases {
             let failures = final_verification_failures(method, path, version, current, login);
             assert!(failures.contains(&expected));
         }
+    }
+
+    #[test]
+    fn codex_command_availability_accepts_either_shell() {
+        assert!(codex_command_available_in_any_shell(false, true));
+        assert!(codex_command_available_in_any_shell(true, false));
+        assert!(codex_command_available_in_any_shell(true, true));
+        assert!(!codex_command_available_in_any_shell(false, false));
+    }
+
+    #[test]
+    fn final_verification_success_keeps_current_shell_path_warning() {
+        let warned = final_verification_success_message("Update", "host", "0.144.6", false);
+        assert!(warned.contains("current non-login SSH shell"));
+        assert!(warned.contains("PATH"));
+        assert!(warned.contains("verified login shell is usable"));
+
+        let clean = final_verification_success_message("Update", "host", "0.144.6", true);
+        assert_eq!(clean, "Update completed on host: 0.144.6.");
+    }
+
+    #[test]
+    fn failed_install_operation_preserves_detected_restored_runtime_state() {
+        let operation_failures = final_verification_failures(false, true, true, true, true);
+        assert_eq!(operation_failures, vec!["verified installation method"]);
+        assert!(detected_codex_installed(true, true));
+        assert!(!detected_codex_installed(false, true));
+        assert!(!detected_codex_installed(true, false));
     }
 
     #[test]
@@ -4384,6 +4910,52 @@ mod host_operation_tests {
         next += 1;
         let method = command_log("task", next, TaskLogLevel::Info, "method", &output);
         assert_ne!(candidate.id, method.id);
+    }
+
+    #[test]
+    fn task_log_ids_remain_unique_when_a_sequence_hint_is_reused() {
+        let output = failed_command_output("test command".into(), "test failure".into());
+        let first = command_log("task-log-id", 16, TaskLogLevel::Warn, "first", &output);
+        let second = basic_log("task-log-id", 16, TaskLogLevel::Warn, "second");
+
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn state_check_logs_advance_the_maintenance_sequence() {
+        let output = ssh::SshCommandOutput {
+            command: "test".into(),
+            stdout: "ok".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 1,
+            timed_out: false,
+        };
+        let checks = CodexStateChecks {
+            codex_path: output.clone(),
+            current_command_available: output.clone(),
+            login_command_available: output.clone(),
+            version: output.clone(),
+            shell_path: output,
+        };
+        let mut logs = vec![basic_log(
+            "task-state-check",
+            1,
+            TaskLogLevel::Info,
+            "started",
+        )];
+        let mut next_log_index = 2;
+
+        append_state_check_logs(
+            "task-state-check",
+            &mut logs,
+            &mut next_log_index,
+            &checks,
+            "after maintenance",
+        );
+
+        assert_eq!(logs.len(), 6);
+        assert_eq!(next_log_index, 7);
     }
 
     #[test]
@@ -4533,7 +5105,9 @@ mod host_operation_tests {
                 "remote-native-mirror",
                 "remote-npm-mirror",
                 "local-upload",
-                "final-verification"
+                "runtime-reconcile",
+                "final-verification",
+                "release-cleanup"
             ]
         );
         let script = preparation_probe_script();

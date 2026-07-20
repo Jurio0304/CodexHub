@@ -15,9 +15,14 @@ const mockSource = read("src/api/mock.ts");
 const invokeSource = read("src/api/invoke.ts");
 const settingsSource = read("src/settings.ts");
 const appSource = read("src/App.tsx");
+const normalizeSource = read("src/api/normalize.ts");
+const modelsSource = read("src/models.ts");
+const generatedContractsSource = read("src/generated/rust-contracts.ts");
 const rustSettingsSource = read("src-tauri/src/settings.rs");
 const boundaryDoc = read("docs/desktop-command-boundaries.md");
 const rustHandlerSource = read("src-tauri/src/app_runtime.rs");
+const rustProfileCommandSource = read("src-tauri/src/commands/profiles.rs");
+const rustProfileUseCaseSource = read("src-tauri/src/services/profile_use_cases.rs");
 const rustSource = [
   "src-tauri/src/lib.rs",
   "src-tauri/src/app_runtime.rs",
@@ -102,6 +107,50 @@ for (const required of ["settingsSaveError", "pendingSettings", "retrySettingsSa
 }
 for (const required of ["SettingsSaveResult", "storage::save_document", "changed: false", "backup_path"]) {
   if (!rustSettingsSource.includes(required)) fail(`Rust settings transaction is missing: ${required}`);
+}
+
+for (const required of [
+  "ProfileApplyOptions",
+  "RemoteCodexReloadMode",
+  "RemoteCodexReloadStatus",
+  "RemoteCodexReloadResult",
+  "ProfileApplyOutcome"
+]) {
+  if (!modelsSource.includes(required) || !generatedContractsSource.includes(`${required}Dto`)) {
+    fail(`profile apply reload contract is missing: ${required}`);
+  }
+}
+if (!/applyProfile:\s*\(profileId: string, hostIds: string\[\], options: ProfileApplyOptions\)/u.test(apiContractsSource)) {
+  fail("profile apply API must require explicit reload options");
+}
+for (const required of [
+  'requiredInvoke<ProfileApplyBatchResultDto>("apply_profile", {',
+  "options: normalizeProfileApplyOptions(options)",
+  "mockApplyProfile(profileId, hostIds, normalizeProfileApplyOptions(options))"
+]) {
+  if (!`${desktopSource}\n${mockSource}`.includes(required)) {
+    fail(`profile apply options are not preserved across desktop/mock boundaries: ${required}`);
+  }
+}
+const normalizeProfileApplyOptionsSource = normalizeSource.match(
+  /export function normalizeProfileApplyOptions[\s\S]*?\n}\r?\n\r?\nfunction normalizeRemoteCodexReloadResult/
+)?.[0] ?? "";
+if (!normalizeProfileApplyOptionsSource.includes(': "none"') || normalizeProfileApplyOptionsSource.includes(': "app-services"')) {
+  fail("unknown profile apply reload options must degrade to none, never to process termination");
+}
+if (!rustProfileCommandSource.includes("options: Option<ProfileApplyOptions>") || !rustProfileUseCaseSource.includes("options.unwrap_or_default()")) {
+  fail("Rust profile apply must accept omitted legacy options while keeping the domain default");
+}
+for (const [command, frontendName] of [
+  ["reconcile_remote_codex_runtime", "reconcileRemoteCodexRuntime"],
+  ["cleanup_remote_codex_releases", "cleanupRemoteCodexReleases"]
+]) {
+  if (policyCommands.includes(command) || rustCommands.includes(command) || desktopCommands.includes(command)) {
+    fail(`managed runtime maintenance must remain an internal operation step: ${command}`);
+  }
+  if (`${apiContractsSource}\n${desktopSource}\n${mockSource}`.includes(frontendName)) {
+    fail(`managed runtime maintenance must not expose a standalone frontend API: ${frontendName}`);
+  }
 }
 
 console.log(`API BOUNDARY PASS: ${policyCommands.length} Tauri commands use explicit desktop/mock boundaries.`);

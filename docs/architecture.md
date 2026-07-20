@@ -1,6 +1,6 @@
 # CodexHub Architecture
 
-Date: 2026-07-14
+Date: 2026-07-17
 Target: Cross-platform desktop MVP using Tauri 2, React, TypeScript, Vite, and Rust, with Windows, macOS, and Ubuntu/Debian x86_64 plus arm64 Linux deb release-build support.
 
 ## Architecture Principle
@@ -10,7 +10,7 @@ CodexHub is a desktop control plane for Codex App SSH-based remote development. 
 - `~/.codex/config.toml`
 - `~/.codex/skills/`
 
-Codex App remains the interactive coding surface. If Codex App has no public API for host registration or reconnect, CodexHub provides a safe fallback wizard instead of touching private app state.
+Codex App remains the interactive coding surface. CodexHub may reload strictly identified Codex processes on the remote Linux host after profile apply, but it does not control the local ChatGPT/Codex App or touch its private state.
 
 The local platform layer owns OS-specific paths and command discovery. Windows keeps `%USERPROFILE%\.ssh\config`, while macOS and Linux use `~/.ssh/config`, `~/.ssh/id_ed25519`, `~/.codex/config.toml`, `~/.codex/skills`, and the Codex binary search order documented in `docs/macos-support.md` and `docs/linux-support.md`.
 
@@ -32,16 +32,17 @@ flowchart LR
   Remote --> Config["~/.codex/config.toml"]
   Remote --> Skills["~/.codex/skills/"]
   Remote --> CodexCli["codex CLI in ~/.local/bin"]
+  Remote --> CodexProcesses["current-user Codex processes"]
   UI --> Fallback["Codex App fallback wizard"]
 ```
 
 ## Frontend Modules
 
 - Servers: host inventory, aliases, labels, SSH config status, connection health.
-- Profiles: local profile templates, CRUD/import/export, env-var-first API key policy, rendered remote TOML preview, and single or selected-host batch apply.
+- Profiles: local profile templates, CRUD/import/export, env-var-first API key policy, rendered remote TOML preview, single or selected-host batch apply, and a per-run remote Codex reload choice.
 - Skills: local skill packages, GitHub search/clone import, installed-skill tag preview/download/uninstall, remote upload/install status, and remote list.
 - Operations: backup, apply, restore, dry-run, and audit log.
-- Codex App Fallback: manual steps for enabling SSH hosts and reconnecting in Codex App.
+- Codex App Fallback: manual steps for enabling SSH hosts and reconnecting in the local ChatGPT/Codex App.
 - Settings: local data location, remote paths, OpenSSH binary overrides, theme, and privacy controls.
 
 ## Feedback And Accessibility
@@ -60,7 +61,7 @@ The backend migration boundary is `commands -> services -> jobs -> storage/adapt
 
 - `commands/` contains thin Tauri entry points only: parse wire arguments, pass `AppState` to one domain use case, and return the existing public command shape. All public command names remain stable.
 - `services/` owns use-case sequencing and compensation. Hosts/SSH, Profiles/credentials, Skills, updater, related Host/Profile writes, and storage migration/restore are separated into use-case and operation modules.
-- `jobs.rs` persists queued/running/final task transitions and redacts every step summary and log surface before SQLite writes. A step and its optional detail log are committed atomically before the task-update notification is emitted; monotonic merging prevents stale parallel snapshots from moving a durable running or terminal step back to pending. Failure to persist a required transition fails the command; Tauri event delivery remains diagnostic because SQLite is authoritative.
+- `jobs.rs` persists queued/running/final task transitions and redacts every step summary and log surface before SQLite writes. All Rust task-log constructors share one nonce-backed ID allocator, while SQLite keeps display order in its independent sequence column. A step and its optional detail log are committed atomically before the task-update notification is emitted; monotonic merging prevents stale parallel snapshots from moving a durable running or terminal step back to pending. Task payload validation rejects duplicate IDs and cross-step identity reuse before replacement. A caller-side payload invariant failure terminates only that task and keeps the healthy store available; genuine database availability failures still gate later durable operations. Tauri event delivery remains diagnostic because SQLite is authoritative.
 - `storage/` owns app-scoped paths, versioned JSON, atomic replacement, backup/recovery, multi-file compensation, and the SQLite `TaskStore` repository. Task schema v4 adds `task_steps` plus `task_logs.step_id`; upgrades checkpoint WAL, create and validate a `VACUUM INTO` snapshot, then migrate transactionally. Startup marks queued/running tasks as interrupted, running steps as failed, and pending steps as skipped. Task history keeps at most the latest 100 task records. Before automatic retention or manual clearing deletes completed rows, complete tasks, steps, and logs are serialized into a recovery JSON file and moved through the operating system recycle-bin API; task-level tombstones prevent stale async snapshots from restoring recycled records. Running and queued tasks are never recycled.
 - `adapters/` isolates event delivery and OS credentials. Existing `ssh.rs`, `resource_monitor.rs`, and `updater.rs` remain compatibility adapters behind services.
 
@@ -92,7 +93,7 @@ The complete desktop/mock failure policy is documented in [Desktop Command Bound
 - `set_profile_api_key(profile_id, api_key)`, `get_profile_api_key(profile_id)`, `delete_profile_api_key(profile_id)`: store, explicitly retrieve, or delete a local OS credential-store value while profile JSON keeps only credential state. Retrieval is used only by the profile editor's reveal control, and the value is never logged or cached.
 - `detect_cc_switch_profiles()` / `import_cc_switch_profiles()`: import compatible local profile definitions without persisting credential values in profile JSON.
 - `preview_profile_apply(profile_id, host_ids)`: render TOML and summarize per-host remote config actions before mutation.
-- `apply_profile(profile_id, host_ids)`: backup, upload temp file, atomically replace remote config, write apply metadata, refresh host/profile state, and record redacted task logs.
+- `apply_profile(profile_id, host_ids, options)`: backup, upload a temp file, atomically replace remote config, write apply metadata/env/launcher state, verify the env, persist confirmed host/profile state, then optionally reload remote Codex processes and record redacted task steps.
 - `list_local_skills()` / `list_skill_packs()`: read persisted local managed skills.
 - `import_local_skill(path)`: validate `SKILL.md` at the selected directory or immediate child directories, then copy valid skills into CodexHub-managed storage.
 - `update_library_skill_about(skill_id, about)`: persist a user-edited library About/details field for preview.
@@ -233,7 +234,9 @@ Install and update keep this strict per-host order:
 3. `remote-native-mirror`: fetch and validate the matching npmmirror native package remotely; the narrowly scoped insecure-TLS retry remains inside this stage.
 4. `remote-npm-mirror`: use remote npm with the npmmirror registry and a user-owned prefix.
 5. `local-upload`: download and validate the native package locally, upload it with SCP, then install it remotely.
-6. `final-verification`: resolve the final binary and verify version plus current/login-shell PATH visibility.
+6. `runtime-reconcile`: coordinate a verified standalone target and launcher with `standalone/current`, then verify the target, launcher, and login-shell command report the same version without regressing below either safe pre-update version floor.
+7. `final-verification`: resolve the final binary, verify its version, require login-shell command availability, and retain current non-login shell visibility as a diagnostic PATH warning that does not block success.
+8. `release-cleanup`: after final verification, Install removes only eligible marked releases, while Update adopts every strictly identifiable lower release and moves it into a staged backup; retain current, targeted, same/newer, active, or uncertain identities.
 
 Fallback methods on one host are always sequential. The first successful method skips the remaining methods, and overall success requires final verification. Uninstall uses `preparation`, `uninstall`, and `final-verification`; Codex being absent after removal is a successful verification result.
 
@@ -242,6 +245,24 @@ The Rust backend executes blocking SSH/curl/scp work off the window-responsive c
 The remote script must not use `sudo`, `/usr/local/bin`, `chown`, or a root-owned install path. Repeat runs should not duplicate the PATH block and should not create a backup when no shell config write is needed.
 
 The primary UI entry is the host table on the Hosts / 主机 page, which owns single-host and batch maintenance actions plus the shared progress modal. Profiles / 配置 remains focused on profile editing and apply workflows.
+
+## Managed Runtime Coordination And Release Cleanup
+
+Install/Update and Profile apply share one internal runtime reconciliation path. For a CodexHub-managed standalone runtime, `~/.codex-hub/codex-target` stores the executable selected through `~/.codex/packages/standalone/current`: `bin/codex` for the legacy/local layout or `codex` for the current official installer layout. It does not store a resolved `releases/<entry>/<binary>` path. The same-name `~/.local/bin/codex` launcher reads that target after sourcing the managed env, and reconciliation succeeds only when the target, launcher, and login-shell `codex --version` values agree. Target and launcher replacements are staged atomically with backups and rollback on failed verification.
+
+Update passes both the active version and the separately verified pre-operation `standalone/current` version into reconciliation as minimums; the latter also records the exact release entry and binary layout so recovery never guesses by glob. Every CodexHub runtime writer publishes an atomic current-UID/PID/starttime owner record, then re-reads canonical current, active-command, and login-shell versions while holding the shared lock. Installers and reconciliation treat the highest comparable observation as a monotonic floor and verify the post-mutation state before reporting success. A concurrent or identity-ambiguous writer fails safely instead of proceeding with stale probe data.
+
+A final runtime below any verified floor is rejected. If an installation method moved `current` to a lower release while the verified former release is still intact, reconciliation restores that exact higher release before activating the launcher. When every installation method fails after possibly changing `current` or the launcher, the same recovery reconcile still restores an available pre-operation floor while preserving the original failed operation result. The Task remains failed, while persisted Host readiness follows the final path/version probe so a successfully restored runtime is not falsely recorded as uninstalled. Profile apply captures the login-shell-visible version before any launcher/target write and uses it as another floor, so applying configuration cannot replace a higher active runtime with an older release target. Signal handlers arm rollback before destructive moves and restore target/launcher state before the writer lock is released. This capability is an internal stage of the existing operations, not a standalone Host/API action.
+
+Cleanup scans only direct children of `~/.codex/packages/standalone/releases`. A candidate entry may equal the binary version or use the official `<version>-<vendor-target>` form and must expose exactly one canonical direct executable layout whose reported version matches the entry. Install and Profile apply require an existing valid `.codexhub-managed-release` marker. Update receives the final verified version only after final installation checks; for a strictly lower candidate with no marker path, it atomically writes the exact marker under the shared writer lock and then uses the verified Update backup path. A valid existing marker remains eligible, while an invalid marker is never overwritten. Same-version and higher-version releases are retained without adoption. Both direct layouts existing at once are ambiguous and rejected even if one reports the expected version.
+
+Every mode protects the canonical `standalone/current` release and the release selected by `codex-target`. A current-UID process also prevents cleanup. During Update, a strictly lower in-use release may receive its strict marker before being retained, allowing a later managed-only cleanup retry after the process exits. The cleanup result reports adoption and staged-backup counts separately from the mutually exclusive removed-from-active, retained, and deferred counts, plus a safe backup ID rather than an absolute home path. It also reports the number of strictly classified session helpers covered by the staged-Update exception.
+
+When reconciliation replaces a pre-existing regular-file `~/.local/bin/codex`, it first moves that executable to `~/.codex-hub/codex-original.<YYYYMMDDHHMMSS>.<pid>` and atomically writes a `.codexhub-managed-capture` sidecar bound to the exact filename and normalized version. Rollback verifies the executable and sidecar, restores the executable first, and removes the sidecar only after restoration. Later cleanup considers only strict two-number capture names with an exact sidecar, preserves the capture selected by `codex-target` or used by a current-UID process, and leaves historical unmarked captures untouched.
+
+Release and capture cleanup holds the same runtime writer lock used by install, update, uninstall, and reconciliation. Every candidate first uses a same-directory GNU `mv -T -n` quarantine followed by repeated lock ownership, canonical-path, marker, target/current, version, and current-UID process checks. The capability probe supports the no-clobber collision statuses used by coreutils 8.x and 9.4 (`0` or `1`) only when both collision files remain exact regular files and a separate destination-absent move returns `0`, removes its source, and preserves exact content. Normal `/proc` reads bind PID, UID, starttime, and executable across repeated reads so PID reuse defers cleanup. Only `verified-older-than + staged` Update may accept an unreadable executable link for strictly classified session infrastructure or an exited process: the existing `sshd`, `(sd-pam)`, `sftp-server`, and `fusermount3` classes; a `systemd` user manager whose complete command line is exactly `/usr/lib/systemd/systemd --user` or `/lib/systemd/systemd --user` with no extra argument; or a stable zombie with state `Z`, an empty command line, `Threads: 1`, and a `/proc/<pid>/task` directory containing only its leader TID. It double-reads UID/starttime/state/comm/full command line and executable visibility, repeats both single-thread proofs for zombies, treats a captured numeric TID that disappears during enumeration as a race, records a non-empty fixed-field snapshot, and requires that exact identity class at every later candidate check. Install/Profile cleanup stays strict; any new, changed, unknown, multi-thread zombie, or Codex-like process defers. For Update, the verified quarantine is then moved with another no-replace rename into `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`; the backup must share the source filesystem, has mode `700`, includes a manifest, and also receives eligible launcher captures plus known `~/.local/bin/codex.codexhub.bak.*` and `~/.codex/tmp/arg0/codex-arg0*/*` residual links. Because each candidate requires repeated process scans, this cleanup SSH stage has a dedicated 360-second cap; ordinary SSH commands retain the 120-second cap. Update never automatically purges this backup. Unmarked releases remain untouched outside the verified Update adoption policy; unmanaged captures, active objects, races, invalid markers, and every other ambiguity outside the staged exception stay in place. Later Update or Profile apply can retry eligible marked objects. The cleanup path does not signal processes and never broad-deletes unknown release directories or captures.
+
+Runtime coordination and cleanup operate only on the remote host over SSH. They do not read or communicate with local ChatGPT/Codex App private databases, sockets, caches, or IPC.
 
 ## Remote Write Algorithm
 
@@ -253,8 +274,10 @@ Every remote file mutation must be previewable, backed up, and idempotent.
 4. Upload rendered TOML to `~/.codex/config.toml.codexhub.tmp.<operation-id>`.
 5. Validate that the uploaded temp file is non-empty and has the expected checksum.
 6. Move temp file to `~/.codex/config.toml` on the remote host.
-7. Store operation metadata and backup path locally.
-8. If the rendered config is identical to the current remote config, report "no changes" and do not create a new backup.
+7. If the rendered config is identical to the current remote config, report "no changes" and do not create a new config backup.
+8. Write the selected remote API env, reconcile the managed launcher/runtime target, verify the env and runtime, then persist confirmed Host/Profile state locally.
+9. Run the separately confirmed remote Codex reload step even when config/env files were unchanged; skip it when an apply prerequisite failed.
+10. Retry safe managed-release cleanup after reload; keep the verified configuration and runtime active when an old release is still in use or its identity is uncertain.
 
 ## Profile And API Config Management
 
@@ -264,13 +287,22 @@ Window 5 profile switching is file-based and implemented through the direct SSH/
 - API key handling is env-var-first. Rendered TOML uses `env_key` / `apiKeyEnvVar` so the remote host resolves its own environment variable.
 - An optional API key value can be stored in the local OS credential store for local convenience, but only a `credentialStored` boolean is kept in profile JSON.
 - When a profile with a stored key is explicitly applied to selected hosts, CodexHub writes the real key only to `~/.codex-hub/env` with mode `600`, creates a timestamped backup before replacing an existing env file, and adds managed source blocks to `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`.
-- The same apply step records the real Codex target in `~/.codex-hub/codex-target` and installs a command-preserving `~/.local/bin/codex` launcher that sources `~/.codex-hub/env` before execing the real binary.
+- For a managed standalone install, the same apply step keeps `~/.codex-hub/codex-target` on the verified executable selected through `~/.codex/packages/standalone/current` and installs a command-preserving `~/.local/bin/codex` launcher that sources `~/.codex-hub/env` before execing that target. Reconciliation verifies the target, launcher, and login-shell command use one non-regressed version.
 - Applying a profile renders the entire desired `~/.codex/config.toml`.
 - CodexHub replaces the remote config after diff/backup, writes local/remote apply metadata, and checks whether the referenced remote API env var exists without printing its value.
 - Apply can target one host or a selected-host batch, with each host producing a separate redacted task log.
-- The user starts a new Codex session or follows the reconnect fallback in Codex App.
+- Every apply entry uses one confirmation dialog. The default `app-services` mode reloads confirmed `app-server`/`remote-control` services and preserves interactive CLI/exec sessions; `none` leaves all processes running; `all-codex` requires an extra acknowledgement before stopping every confirmed Codex process for that remote UID.
+- A successful config apply is not rolled back when process reload needs manual recovery. The result becomes `manual-reconnect`, and the user follows `Settings > Codex > Connections` in the local ChatGPT/Codex App.
 
 This avoids a separate user-facing wrapper command and avoids assumptions about Codex App internals. A future profile-selection wrapper can be added as an opt-in enhancement for hosts where runtime `codex --profile <name>` orchestration is desired.
+
+## Remote Codex Reload Boundary
+
+Remote reload is part of profile apply only; there is no standalone Host action. The backend reads `/proc/<pid>/status`, `stat`, `comm`, and `cmdline` to verify the current SSH UID, strict command/argv shape, and process start time, then repeats those checks immediately before sending `SIGTERM`. `app-services` targets only confirmed App services; `all-codex` also targets confirmed interactive, exec, login, resume, and automated sessions whose `comm`/argv identify the same `codex` command family. Multiple matches are handled individually.
+
+The implementation never uses `pkill`, `killall`, process-group signals, negative PIDs, `SIGKILL`, or automatic escalation. It waits up to five seconds for old PIDs to exit and, when an App service existed, up to 15 seconds total for a strictly matched replacement. The start-time recheck prevents signaling a reused PID; an unreadable/suspicious identity, an old process that remains, or a missing replacement produces `manual-required`. SSH or result-protocol failure produces `failed`. Task logs retain only status/count summaries, never raw process command lines or the reload command's stdout/stderr.
+
+This SSH operation does not establish IPC with the local ChatGPT/Codex App and does not read its databases, sockets, caches, or undocumented files. If automatic recovery is not observed within 15 seconds, the saved remote configuration remains active and the UI directs the user to `Settings > Codex > Connections` for a manual reconnect.
 
 ## Skill Management
 
@@ -314,10 +346,10 @@ Optional write behavior must follow these rules:
 
 ## Codex App Fallback UX
 
-Because no public stable API was found for automatic host registration or forced reconnect, the MVP fallback is explicit:
+Because no public stable API was found for automatic host registration or forcing the local App to reconnect, the MVP fallback is explicit:
 
 1. Show the SSH alias CodexHub verified.
-2. Show the exact Codex App navigation: Settings > Codex > Connections.
+2. Show the exact local ChatGPT/Codex App navigation: Settings > Codex > Connections.
 3. Provide copy buttons for the alias and test commands.
 4. Show what CodexHub already changed on the remote host.
 5. Provide rollback/restore actions for files CodexHub changed.

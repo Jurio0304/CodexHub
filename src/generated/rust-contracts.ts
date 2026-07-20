@@ -60,11 +60,21 @@ export type TaskEvent = { taskId: string, status: TaskStatus, summary: string, u
 
 export type ProfileApplyTargetFileDto = { hostId: string, hostName: string, hostAlias: string, path: string, backupExpected: boolean, noChangeExpected: boolean, };
 
-export type ProfileApplyHostResultDto = { hostId: string, hostName: string, hostAlias: string, status: string, targetPath: string, backupPath: string | null, message: string, task: TaskRun | null, };
+export type RemoteCodexReloadModeDto = "none" | "app-services" | "all-codex";
+
+export type ProfileApplyOptionsDto = { remoteCodexReloadMode: RemoteCodexReloadModeDto, };
+
+export type RemoteCodexReloadStatusDto = "not-requested" | "skipped" | "not-running" | "reloaded" | "reconnected" | "manual-required" | "failed";
+
+export type RemoteCodexReloadResultDto = { mode: RemoteCodexReloadModeDto, status: RemoteCodexReloadStatusDto, targetedCount: number, stoppedCount: number, preservedCliCount: number, replacementObserved: boolean, message: string, };
+
+export type ProfileApplyOutcomeDto = "success" | "partial" | "failed" | "manual-reconnect";
+
+export type ProfileApplyHostResultDto = { hostId: string, hostName: string, hostAlias: string, status: string, targetPath: string, backupPath: string | null, message: string, reload: RemoteCodexReloadResultDto, task: TaskRun | null, };
 
 export type ProfileApplyPreviewDto = { profileId: string, profileName: string, renderedToml: string, targetFiles: Array<ProfileApplyTargetFileDto>, hostResults: Array<ProfileApplyHostResultDto>, warnings: Array<string>, };
 
-export type ProfileApplyBatchResultDto = { profileId: string, ok: boolean, results: Array<ProfileApplyHostResultDto>, tasks: Array<TaskRun>, profiles: Array<ProfileDto>, hosts: Array<HostDto>, };
+export type ProfileApplyBatchResultDto = { profileId: string, ok: boolean, outcome: ProfileApplyOutcomeDto, results: Array<ProfileApplyHostResultDto>, tasks: Array<TaskRun>, profiles: Array<ProfileDto>, hosts: Array<HostDto>, };
 
 export type ProfileImportExportDto = { schemaVersion: number, exportedAt: string, profiles: Array<ProfileDto>, };
 

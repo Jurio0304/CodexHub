@@ -307,6 +307,7 @@ pub(crate) async fn execute_apply_profile(
     app: AppHandle,
     profile_id: String,
     host_ids: Vec<String>,
+    options: Option<ProfileApplyOptions>,
     timeout_ms: Option<u64>,
 ) -> Result<ProfileApplyBatchResult, String> {
     ensure_task_storage_for_app(&app)?;
@@ -315,8 +316,15 @@ pub(crate) async fn execute_apply_profile(
         let profile = find_profile(&app, &state, &profile_id)?;
         let rendered_toml = render_profile_toml(&profile)?;
         let timeout = ssh::normalize_timeout_ms(timeout_ms.or(Some(30_000)));
-        let result =
-            apply_profile_to_hosts(&app, &state, &profile, &rendered_toml, host_ids, timeout)?;
+        let result = apply_profile_to_hosts(
+            &app,
+            &state,
+            &profile,
+            &rendered_toml,
+            host_ids,
+            options.unwrap_or_default(),
+            timeout,
+        )?;
         Ok(result)
     })
     .await?

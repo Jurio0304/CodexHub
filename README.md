@@ -62,6 +62,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * Probes Linux remotes for OS, architecture, shell, PATH, Codex CLI, command availability, `~/.codex/config.toml`, API env readiness, and skill counts.
 * Installs or updates the real remote `codex` command in the remote user's home directory.
 * Manages local profile templates and applies rendered TOML to remote `~/.codex/config.toml`.
+* After a confirmed profile apply, can gracefully reload strictly matched Codex processes owned by the current remote SSH user; the recommended mode preserves interactive CLI and exec sessions.
 * Imports local or GitHub skill directories containing `SKILL.md`.
 * Shows read-only, page-active CPU, memory, and GPU resource snapshots for remembered hosts.
 * Persists the latest 100 redacted task records across restarts and keeps each retained task's complete diagnostics available on the Tasks page.
@@ -79,6 +80,8 @@ CodexHub is designed to be conservative by default:
 * It does not edit unmanaged SSH config blocks.
 * It writes only marked blocks between `# >>> CodexHub managed host: <alias>` and `# <<< CodexHub managed host: <alias>`.
 * It does not write Codex App private files, databases, sockets, caches, or undocumented state.
+* Remote process reload uses SSH plus Linux `/proc` identity checks and `SIGTERM` only. It never uses broad `pkill`/`killall` matching and never controls the local ChatGPT/Codex App process.
+* Install/Profile cleanup only removes strictly marked old runtimes; a verified Update may stage strictly older releases in a retained backup. Current, targeted, active, changed, or ambiguous Codex identities are always preserved.
 * Remote Codex config uses `env_key` / `apiKeyEnvVar`. When you explicitly apply a profile with a stored key, CodexHub writes that key only to the selected host's `~/.codex-hub/env` file with restrictive permissions; remote config, metadata, and task logs stay key-free.
 * Mutating remote operations use previews or explicit confirmations, scoped writes/deletes, and task-log evidence; config writes create backups when content changes.
 
@@ -148,6 +151,8 @@ For everyday use, download the latest stable build from this repository's Releas
 * Installs target `$HOME/.local/bin` and `$HOME/.codex`.
 * PATH repair checks `.bashrc` or `.zshrc`, `.profile`, and existing `.bash_profile` / `.zprofile`, and adds an idempotent CodexHub-managed block only when no existing `$HOME/.local/bin` entry is present.
 * Official installer is tried first; mirror and local-upload fallbacks are logged.
+* After a successful install or update method, CodexHub keeps a verified standalone target on the executable selected through `~/.codex/packages/standalone/current` (`bin/codex` for legacy/local releases or `codex` for the current official layout) and verifies that the target, managed launcher, and login-shell `codex` command report the same version. Each writer takes a current-user PID/starttime lock, re-reads the runtime after locking, and rejects both the candidate and post-write state below the highest verified version floor.
+* After final verification, Install and Profile apply remove only obsolete, strictly marked managed releases. Update additionally adopts every direct `releases/<entry>` version that has one unambiguous executable layout, matches its binary-reported version, and is strictly older than the newly verified version, then moves each eligible release, launcher capture, and known residual launcher/helper link into `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`. The task result reports the safe backup ID; the backup is retained for manual inspection, so disk space is not reclaimed until that backup is explicitly deleted. Current, targeted, same/newer, invalid-marker, raced, active, or otherwise uncertain releases stay in place. All cleanup shares the runtime writer lock, rechecks current-UID processes, requires a same-filesystem no-replace move, and never overwrites an existing backup. Only this reversible staged-Update path may tolerate an unreadable `/proc/<pid>/exe` for a stable, double-read current-user `sshd`, `(sd-pam)`, `sftp-server`, or `fusermount3` session helper; its PID/starttime/comm/full argv0 snapshot must remain identical at every candidate check, and the task summary reports the ignored helper count. Install/Profile cleanup remains strict, while any new, changed, unknown, or Codex-like process still defers cleanup.
 
 ### Apply a Profile
 
@@ -156,6 +161,9 @@ For everyday use, download the latest stable build from this repository's Releas
 * Preview before applying.
 * If the remote config already matches, CodexHub reports no changes and does not create a backup.
 * If the file changes, CodexHub creates a timestamped backup and records the result in Tasks.
+* Runtime reconciliation prevents profile apply from restoring a stale standalone release: the managed target continues to follow `standalone/current`, and a lower runtime version is rejected.
+* Every apply asks whether to reload only remote Codex App services (recommended), leave processes running, or stop all confirmed remote Codex sessions. Stopping all sessions requires an extra acknowledgement.
+* If no replacement App service appears within 15 seconds, the saved configuration remains active and CodexHub directs you to the local ChatGPT/Codex App at `Settings > Codex > Connections` for a manual reconnect.
 
 ### Install Skills
 
@@ -169,7 +177,8 @@ For everyday use, download the latest stable build from this repository's Releas
 * The v0.4.6 macOS artifact remains unsigned/ad-hoc; Developer ID signing and notarization are not configured yet.
 * Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.4.6.
 * CodexHub does not automatically register SSH hosts inside Codex App.
-* CodexHub does not force Codex App to reconnect.
+* CodexHub can reload the current SSH user's remote Codex processes after profile apply, but it cannot force the local ChatGPT/Codex App to reconnect or use private app IPC.
+* Remote reload is available only inside profile apply; there is no standalone Host reload button.
 * Linux remotes are the current target; Windows remotes are not in scope.
 * Full install/update depends on remote shell, `scp`, `tar`, and network or local-upload fallback behavior.
 * Skill path support follows `~/.codex/skills` and `~/.codex/superpowers/skills`; project-level path drift remains a later capability.

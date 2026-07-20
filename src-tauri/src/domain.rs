@@ -248,7 +248,61 @@ pub(crate) struct ProfileApplyHostResult {
     pub(crate) target_path: String,
     pub(crate) backup_path: Option<String>,
     pub(crate) message: String,
+    pub(crate) reload: RemoteCodexReloadResult,
     pub(crate) task: Option<TaskRun>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "RemoteCodexReloadModeDto")]
+pub(crate) enum RemoteCodexReloadMode {
+    None,
+    #[default]
+    AppServices,
+    AllCodex,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, TS)]
+#[serde(default, rename_all = "camelCase")]
+#[ts(rename = "ProfileApplyOptionsDto")]
+pub(crate) struct ProfileApplyOptions {
+    pub(crate) remote_codex_reload_mode: RemoteCodexReloadMode,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "RemoteCodexReloadStatusDto")]
+pub(crate) enum RemoteCodexReloadStatus {
+    NotRequested,
+    Skipped,
+    NotRunning,
+    Reloaded,
+    Reconnected,
+    ManualRequired,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "RemoteCodexReloadResultDto")]
+pub(crate) struct RemoteCodexReloadResult {
+    pub(crate) mode: RemoteCodexReloadMode,
+    pub(crate) status: RemoteCodexReloadStatus,
+    pub(crate) targeted_count: u32,
+    pub(crate) stopped_count: u32,
+    pub(crate) preserved_cli_count: u32,
+    pub(crate) replacement_observed: bool,
+    pub(crate) message: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename = "ProfileApplyOutcomeDto")]
+pub(crate) enum ProfileApplyOutcome {
+    Success,
+    Partial,
+    Failed,
+    ManualReconnect,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -257,6 +311,7 @@ pub(crate) struct ProfileApplyHostResult {
 pub(crate) struct ProfileApplyBatchResult {
     pub(crate) profile_id: String,
     pub(crate) ok: bool,
+    pub(crate) outcome: ProfileApplyOutcome,
     pub(crate) results: Vec<ProfileApplyHostResult>,
     pub(crate) tasks: Vec<TaskRun>,
     pub(crate) profiles: Vec<Profile>,
@@ -328,13 +383,6 @@ pub(crate) struct RemoteApiConfigMatch {
     pub(crate) name: String,
     pub(crate) source: String,
     pub(crate) profile_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub(crate) enum SafeReconnectDecision {
-    Terminate(u32),
-    Manual(String),
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
@@ -1215,21 +1263,43 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$CODEX_INSTALL_DIR" "$CODEX_HOME"
 tmp_dir="${TMPDIR:-/tmp}/codexhub-official-install.$$"
 mkdir -p "$tmp_dir"
-trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+trap 'codexhub_exit_status=$?; trap - EXIT; rm -rf "$tmp_dir"; if [ "$codexhub_exit_status" -ne 0 ]; then codexhub_runtime_restore_locked_current >/dev/null 2>&1 || codexhub_exit_status=76; fi; codexhub_runtime_lock_release >/dev/null 2>&1 || true; exit "$codexhub_exit_status"' EXIT
 
 if command -v curl >/dev/null 2>&1; then
   curl -fsSL --connect-timeout 15 --max-time 45 "https://chatgpt.com/codex/install.sh" -o "$tmp_dir/install.sh"
+  curl -fsSL --connect-timeout 15 --max-time 45 "https://api.github.com/repos/openai/codex/releases/latest" -o "$tmp_dir/latest.json"
 elif command -v wget >/dev/null 2>&1; then
   wget --timeout=45 --tries=1 -qO "$tmp_dir/install.sh" "https://chatgpt.com/codex/install.sh"
+  wget --timeout=45 --tries=1 -qO "$tmp_dir/latest.json" "https://api.github.com/repos/openai/codex/releases/latest"
 else
   printf 'curl or wget is not available for the official Codex installer.\n' >&2
   exit 127
 fi
+candidate_version=$(sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"rust-v\([^"]*\)".*/\1/p' "$tmp_dir/latest.json" | awk '
+  NF { count += 1; value = $1 }
+  END { if (count == 1) print value; else exit 1 }
+') || {
+  printf 'Could not resolve the official Codex candidate version safely.\n' >&2
+  exit 69
+}
+if ! printf '%s\n' "$candidate_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$'; then
+  printf 'The official Codex candidate version was invalid.\n' >&2
+  exit 69
+fi
+codexhub_version_meets_floors "$candidate_version" || {
+  printf 'The official Codex candidate is below a verified pre-operation runtime floor.\n' >&2
+  exit 69
+}
+export CODEX_RELEASE="$candidate_version"
 if command -v timeout >/dev/null 2>&1; then
   timeout 75 sh "$tmp_dir/install.sh"
 else
   sh "$tmp_dir/install.sh"
 fi
+codexhub_runtime_verify_post_mutation_floor || {
+  printf 'The official Codex runtime did not preserve the locked version floor.\n' >&2
+  exit 69
+}
 printf 'CODEXHUB_INSTALL_METHOD=official\n'
 "##;
 
@@ -1242,7 +1312,7 @@ export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$CODEX_INSTALL_DIR" "$CODEX_HOME"
 tmp_dir="${TMPDIR:-/tmp}/codexhub-codex-install.$$"
 mkdir -p "$tmp_dir"
-trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+trap 'codexhub_exit_status=$?; trap - EXIT; rm -rf "$tmp_dir"; if [ "$codexhub_exit_status" -ne 0 ]; then codexhub_runtime_restore_locked_current >/dev/null 2>&1 || codexhub_exit_status=76; fi; codexhub_runtime_lock_release >/dev/null 2>&1 || true; exit "$codexhub_exit_status"' EXIT
 insecure_tls_fallback=no
 
 is_tls_cert_error() {
@@ -1325,6 +1395,94 @@ looks_like_captive_portal() {
   grep -qiE '<html|authentication is required|net2\.zju\.edu\.cn|captive|portal|login' "$1" 2>/dev/null
 }
 
+is_safe_release_name() {
+  codexhub_safe_release_name_value=$1
+  case "$codexhub_safe_release_name_value" in "" | "." | ".." | */* | *[!A-Za-z0-9.+-]*) return 1 ;; esac
+  printf '%s\n' "$codexhub_safe_release_name_value" | awk '
+    BEGIN { ok = 0 }
+    {
+      split($0, build_parts, "+")
+      split(build_parts[1], prerelease_parts, "-")
+      count = split(prerelease_parts[1], numbers, ".")
+      if (count < 2 || count > 4) exit 1
+      for (component_index = 1; component_index <= count; component_index += 1) if (numbers[component_index] !~ /^[0-9]+$/) exit 1
+      ok = 1
+    }
+    END { exit(ok ? 0 : 1) }
+  '
+}
+
+binary_version() {
+  codexhub_binary_version_path=$1
+  "$codexhub_binary_version_path" --version 2>/dev/null | awk '
+    NF { count += 1; value = $NF }
+    END {
+      sub(/^v/, "", value)
+      if (count != 1 || value !~ /^[0-9A-Za-z.+-]+$/) exit 1
+      print value
+    }
+  '
+}
+
+# POSIX sh has no portable local variables, so helper scratch names stay prefixed.
+marker_valid() {
+  codexhub_marker_check_dir=$1
+  codexhub_marker_check_version=$2
+  codexhub_marker_check_path="$codexhub_marker_check_dir/.codexhub-managed-release"
+  [ -f "$codexhub_marker_check_path" ] && [ ! -L "$codexhub_marker_check_path" ] || return 1
+  [ "$(wc -l <"$codexhub_marker_check_path" 2>/dev/null | tr -d '[:space:]')" = 2 ] || return 1
+  [ "$(sed -n '1p' "$codexhub_marker_check_path" 2>/dev/null)" = "CodexHub managed standalone release v1" ] || return 1
+  [ "$(sed -n '2p' "$codexhub_marker_check_path" 2>/dev/null)" = "version=$codexhub_marker_check_version" ] || return 1
+}
+
+write_verified_marker() {
+  codexhub_marker_write_dir=$1
+  codexhub_marker_write_version=$2
+  codexhub_marker_write_path="$codexhub_marker_write_dir/.codexhub-managed-release"
+  if [ -e "$codexhub_marker_write_path" ] || [ -L "$codexhub_marker_write_path" ]; then
+    marker_valid "$codexhub_marker_write_dir" "$codexhub_marker_write_version"
+    return $?
+  fi
+  codexhub_marker_write_tmp="$codexhub_marker_write_dir/.codexhub-managed-release.tmp.$$"
+  [ ! -e "$codexhub_marker_write_tmp" ] && [ ! -L "$codexhub_marker_write_tmp" ] || return 1
+  {
+    printf 'CodexHub managed standalone release v1\n'
+    printf 'version=%s\n' "$codexhub_marker_write_version"
+  } >"$codexhub_marker_write_tmp" || return 1
+  chmod 600 "$codexhub_marker_write_tmp" || { rm -f "$codexhub_marker_write_tmp"; return 1; }
+  mv "$codexhub_marker_write_tmp" "$codexhub_marker_write_path"
+}
+
+is_safe_existing_release() {
+  codexhub_existing_dir=$1
+  codexhub_existing_version=$2
+  codexhub_existing_root=$3
+  [ -d "$codexhub_existing_dir" ] && [ ! -L "$codexhub_existing_dir" ] || return 1
+  codexhub_existing_root_real=$(readlink -f "$codexhub_existing_root" 2>/dev/null) || return 1
+  codexhub_existing_real=$(readlink -f "$codexhub_existing_dir" 2>/dev/null) || return 1
+  [ "$codexhub_existing_real" = "$codexhub_existing_root_real/$codexhub_existing_version" ] || return 1
+  codexhub_existing_layout_count=0
+  codexhub_existing_selected_binary=""
+  codexhub_existing_selected_relative=""
+  # A second direct path is ambiguous even when it is invalid or a broken symlink.
+  for codexhub_existing_relative in bin/codex codex; do
+    codexhub_existing_binary="$codexhub_existing_dir/$codexhub_existing_relative"
+    if [ -e "$codexhub_existing_binary" ] || [ -L "$codexhub_existing_binary" ]; then
+      codexhub_existing_layout_count=$((codexhub_existing_layout_count + 1))
+      codexhub_existing_selected_binary=$codexhub_existing_binary
+      codexhub_existing_selected_relative=$codexhub_existing_relative
+    fi
+  done
+  [ "$codexhub_existing_layout_count" -eq 1 ] || return 1
+  [ "$codexhub_existing_selected_relative" = bin/codex ] || return 1
+  [ -f "$codexhub_existing_selected_binary" ] && [ -x "$codexhub_existing_selected_binary" ] && [ ! -L "$codexhub_existing_selected_binary" ] || return 1
+  codexhub_existing_binary_real=$(readlink -f "$codexhub_existing_selected_binary" 2>/dev/null) || return 1
+  [ "$codexhub_existing_binary_real" = "$codexhub_existing_real/$codexhub_existing_selected_relative" ] || return 1
+  codexhub_existing_reported_version=$(binary_version "$codexhub_existing_selected_binary") || return 1
+  [ "$codexhub_existing_reported_version" = "$codexhub_existing_version" ] || return 1
+  write_verified_marker "$codexhub_existing_dir" "$codexhub_existing_version"
+}
+
 extract_npmmirror_metadata() {
   metadata_file="$1"
   package_platform="$2"
@@ -1401,16 +1559,37 @@ if command -v python3 >/dev/null 2>&1; then
     if extract_npmmirror_metadata "$tmp_dir/codex-metadata.json" "$platform" >"$metadata_out"; then
       version=$(sed -n 's/^CODEXHUB_NATIVE_VERSION=//p' "$metadata_out" | head -n 1)
       tarball=$(sed -n 's/^CODEXHUB_NATIVE_TARBALL=//p' "$metadata_out" | head -n 1)
+      if [ -n "$version" ] && ! codexhub_version_meets_floors "$version"; then
+        printf 'npmmirror Codex version is below a verified pre-operation runtime floor.\n' >&2
+        native_status=69
+        version=""
+        tarball=""
+      fi
     else
       native_status=$?
     fi
     if [ -n "$version" ] && [ -n "$tarball" ] && download_file_url "$tarball" "$tmp_dir/codex-platform.tgz" yes "npmmirror Codex native package" 15 75; then
       extract_dir="$tmp_dir/native-extract"
-      release_dir="$CODEX_HOME/packages/standalone/releases/$version"
+      release_root="$CODEX_HOME/packages/standalone/releases"
+      if ! is_safe_release_name "$version"; then
+        printf 'npmmirror returned an unsafe Codex release version.\n' >&2
+        native_status=66
+        continue_native_install=no
+      else
+        continue_native_install=yes
+      fi
+      release_dir="$release_root/$version"
       stage_dir="$release_dir.tmp.$$"
-      rm -rf "$extract_dir" "$stage_dir"
-      mkdir -p "$extract_dir" "$stage_dir" "$CODEX_HOME/packages/standalone/releases"
-      if ! tar -tzf "$tmp_dir/codex-platform.tgz" >/dev/null 2>&1; then
+      mkdir -p "$release_root"
+      if [ -L "$release_root" ]; then
+        printf 'Standalone release root identity is unsafe.\n' >&2
+        native_status=66
+      elif [ "$continue_native_install" != yes ]; then
+        :
+      elif ! mkdir "$extract_dir" "$stage_dir"; then
+        printf 'Could not create isolated Codex release staging directories.\n' >&2
+        native_status=73
+      elif ! tar -tzf "$tmp_dir/codex-platform.tgz" >/dev/null 2>&1; then
         printf 'npmmirror native package download was not a readable gzip tarball; the remote network may be returning an HTML login page instead of the package.\n' >&2
         native_status=65
       elif tar -tzf "$tmp_dir/codex-platform.tgz" | grep -Eq '(^|/)\.\.(/|$)|^/'; then
@@ -1423,11 +1602,39 @@ if command -v python3 >/dev/null 2>&1; then
           chmod 0755 "$stage_dir/bin/codex"
           [ -f "$stage_dir/codex-path/rg" ] && chmod 0755 "$stage_dir/codex-path/rg"
           [ -f "$stage_dir/codex-resources/bwrap" ] && chmod 0755 "$stage_dir/codex-resources/bwrap"
-          rm -rf "$release_dir"
-          mv "$stage_dir" "$release_dir"
-          ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
-          ln -sfn "$release_dir/bin/codex" "$CODEX_INSTALL_DIR/codex"
-          native_status=0
+          staged_version=$(binary_version "$stage_dir/bin/codex" 2>/dev/null || true)
+          if [ "$staged_version" != "$version" ]; then
+            printf 'npmmirror native binary version did not match package metadata.\n' >&2
+            native_status=66
+          elif ! write_verified_marker "$stage_dir" "$version"; then
+            printf 'Could not write the managed release marker.\n' >&2
+            native_status=73
+          elif [ -e "$release_dir" ] || [ -L "$release_dir" ]; then
+            if is_safe_existing_release "$release_dir" "$version" "$release_root"; then
+              ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
+              ln -sfn "$release_dir/bin/codex" "$CODEX_INSTALL_DIR/codex"
+              native_status=0
+            else
+              printf 'Existing same-version release directory is not safely adoptable.\n' >&2
+              native_status=73
+            fi
+          elif mv "$stage_dir" "$release_dir"; then
+            stage_basename=${stage_dir##*/}
+            if [ -e "$release_dir/$stage_basename" ] || [ -L "$release_dir/$stage_basename" ]; then
+              printf 'The same-version release directory changed during commit; refusing the raced identity.\n' >&2
+              native_status=73
+            elif is_safe_existing_release "$release_dir" "$version" "$release_root"; then
+              ln -sfn "$release_dir" "$CODEX_HOME/packages/standalone/current"
+              ln -sfn "$release_dir/bin/codex" "$CODEX_INSTALL_DIR/codex"
+              native_status=0
+            else
+              printf 'Committed Codex release identity could not be re-verified.\n' >&2
+              native_status=73
+            fi
+          else
+            printf 'Could not commit the staged Codex release.\n' >&2
+            native_status=73
+          fi
         else
           printf 'npmmirror native package did not contain vendor/%s/bin/codex.\n' "$target" >&2
           native_status=66
@@ -1435,13 +1642,19 @@ if command -v python3 >/dev/null 2>&1; then
       else
         native_status=$?
       fi
-      rm -rf "$stage_dir"
+      if [ -n "${stage_dir:-}" ] && [ -d "$stage_dir" ] && [ ! -L "$stage_dir" ]; then
+        rm -rf "$stage_dir"
+      fi
     fi
   elif [ -z "$platform" ]; then
     printf 'npmmirror native package fallback does not support remote architecture %s.\n' "$arch" >&2
   fi
 fi
 
+if [ "$native_status" -eq 0 ] && ! codexhub_runtime_verify_post_mutation_floor; then
+  printf 'The native mirror runtime did not preserve the locked version floor.\n' >&2
+  native_status=69
+fi
 if [ "$native_status" -eq 0 ]; then
   if [ "$insecure_tls_fallback" = "yes" ]; then
     printf 'CODEXHUB_INSTALL_METHOD=npm-mirror-native-insecure-tls\n'
@@ -1464,7 +1677,42 @@ if ! command -v npm >/dev/null 2>&1; then
   printf 'npm is not available for the npmmirror installation method.\n' >&2
   exit 127
 fi
-npm install -g @openai/codex --prefix "$HOME/.local" --registry=https://registry.npmmirror.com
+registry=https://registry.npmmirror.com
+candidate_raw=$(npm view @openai/codex version --registry="$registry" 2>/dev/null) || {
+  printf 'Could not resolve the npmmirror Codex candidate version safely.\n' >&2
+  exit 69
+}
+candidate_version=$(printf '%s\n' "$candidate_raw" | awk '
+  NF {
+    count += 1
+    if (NF != 1) exit 1
+    value = $1
+  }
+  END {
+    sub(/^v/, "", value)
+    if (count != 1 || value !~ /^[0-9A-Za-z.+-]+$/) exit 1
+    split(value, build_parts, "+")
+    split(build_parts[1], prerelease_parts, "-")
+    number_count = split(prerelease_parts[1], numbers, ".")
+    if (number_count < 2 || number_count > 4) exit 1
+    for (number_index = 1; number_index <= number_count; number_index += 1) {
+      if (numbers[number_index] !~ /^[0-9]+$/) exit 1
+    }
+    print value
+  }
+') || {
+  printf 'npmmirror returned an invalid Codex candidate version.\n' >&2
+  exit 69
+}
+codexhub_version_meets_floors "$candidate_version" || {
+  printf 'npmmirror Codex version is below a verified pre-operation runtime floor.\n' >&2
+  exit 69
+}
+npm install -g "@openai/codex@$candidate_version" --prefix "$HOME/.local" --registry="$registry"
+codexhub_runtime_verify_post_mutation_floor || {
+  printf 'The npm mirror runtime did not preserve the locked version floor.\n' >&2
+  exit 69
+}
 printf 'CODEXHUB_INSTALL_METHOD=npm-mirror\n'
 "##;
 

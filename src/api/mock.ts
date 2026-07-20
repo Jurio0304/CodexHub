@@ -11,6 +11,7 @@ import type {
   Profile,
   ProfileApiKeyResult,
   ProfileApplyBatchResult,
+  ProfileApplyOptions,
   ProfileApplyPreview,
   ProfileDraft,
   ProfileImportExport,
@@ -43,7 +44,7 @@ import type { AppSettings, CloseButtonBehavior } from "../settings";
 import { loadMockSettings, normalizeSettings, saveMockSettings } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import type { TaskEvent } from "../generated/rust-contracts";
-import { normalizeProfile, normalizeProfileApplyResult } from "./normalize";
+import { normalizeProfile, normalizeProfileApplyOptions, normalizeProfileApplyResult } from "./normalize";
 import {
   fallbackAppUpdateStatus,
   fallbackConnection,
@@ -61,6 +62,7 @@ import {
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 let mockProfiles = clone(fallbackProfiles);
+let mockHosts = clone(fallbackHosts);
 let mockProfileCredentialIds = new Set<string>();
 let mockSkillPacks = clone(fallbackSkillPacks);
 let mockTasks = clone(fallbackTasks);
@@ -209,7 +211,7 @@ function escapeToml(value: string) {
 function fallbackHostForAlias(hostAlias: string): Host {
   const alias = hostAlias || "mock-host";
   return (
-    fallbackHosts.find((item) => item.hostAlias === alias || item.id === alias) ?? {
+    mockHosts.find((item) => item.hostAlias === alias || item.id === alias) ?? {
       id: `mock-${slugifyProfileName(alias)}`,
       name: alias,
       hostAlias: alias,
@@ -255,7 +257,7 @@ function mockPreviewProfileApply(profileId: string, hostIds: string[]): ProfileA
       warnings: []
     };
   }
-  const targetHosts = fallbackHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
+  const targetHosts = mockHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
   const renderedToml = renderProfileToml(profile);
   return {
     profileId: profile.id,
@@ -276,29 +278,67 @@ function mockPreviewProfileApply(profileId: string, hostIds: string[]): ProfileA
       status: "pending",
       targetPath: "~/.codex/config.toml",
       backupPath: host.configExists === false || host.profileId === profile.id ? null : "~/.codex/config.toml.codexhub.bak.mock",
-      message: host.profileId === profile.id ? "Preview expects no changes." : "Preview expects backup then replace."
+      message: host.profileId === profile.id ? "Preview expects no changes." : "Preview expects backup then replace.",
+      reload: {
+        mode: "app-services",
+        status: "not-requested",
+        targetedCount: 0,
+        stoppedCount: 0,
+        preservedCliCount: 0,
+        replacementObserved: false,
+        message: "Remote Codex reload is selected only after confirmation."
+      }
     })),
     warnings: []
   };
 }
 
-function mockApplyProfile(profileId: string, hostIds: string[]): ProfileApplyBatchResult {
+function mockReloadResult(options: ProfileApplyOptions) {
+  if (options.remoteCodexReloadMode === "none") {
+    return {
+      mode: "none" as const,
+      status: "not-requested" as const,
+      targetedCount: 0,
+      stoppedCount: 0,
+      preservedCliCount: 0,
+      replacementObserved: false,
+      message: "Configuration applied without reloading remote Codex processes."
+    };
+  }
+  const allCodex = options.remoteCodexReloadMode === "all-codex";
+  return {
+    mode: options.remoteCodexReloadMode,
+    status: "reconnected" as const,
+    targetedCount: allCodex ? 2 : 1,
+    stoppedCount: allCodex ? 2 : 1,
+    preservedCliCount: allCodex ? 0 : 1,
+    replacementObserved: true,
+    message: allCodex
+      ? "All confirmed remote Codex processes stopped and the App service reconnected."
+      : "Remote Codex App service reconnected; interactive CLI sessions were preserved."
+  };
+}
+
+function mockApplyProfile(profileId: string, hostIds: string[], options: ProfileApplyOptions): ProfileApplyBatchResult {
   const profile = mockProfiles.find((item) => item.id === profileId);
   if (!profile) {
     return {
       profileId,
       ok: false,
+      outcome: "failed",
       results: [],
       tasks: [],
       profiles: clone(mockProfiles).map(normalizeProfile),
-      hosts: clone(fallbackHosts)
+      hosts: clone(mockHosts)
     };
   }
-  const targetHosts = fallbackHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
+  const targetHosts = mockHosts.filter((host) => hostIds.includes(host.id) || hostIds.includes(host.hostAlias));
   const tasks = targetHosts.map((host): TaskRun => {
     const noChange = host.profileId === profile.id;
+    const taskId = `mock-apply-${host.id}-${Date.now()}`;
+    const reload = mockReloadResult(options);
     return {
-      id: `mock-apply-${host.id}-${Date.now()}`,
+      id: taskId,
       hostId: host.id,
       hostName: host.name,
       action: "Apply profile",
@@ -308,7 +348,26 @@ function mockApplyProfile(profileId: string, hostIds: string[]): ProfileApplyBat
       summary: noChange
         ? `${profile.name} already matches ${host.name}; no remote backup needed.`
         : `${profile.name} rendered to ~/.codex/config.toml with mock backup.`,
-      steps: [],
+      steps: [
+        {
+          taskRunId: taskId,
+          stepId: "profile-apply",
+          sequence: 0,
+          status: "success",
+          summary: noChange ? "Remote profile files already matched." : "Remote profile files were applied and verified.",
+          startedAt: "now",
+          endedAt: "now"
+        },
+        {
+          taskRunId: taskId,
+          stepId: "remote-codex-reload",
+          sequence: 1,
+          status: reload.status === "not-requested" ? "skipped" : "success",
+          summary: reload.message,
+          startedAt: reload.status === "not-requested" ? null : "now",
+          endedAt: "now"
+        }
+      ],
       logs: [
         {
           id: `mock-apply-log-${host.id}-${Date.now()}`,
@@ -333,14 +392,16 @@ function mockApplyProfile(profileId: string, hostIds: string[]): ProfileApplyBat
       : normalizeProfile({ ...item, hostIds: item.hostIds.filter((hostId) => !successfulHostIds.has(hostId)) })
   );
   mockProfiles = nextProfiles;
-  const nextHosts = fallbackHosts.map((host) =>
+  const nextHosts = mockHosts.map((host) =>
     successfulHostIds.has(host.id)
       ? { ...host, profileId, apiConfigName: profile.name, apiConfigSource: "profile", configExists: true, lastSeen: "just now" }
       : host
   );
+  mockHosts = nextHosts;
   return {
     profileId: profile.id,
     ok: true,
+    outcome: "success",
     tasks,
     results: targetHosts.map((host, index) => ({
       hostId: host.id,
@@ -350,6 +411,7 @@ function mockApplyProfile(profileId: string, hostIds: string[]): ProfileApplyBat
       targetPath: "~/.codex/config.toml",
       backupPath: host.profileId === profile.id ? null : "~/.codex/config.toml.codexhub.bak.mock",
       message: tasks[index].summary,
+      reload: mockReloadResult(options),
       task: tasks[index]
     })),
     profiles: clone(nextProfiles).map(normalizeProfile),
@@ -905,7 +967,7 @@ function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): Re
   const message = `Mock ${actionLabel.toLowerCase()} completed for ${host.hostAlias}: ${versionLabel}.`;
   const taskId = `mock-codex-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const timestamp = new Date().toISOString();
-  const installStepIds = ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "final-verification"];
+  const installStepIds = ["preparation", "official-installer", "remote-native-mirror", "remote-npm-mirror", "local-upload", "runtime-reconcile", "final-verification", "release-cleanup"];
   const uninstallStepIds = ["preparation", "uninstall", "final-verification"];
   const stepIds = action === "uninstall" ? uninstallStepIds : action === "check-version" ? ["codex"] : installStepIds;
   const statusForStep = (stepId: string): TaskStepStatus => {
@@ -932,6 +994,8 @@ function mockRemoteManageCodex(hostAlias: string, action: RemoteCodexAction): Re
         : `Mock ${stepId} was unavailable; continuing to the next method.`
       : statusForStep(stepId) === "skipped"
         ? `Mock ${stepId} was not required after an earlier method succeeded.`
+        : action === "update" && stepId === "release-cleanup"
+          ? "Mock older runtimes moved to staged update backup mock-update-backup."
         : `Mock ${stepId} completed.`,
     startedAt: statusForStep(stepId) === "skipped" ? null : timestamp,
     endedAt: timestamp
@@ -1418,49 +1482,61 @@ export const mockApi: CodexHubApi = {
       task
     };
   },
-  listHosts: async () => clone(fallbackHosts),
-  refreshDiscoveredHosts: async () => clone(fallbackHosts),
+  listHosts: async () => clone(mockHosts),
+  refreshDiscoveredHosts: async () => clone(mockHosts),
   refreshLatestCodexVersion: async () => ({
     ...fallbackLatestCodexVersion,
     checkedAt: new Date().toISOString()
   }),
   getLocalCodexStatus: async () => fallbackLocalCodexStatus(),
-  addHost: async (draft: HostDraft) => ({
-    id: `mock-host-${Date.now()}`,
-    name: draft.name,
-    hostAlias: draft.address,
-    source: "manual",
-    address: draft.address,
-    port: draft.port,
-    username: draft.username,
-    authMethod: draft.authMethod,
-    status: "unknown",
-    os: "Unknown",
-    arch: "Unknown",
-    shell: "Unknown",
-    path: null,
-    pathHasLocalBin: null,
-    codexCommandAvailable: null,
-    codexInstalled: false,
-    codexVersion: "pending",
-    configExists: null,
-    apiConfigName: null,
-    apiConfigSource: null,
-    apiKeyEnvVar: null,
-    apiKeyEnvPresent: null,
-    skillsExists: null,
-    skillsCount: null,
-    profileId: null,
-    skillPackIds: [],
-    tags: draft.tags,
-    lastSeen: "just added",
-    latencyMs: null
-  }),
-  updateHost: async (id: string, patch: HostPatch) => ({
-    ...fallbackHostForAlias(id),
-    ...patch
-  }),
-  deleteHost: async () => true,
+  addHost: async (draft: HostDraft) => {
+    const host: Host = {
+      id: `mock-host-${Date.now()}`,
+      name: draft.name,
+      hostAlias: draft.address,
+      source: "manual",
+      address: draft.address,
+      port: draft.port,
+      username: draft.username,
+      authMethod: draft.authMethod,
+      status: "unknown",
+      os: "Unknown",
+      arch: "Unknown",
+      shell: "Unknown",
+      path: null,
+      pathHasLocalBin: null,
+      codexCommandAvailable: null,
+      codexInstalled: false,
+      codexVersion: "pending",
+      configExists: null,
+      apiConfigName: null,
+      apiConfigSource: null,
+      apiKeyEnvVar: null,
+      apiKeyEnvPresent: null,
+      skillsExists: null,
+      skillsCount: null,
+      profileId: null,
+      skillPackIds: [],
+      tags: draft.tags,
+      lastSeen: "just added",
+      latencyMs: null
+    };
+    mockHosts = [...mockHosts, host];
+    return clone(host);
+  },
+  updateHost: async (id: string, patch: HostPatch) => {
+    const current = mockHosts.find((host) => host.id === id) ?? fallbackHostForAlias(id);
+    const host = { ...current, ...patch };
+    mockHosts = mockHosts.some((item) => item.id === id)
+      ? mockHosts.map((item) => item.id === id ? host : item)
+      : [...mockHosts, host];
+    return clone(host);
+  },
+  deleteHost: async (id: string) => {
+    const before = mockHosts.length;
+    mockHosts = mockHosts.filter((host) => host.id !== id);
+    return mockHosts.length !== before;
+  },
   testSshConnection: async () => fallbackConnection,
   sshCheck: async (hostAlias: string) => mockSshCheck(hostAlias),
   connectSshHost: async (
@@ -1581,7 +1657,8 @@ export const mockApi: CodexHubApi = {
     return clone(profile);
   },
   previewProfileApply: async (profileId: string, hostIds: string[]) => mockPreviewProfileApply(profileId, hostIds),
-  applyProfile: async (profileId: string, hostIds: string[]) => normalizeProfileApplyResult(mockApplyProfile(profileId, hostIds)),
+  applyProfile: async (profileId: string, hostIds: string[], options: ProfileApplyOptions) =>
+    normalizeProfileApplyResult(mockApplyProfile(profileId, hostIds, normalizeProfileApplyOptions(options))),
   detectCcSwitchProfiles: async () => {
     const detection = mockCcSwitchDetection();
     return {

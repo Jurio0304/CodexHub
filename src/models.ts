@@ -165,6 +165,33 @@ export type ProfileApiKeyResult = {
   apiKey: string | null;
 };
 
+export type RemoteCodexReloadMode = "none" | "app-services" | "all-codex";
+
+export type RemoteCodexReloadStatus =
+  | "not-requested"
+  | "skipped"
+  | "not-running"
+  | "reloaded"
+  | "reconnected"
+  | "manual-required"
+  | "failed";
+
+export type RemoteCodexReloadResult = {
+  mode: RemoteCodexReloadMode;
+  status: RemoteCodexReloadStatus;
+  targetedCount: number;
+  stoppedCount: number;
+  preservedCliCount: number;
+  replacementObserved: boolean;
+  message: string;
+};
+
+export type ProfileApplyOptions = {
+  remoteCodexReloadMode: RemoteCodexReloadMode;
+};
+
+export type ProfileApplyOutcome = "success" | "partial" | "manual-reconnect" | "failed";
+
 export type ProfileApplyHostResult = {
   hostId: string;
   hostName: string;
@@ -173,6 +200,7 @@ export type ProfileApplyHostResult = {
   targetPath: string;
   backupPath: string | null;
   message: string;
+  reload: RemoteCodexReloadResult;
   task?: TaskRun;
 };
 
@@ -195,6 +223,7 @@ export type ProfileApplyPreview = {
 export type ProfileApplyBatchResult = {
   profileId: string;
   ok: boolean;
+  outcome: ProfileApplyOutcome;
   results: ProfileApplyHostResult[];
   tasks: TaskRun[];
   profiles: Profile[];

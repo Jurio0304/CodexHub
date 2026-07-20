@@ -57,6 +57,7 @@ CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 C
 - 探测远端 Linux 主机的系统、架构、shell、PATH、Codex CLI、`~/.codex/config.toml` 和 skills 数量。
 - 在远端用户目录安装或更新 `codex` 命令；应用 profile 时可安装同名托管启动器，用来加载受管 env 后再执行真实 Codex。
 - 创建、预览、应用 profile 到远端 `~/.codex/config.toml`。
+- Profile 应用确认后，可重载当前 SSH 用户下身份已严格确认的远端 Codex 进程；推荐模式会保留交互式 CLI 和 exec 会话。
 - 导入本地或 GitHub skill，并安装到本机或远端目标。
 - 对已记住主机展示只读、页面活跃时刷新的 CPU、内存和 GPU 资源采样。
 - 最近 100 条任务记录会跨重启持久保存；每条保留任务的完整诊断信息统一放在“任务”页面，命令与 stdout/stderr 默认脱敏。
@@ -72,6 +73,8 @@ CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 C
 - 不修改非 CodexHub 托管的 SSH config 内容。
 - 托管 Host block 使用 `# >>> CodexHub managed host: <alias>` 和 `# <<< CodexHub managed host: <alias>` 标记。
 - 不写 Codex App 私有文件、数据库、socket、缓存或未公开 IPC。
+- 远端进程重载只通过 SSH、Linux `/proc` 身份核验和 `SIGTERM` 完成，不使用宽泛的 `pkill`/`killall` 匹配，也不控制本地 ChatGPT/Codex App 进程。
+- Install/Profile 清理仍只处理带有严格托管标记的旧运行时；已验证的 Update 可把严格低版本移入保留的备份目录。current、target、正在使用、发生变化或身份含糊的 Codex 对象都会保留。
 - 远端 Codex 配置使用 `env_key` / `apiKeyEnvVar` 引用远端环境变量。
 - 显式应用带有已保存 key 的 profile 时，CodexHub 只把真实 key 写入选中远端的 `~/.codex-hub/env`，不会写入远端 config、metadata 或 task log。
 
@@ -141,6 +144,8 @@ Linux 桌面应用需要：
 - 安装目标为 `$HOME/.local/bin` 和 `$HOME/.codex`。
 - PATH 修复会检查 `.bashrc` 或 `.zshrc`、`.profile`，以及已存在的 `.bash_profile` / `.zprofile`，并写入幂等的 CodexHub 托管 block。
 - 优先尝试官方 installer；mirror 和本地上传 fallback 会记录到日志。
+- 安装或更新方式成功后，对于身份已验证的 standalone runtime，CodexHub 会让托管 target 跟随 `~/.codex/packages/standalone/current` 选出的可执行文件（旧版/本地 release 为 `bin/codex`，当前官方布局为 `codex`），并验证 target、托管启动器和登录 Shell 中的 `codex` 版本一致。每个写阶段都会获取绑定当前 UID、PID 和 starttime 的锁，入锁后重新读取运行时，并拒绝低于最高已验证版本下限的候选或写后状态。
+- 最终验证通过后，Install 和 Profile 应用仍只清理已有严格 marker 的旧托管版本；Update 会进一步接管所有可严格确认、版本低于新版本的 `releases/<entry>` 直接子目录，并把合格 release、启动器 capture 及已知残留 launcher/helper 链接移入 `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`。任务结果会报告安全的备份 ID；备份保留供人工检查，明确删除备份前不会释放占用空间。current/target、同版本或更高版本、非法 marker、双布局、竞态、正在使用及身份不明目录都会保留。所有清理均共用运行时锁、复核进程身份、要求同文件系统的禁止覆盖移动，并且不会覆盖已有备份。仅这个可恢复的 Update 分阶段备份流程允许忽略 `/proc/<pid>/exe` 不可读、但经双次稳定核验的当前用户 `sshd`、`(sd-pam)`、`sftp-server` 或 `fusermount3` 会话辅助进程；每次候选复核都必须与 PID/starttime/comm/完整 argv0 初始快照一致，任务摘要会记录忽略数量。Install/Profile 仍保持严格，新出现、身份变化、未知或疑似 Codex 的进程仍会使清理延期。
 
 ### 应用 Profile
 
@@ -149,6 +154,10 @@ Linux 桌面应用需要：
 - 应用前先预览。
 - 如果远端 config 已一致，CodexHub 报告 no changes，不创建备份。
 - 如果文件发生变化，CodexHub 创建时间戳备份，并在 Tasks 中记录结果。
+- 运行时协调会防止 Profile 应用恢复旧 standalone 版本：托管 target 继续跟随 `standalone/current`，低版本运行时会被拒绝。
+- 每次应用都会确认重载方式：仅重载远端 Codex App 服务（推荐）、只应用配置或终止全部已确认的远端 Codex 会话；终止全部会话需要额外勾选确认。
+- 如果 15 秒内未观察到新的 App 服务，已落盘配置仍保持生效；请到本地 ChatGPT/Codex App 的 `Settings > Codex > Connections` 手动重连。
+- 远端重载只属于 profile 应用流程，不提供独立的 Host 重载按钮，也不使用本地 App 的私有数据库、socket 或 IPC。
 
 ### 安装 Skills
 

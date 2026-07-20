@@ -2,6 +2,7 @@ use crate::tasks::{TaskLog, TaskLogLevel, TaskRun, TaskStatus, TaskStep, TaskSte
 use chrono::Local;
 use rusqlite::{params, Connection, OptionalExtension, Params, Transaction};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,7 @@ use std::sync::Mutex;
 
 const CURRENT_TASK_SCHEMA_VERSION: i64 = 4;
 const MAX_TASK_HISTORY: usize = 100;
+const TASK_PAYLOAD_INVARIANT_PREFIX: &str = "Task payload invariant violation";
 static BACKUP_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static TASK_ARCHIVE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -22,6 +24,10 @@ pub(crate) struct TaskStore {
 }
 
 impl TaskStore {
+    pub(crate) fn is_payload_invariant_error(error: &str) -> bool {
+        error.starts_with(TASK_PAYLOAD_INVARIANT_PREFIX)
+    }
+
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
         let parent = path
             .parent()
@@ -175,17 +181,17 @@ impl TaskStore {
     ) -> Result<(), String> {
         self.ensure_available()?;
         if step.task_run_id != task_id {
-            return Err(format!(
-                "Task step {} belongs to a different task.",
+            return Err(task_payload_invariant(format!(
+                "task step {} belongs to a different task",
                 step.step_id
-            ));
+            )));
         }
         if let Some(log) = log {
             if log.task_run_id != task_id || log.step_id.as_deref() != Some(step.step_id.as_str()) {
-                return Err(format!(
-                    "Task log {} does not belong to step {}.",
+                return Err(task_payload_invariant(format!(
+                    "task log {} does not belong to step {}",
                     log.id, step.step_id
-                ));
+                )));
             }
         }
 
@@ -226,27 +232,66 @@ impl TaskStore {
             .map_err(|error| format!("Could not commit the task step transaction: {error}"))
     }
 
+    /// Leaves a durable terminal state when a caller supplied an invalid task
+    /// payload. This path updates no logs, so it cannot repeat the same collision.
+    pub(crate) fn fail_running_task(&self, task_id: &str, summary: &str) -> Result<bool, String> {
+        self.ensure_available()?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| "Task database mutex was poisoned.".to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("Could not start task failure recovery: {error}"))?;
+        if task_was_recycled(&transaction, task_id)? {
+            return Ok(false);
+        }
+        let now = Local::now().to_rfc3339();
+        let changed = transaction
+            .execute(
+                "UPDATE task_runs
+                 SET status = 'failed', ended_at = ?2, summary = ?3
+                 WHERE id = ?1 AND status IN ('queued', 'running')",
+                params![task_id, now, summary],
+            )
+            .map_err(|error| format!("Could not fail task {task_id}: {error}"))?;
+        if changed == 0 {
+            let exists = transaction
+                .query_row("SELECT 1 FROM task_runs WHERE id = ?1", [task_id], |_| {
+                    Ok(())
+                })
+                .optional()
+                .map_err(|error| format!("Could not inspect task {task_id}: {error}"))?
+                .is_some();
+            if !exists {
+                return Ok(false);
+            }
+        }
+        transaction
+            .execute(
+                "UPDATE task_steps
+                 SET status = CASE status
+                       WHEN 'running' THEN 'failed'
+                       WHEN 'pending' THEN 'skipped'
+                       ELSE status
+                     END,
+                     ended_at = CASE
+                       WHEN status IN ('running', 'pending') THEN ?2
+                       ELSE ended_at
+                     END
+                 WHERE task_run_id = ?1 AND status IN ('running', 'pending')",
+                params![task_id, now],
+            )
+            .map_err(|error| format!("Could not fail task {task_id} steps: {error}"))?;
+        transaction
+            .commit()
+            .map(|_| true)
+            .map_err(|error| format!("Could not commit task {task_id} failure recovery: {error}"))
+    }
+
     pub(crate) fn upsert(&self, task: &TaskRun) -> Result<(), String> {
         self.ensure_available()?;
-        if task.steps.iter().any(|step| step.task_run_id != task.id) {
-            return Err(format!(
-                "Task {} contains a step for another task.",
-                task.id
-            ));
-        }
-        if task.logs.iter().any(|log| log.task_run_id != task.id) {
-            return Err(format!("Task {} contains a log for another task.", task.id));
-        }
-        if let Some(log) = task.logs.iter().find(|log| {
-            log.step_id
-                .as_ref()
-                .is_some_and(|step_id| !task.steps.iter().any(|step| step.step_id == *step_id))
-        }) {
-            return Err(format!(
-                "Task log {} references a step missing from task {}.",
-                log.id, task.id
-            ));
-        }
+        validate_task_payload(task)?;
         let mut connection = self
             .connection
             .lock()
@@ -678,6 +723,60 @@ struct TaskHistoryArchive<'a> {
     tasks: &'a [TaskRun],
 }
 
+fn task_payload_invariant(detail: impl AsRef<str>) -> String {
+    format!("{TASK_PAYLOAD_INVARIANT_PREFIX}: {}.", detail.as_ref())
+}
+
+fn validate_task_payload(task: &TaskRun) -> Result<(), String> {
+    let mut step_ids = HashSet::new();
+    let mut step_sequences = HashSet::new();
+    for step in &task.steps {
+        if step.task_run_id != task.id {
+            return Err(task_payload_invariant(format!(
+                "task {} contains step {} for another task",
+                task.id, step.step_id
+            )));
+        }
+        if !step_ids.insert(step.step_id.as_str()) {
+            return Err(task_payload_invariant(format!(
+                "task {} contains duplicate step ID {}",
+                task.id, step.step_id
+            )));
+        }
+        if !step_sequences.insert(step.sequence) {
+            return Err(task_payload_invariant(format!(
+                "task {} contains duplicate step sequence {}",
+                task.id, step.sequence
+            )));
+        }
+    }
+
+    let mut log_ids = HashSet::new();
+    for log in &task.logs {
+        if log.task_run_id != task.id {
+            return Err(task_payload_invariant(format!(
+                "task {} contains log {} for another task",
+                task.id, log.id
+            )));
+        }
+        if !log_ids.insert(log.id.as_str()) {
+            return Err(task_payload_invariant(format!(
+                "task {} contains duplicate log ID {}",
+                task.id, log.id
+            )));
+        }
+        if let Some(step_id) = log.step_id.as_ref() {
+            if !step_ids.contains(step_id.as_str()) {
+                return Err(task_payload_invariant(format!(
+                    "task log {} references missing step {}",
+                    log.id, step_id
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn task_was_recycled(transaction: &Transaction<'_>, task_id: &str) -> Result<bool, String> {
     transaction
         .query_row(
@@ -960,25 +1059,42 @@ fn insert_log(transaction: &Transaction<'_>, sequence: usize, log: &TaskLog) -> 
 }
 
 fn upsert_incremental_log(transaction: &Transaction<'_>, log: &TaskLog) -> Result<(), String> {
-    let existing_sequence = transaction
+    let existing_identity = transaction
         .query_row(
-            "SELECT sequence FROM task_logs WHERE id = ?1",
+            "SELECT task_run_id, step_id, sequence FROM task_logs WHERE id = ?1",
             [&log.id],
-            |row| row.get::<_, i64>(0),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| format!("Could not inspect task log {}: {error}", log.id))?;
-    if let Some(sequence) = existing_sequence {
+    if let Some((existing_task_id, existing_step_id, sequence)) = existing_identity {
+        if existing_task_id != log.task_run_id
+            || existing_step_id.as_deref() != log.step_id.as_deref()
+        {
+            return Err(task_payload_invariant(format!(
+                "task log {} is already bound to task {} step {} and cannot move to task {} step {}",
+                log.id,
+                existing_task_id,
+                existing_step_id.as_deref().unwrap_or("none"),
+                log.task_run_id,
+                log.step_id.as_deref().unwrap_or("none")
+            )));
+        }
         transaction
             .execute(
                 "UPDATE task_logs
-                 SET task_run_id=?2, sequence=?3, level=?4, timestamp=?5, message=?6,
-                     command=?7, stdout=?8, stderr=?9, exit_code=?10, duration_ms=?11,
-                     timed_out=?12, step_id=?13
+                 SET sequence=?2, level=?3, timestamp=?4, message=?5,
+                     command=?6, stdout=?7, stderr=?8, exit_code=?9, duration_ms=?10,
+                     timed_out=?11
                  WHERE id=?1",
                 params![
                     log.id,
-                    log.task_run_id,
                     sequence,
                     level_label(&log.level),
                     log.timestamp,
@@ -988,8 +1104,7 @@ fn upsert_incremental_log(transaction: &Transaction<'_>, log: &TaskLog) -> Resul
                     log.stderr,
                     log.exit_code,
                     log.duration_ms.map(|value| value as i64),
-                    log.timed_out.map(i64::from),
-                    log.step_id
+                    log.timed_out.map(i64::from)
                 ],
             )
             .map(|_| ())
@@ -1211,6 +1326,54 @@ mod tests {
         assert_eq!(tasks[0].logs.len(), 1);
         assert_eq!(tasks[0].logs[0].step_id.as_deref(), Some("prepare"));
         assert!(store.acknowledge("task-1").expect("acknowledge task"));
+    }
+
+    #[test]
+    fn duplicate_task_log_ids_are_rejected_without_disabling_the_store() {
+        let store = TaskStore::in_memory();
+        let mut invalid = task("task-duplicate-log", TaskStatus::Running);
+        let duplicate = task_log(&invalid.id, 1);
+        invalid.logs = vec![duplicate.clone(), duplicate];
+
+        let error = store
+            .upsert(&invalid)
+            .expect_err("duplicate log IDs must be rejected before replacement");
+        assert!(error.contains("Task payload invariant violation"));
+        assert!(store.list(10).expect("store remains readable").is_empty());
+
+        store
+            .upsert(&task("task-after-duplicate", TaskStatus::Success))
+            .expect("store remains writable after a payload error");
+    }
+
+    #[test]
+    fn incremental_log_id_cannot_move_between_steps() {
+        let store = TaskStore::in_memory();
+        let mut run = task("task-log-identity", TaskStatus::Running);
+        run.logs.clear();
+        run.steps = vec![
+            task_step(&run.id, "prepare", 0, TaskStepStatus::Running),
+            task_step(&run.id, "cleanup", 1, TaskStepStatus::Pending),
+        ];
+        store.upsert(&run).expect("persist task with two steps");
+
+        let mut prepare_log = task_log(&run.id, 1);
+        prepare_log.id = "shared-log-id".into();
+        prepare_log.step_id = Some("prepare".into());
+        store
+            .update_step(&run.id, &run.steps[0], Some(&prepare_log), None)
+            .expect("persist prepare log");
+
+        let mut cleanup_log = prepare_log.clone();
+        cleanup_log.step_id = Some("cleanup".into());
+        let error = store
+            .update_step(&run.id, &run.steps[1], Some(&cleanup_log), None)
+            .expect_err("one log ID must not be reassigned to another step");
+        assert!(error.contains("Task payload invariant violation"));
+
+        let persisted = store.get(&run.id).expect("read task").expect("task exists");
+        assert_eq!(persisted.logs.len(), 1);
+        assert_eq!(persisted.logs[0].step_id.as_deref(), Some("prepare"));
     }
 
     #[test]

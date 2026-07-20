@@ -178,7 +178,11 @@ for (const stepId of [
   "remote-npm-mirror",
   "local-upload",
   "uninstall",
-  "final-verification"
+  "runtime-reconcile",
+  "final-verification",
+  "release-cleanup",
+  "profile-apply",
+  "remote-codex-reload"
 ]) {
   if (!appSource.includes(`${JSON.stringify(stepId)}:`) && !appSource.includes(`${stepId}:`)) {
     throw new Error(`Host-operation step copy is missing: ${stepId}`);
@@ -194,6 +198,21 @@ for (const token of [
 ]) {
   if (!appSource.includes(token)) {
     throw new Error(`Log pop-up localization contract is incomplete: ${token}`);
+  }
+}
+for (const token of [
+  'reloadAppServices: "Reload Codex App services (recommended)"',
+  'reloadAppServices: "仅重载 Codex App 服务（推荐）"',
+  'reloadNone: "Apply configuration only"',
+  'reloadNone: "仅应用配置，不重载"',
+  'reloadAll: "Stop all remote Codex sessions"',
+  'reloadAll: "终止全部远端 Codex 会话"',
+  'manualReconnect: "Manual reconnect required"',
+  'manualReconnect: "需要手动重连"',
+  "Settings > Codex > Connections"
+]) {
+  if (!appSource.includes(token)) {
+    throw new Error(`Profile reload localization contract is incomplete: ${token}`);
   }
 }
 for (const token of [

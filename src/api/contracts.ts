@@ -19,6 +19,7 @@ import type {
   Profile,
   ProfileApiKeyResult,
   ProfileApplyBatchResult,
+  ProfileApplyOptions,
   ProfileApplyPreview,
   ProfileDraft,
   ProfileImportExport,
@@ -140,7 +141,7 @@ export type CodexHubApi = {
   getProfileApiKey: (profileId: string) => Promise<ProfileApiKeyResult>;
   deleteProfileApiKey: (profileId: string) => Promise<Profile>;
   previewProfileApply: (profileId: string, hostIds: string[]) => Promise<ProfileApplyPreview>;
-  applyProfile: (profileId: string, hostIds: string[]) => Promise<ProfileApplyBatchResult>;
+  applyProfile: (profileId: string, hostIds: string[], options: ProfileApplyOptions) => Promise<ProfileApplyBatchResult>;
   detectCcSwitchProfiles: () => Promise<CcSwitchDetection>;
   importCcSwitchProfiles: (detection: CcSwitchDetection) => Promise<ProfileImportExport>;
   listSkillPacks: () => Promise<SkillPack[]>;

@@ -3473,6 +3473,105 @@ tr:last-child td {
   width: min(960px, 100%);
 }
 
+.profileApplyConfirmModal,
+.ProfileApplyConfirmModal {
+  display: grid;
+  gap: 14px;
+  width: min(680px, 100%);
+}
+
+.profileApplyConfirmHosts {
+  color: var(--text-muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.profileReloadOptions {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.profileReloadOptions legend {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.profileReloadOption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px;
+  background: var(--surface-solid);
+  cursor: pointer;
+}
+
+.profileReloadOption[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--blue) 46%, var(--border));
+  background: color-mix(in srgb, var(--blue) 8%, var(--surface-solid));
+}
+
+.profileReloadOption[data-danger="true"][data-selected="true"] {
+  border-color: color-mix(in srgb, var(--red) 52%, var(--border));
+  background: color-mix(in srgb, var(--red) 8%, var(--surface-solid));
+}
+
+.profileReloadOption input {
+  margin-top: 3px;
+}
+
+.profileReloadOption > span {
+  display: grid;
+  gap: 3px;
+}
+
+.profileReloadOption strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.profileReloadOption small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.profileReloadWarning {
+  display: grid;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--red) 48%, var(--border));
+  border-radius: 12px;
+  padding: 11px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--red) 9%, var(--surface-solid));
+}
+
+.profileReloadWarning > strong {
+  color: var(--red);
+  font-size: 0.86rem;
+}
+
+.profileReloadWarning label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.profileReloadWarning input {
+  margin-top: 2px;
+}
+
 .profileModalForm {
   min-width: 0;
 }
@@ -3675,6 +3774,67 @@ tr:last-child td {
   cursor: not-allowed;
 }
 
+.profileApplyResultList {
+  display: grid;
+  gap: 8px;
+}
+
+.profileApplyResultRow {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--surface-solid);
+}
+
+.profileApplyResultRow > strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.profileApplyResultRow > div {
+  display: grid;
+  grid-template-columns: minmax(100px, auto) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.profileApplyResultRow > div > span {
+  color: var(--text-faint);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.profileApplyResultRow small {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.profileManualReconnectGuide {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 46%, var(--border));
+  border-radius: 12px;
+  padding: 11px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--yellow) 10%, var(--surface-solid));
+}
+
+.profileManualReconnectGuide strong {
+  color: var(--yellow-text, var(--text));
+  font-size: 0.86rem;
+}
+
+.profileManualReconnectGuide span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
 .profileHostSelectRow[data-disabled="true"] input {
   cursor: not-allowed;
 }
@@ -3815,6 +3975,11 @@ button:disabled {
   padding: 20px;
   background: var(--surface);
   box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+}
+
+.sshHostModal.profileApplyConfirmModal,
+.sshHostModal.ProfileApplyConfirmModal {
+  width: min(680px, 100%);
 }
 
 .setupGuideModal {
@@ -4158,7 +4323,24 @@ button:disabled {
 }
 
 .profileApplyOperationModal {
-  width: min(620px, 100%);
+  width: min(760px, 100%);
+}
+
+@media (max-width: 560px) {
+  .modalFrame.portalModalContent.profileApplyConfirmModal {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+    padding: 16px;
+  }
+
+  .profileApplyResultRow > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .profileApplyResultRow small {
+    grid-column: 1 / -1;
+  }
 }
 
 .codexOperationHeader {

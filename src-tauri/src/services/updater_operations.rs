@@ -872,7 +872,7 @@ pub(crate) fn app_update_task(
     task.ended_at = Some(task_time.clone());
     task.summary = status.message.clone();
     task.logs.push(TaskLog {
-        id: format!("{task_id}-log-{}", task.logs.len() + 1),
+        id: jobs::task_log_id(&task_id, task.logs.len() + 1),
         task_run_id: task_id,
         step_id: None,
         level: log_level,

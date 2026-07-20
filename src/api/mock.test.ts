@@ -2,6 +2,71 @@ import { expect, test, vi } from "vitest";
 import type { HostOperationProgressEvent, HostResourceProgressEvent } from "../models";
 import { mockApi } from "./mock";
 
+test("Mock profile apply mirrors each remote reload mode without exposing process command lines", async () => {
+  const profile = (await mockApi.listProfiles())[0] ?? await mockApi.createProfile({
+    name: "Mock reload profile",
+    description: "Profile apply reload test",
+    model: "gpt-5-codex",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    apiKeyEnvVar: "OPENAI_API_KEY",
+    modelReasoningEffort: "medium",
+    planModeReasoningEffort: "high",
+    fastMode: false,
+    serviceTier: "auto",
+    approvalPolicy: "on-request",
+    sandboxMode: "workspace-write",
+    extraToml: "",
+    hostIds: []
+  });
+  const host = (await mockApi.listHosts())[0] ?? await mockApi.addHost({
+    name: "Mock reload host",
+    address: "mock-reload-host",
+    port: 22,
+    username: "codex",
+    authMethod: "ssh-key",
+    tags: []
+  });
+
+  const preview = await mockApi.previewProfileApply(profile.id, [host.id]);
+  expect(preview.hostResults[0]?.reload).toMatchObject({
+    mode: "app-services",
+    status: "not-requested"
+  });
+
+  const appServices = await mockApi.applyProfile(profile.id, [host.id], {
+    remoteCodexReloadMode: "app-services"
+  });
+  expect(appServices).toMatchObject({ ok: true, outcome: "success" });
+  expect(appServices.results[0]?.reload).toMatchObject({
+    mode: "app-services",
+    status: "reconnected",
+    targetedCount: 1,
+    stoppedCount: 1,
+    preservedCliCount: 1,
+    replacementObserved: true
+  });
+  expect(appServices.tasks[0]?.steps.map((step) => step.stepId)).toEqual([
+    "profile-apply",
+    "remote-codex-reload"
+  ]);
+
+  const noReload = await mockApi.applyProfile(profile.id, [host.id], {
+    remoteCodexReloadMode: "none"
+  });
+  expect(noReload.results[0]?.reload.status).toBe("not-requested");
+
+  const allCodex = await mockApi.applyProfile(profile.id, [host.id], {
+    remoteCodexReloadMode: "all-codex"
+  });
+  expect(allCodex.results[0]?.reload).toMatchObject({
+    mode: "all-codex",
+    stoppedCount: 2,
+    preservedCliCount: 0
+  });
+  expect(JSON.stringify([appServices, noReload, allCodex])).not.toMatch(/pkill|killall|codex app-server|api[_-]?key\s*[:=]/i);
+});
+
 test("Mock task pagination, acknowledgement, and update events match the desktop contract", async () => {
   await mockApi.clearTaskHistory();
   const onUpdate = vi.fn();
@@ -113,15 +178,24 @@ test("Mock Codex maintenance emits the ordered fallback chain without making a r
     ["remote-native-mirror", "failed"],
     ["remote-npm-mirror", "success"],
     ["local-upload", "skipped"],
-    ["final-verification", "success"]
+    ["runtime-reconcile", "success"],
+    ["final-verification", "success"],
+    ["release-cleanup", "success"]
   ]);
   expect(events.filter((event) => event.step.status === "running").map((event) => event.step.stepId)).toEqual([
     "preparation",
     "official-installer",
     "remote-native-mirror",
     "remote-npm-mirror",
-    "final-verification"
+    "runtime-reconcile",
+    "final-verification",
+    "release-cleanup"
   ]);
+
+  const updated = await mockApi.remoteManageCodex("mock-stage-host", "update");
+  expect(updated.ok).toBe(true);
+  expect(updated.task.steps.find((step) => step.stepId === "release-cleanup")?.summary)
+    .toContain("staged update backup mock-update-backup");
 
   const failed = await mockApi.remoteManageCodex("mock-fail-host", "update");
   expect(failed.ok).toBe(false);

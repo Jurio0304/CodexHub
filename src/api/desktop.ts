@@ -9,6 +9,7 @@ import type {
   InstalledSkillRequest,
   ProfileDraft,
   ProfileImportExport,
+  ProfileApplyOptions,
   ProfilePatch,
   RemoteCodexAction,
   RemoteCodexBatchResult,
@@ -68,7 +69,13 @@ import { normalizeSettings, saveDesktopSettingsCache } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import type { TauriCommand } from "./commands";
 import { assertTauriRuntime, requireHostAlias, requiredInvoke } from "./invoke";
-import { normalizeHost, normalizeProfile, normalizeProfileApplyPreview, normalizeProfileApplyResult } from "./normalize";
+import {
+  normalizeHost,
+  normalizeProfile,
+  normalizeProfileApplyOptions,
+  normalizeProfileApplyPreview,
+  normalizeProfileApplyResult
+} from "./normalize";
 
 async function runWithHostOperationProgress<T>(
   command: TauriCommand,
@@ -327,8 +334,12 @@ export const desktopApi: CodexHubApi = {
   previewProfileApply: (profileId: string, hostIds: string[]) =>
     requiredInvoke<ProfileApplyPreviewDto>("preview_profile_apply", { profileId, hostIds })
       .then(normalizeProfileApplyPreview),
-  applyProfile: (profileId: string, hostIds: string[]) =>
-    requiredInvoke<ProfileApplyBatchResultDto>("apply_profile", { profileId, hostIds }).then(normalizeProfileApplyResult),
+  applyProfile: (profileId: string, hostIds: string[], options: ProfileApplyOptions) =>
+    requiredInvoke<ProfileApplyBatchResultDto>("apply_profile", {
+      profileId,
+      hostIds,
+      options: normalizeProfileApplyOptions(options)
+    }).then(normalizeProfileApplyResult),
   detectCcSwitchProfiles: () =>
     requiredInvoke<CcSwitchDetectionDto>("detect_cc_switch_profiles").then((detection) => ({
       ...detection,

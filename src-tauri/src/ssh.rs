@@ -27,6 +27,7 @@ const MANAGED_END_PREFIX: &str = "# <<< CodexHub managed host:";
 const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MIN_TIMEOUT_MS: u64 = 1_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
+const MAX_EXTENDED_SCRIPT_TIMEOUT_MS: u64 = 360_000;
 const MAX_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -901,10 +902,33 @@ pub fn run_ssh_script(
     script: &str,
     timeout_ms: u64,
 ) -> Result<SshCommandOutput, String> {
+    run_ssh_script_with_timeout_limit(host_alias, script, timeout_ms, MAX_TIMEOUT_MS)
+}
+
+/// 仅供已知会线性复核多个远端对象的脚本使用，其他 SSH 操作仍保持 120 秒上限。
+pub fn run_ssh_script_with_extended_timeout(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
+    run_ssh_script_with_timeout_limit(
+        host_alias,
+        script,
+        timeout_ms,
+        MAX_EXTENDED_SCRIPT_TIMEOUT_MS,
+    )
+}
+
+fn run_ssh_script_with_timeout_limit(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    maximum_timeout_ms: u64,
+) -> Result<SshCommandOutput, String> {
     // Windows OpenSSH can lose shell quotes when an entire script is passed as
     // the remote command argument. Send scripts through stdin so POSIX shell
     // parsing happens only on the remote side.
-    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    let timeout_ms = timeout_ms.clamp(MIN_TIMEOUT_MS, maximum_timeout_ms);
     let extra_options = Vec::new();
     let (host_alias, connect_timeout_secs, args) = build_ssh_args(
         host_alias,
@@ -2374,6 +2398,15 @@ mod tests {
         assert_eq!(normalize_health_check_timeout_ms(Some(60_000)), 10_000);
         assert_eq!(normalize_health_check_timeout_ms(Some(5_000)), 5_000);
         assert_eq!(normalize_timeout_ms(Some(60_000)), 60_000);
+    }
+
+    #[test]
+    fn extended_script_timeout_is_separate_from_the_default_cap() {
+        assert_eq!(
+            360_000_u64.clamp(MIN_TIMEOUT_MS, MAX_EXTENDED_SCRIPT_TIMEOUT_MS),
+            360_000
+        );
+        assert_eq!(normalize_timeout_ms(Some(360_000)), MAX_TIMEOUT_MS);
     }
 
     fn draft(alias: &str) -> SshHostDraft {

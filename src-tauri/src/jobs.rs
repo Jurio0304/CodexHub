@@ -28,7 +28,18 @@ pub(crate) fn persist_task(
         merged.sort_by(|left, right| left.timestamp.cmp(&right.timestamp));
         task.logs = merged;
     }
-    store.upsert(&task)?;
+    if let Err(error) = store.upsert(&task) {
+        if TaskStore::is_payload_invariant_error(&error) {
+            if let Err(recovery_error) =
+                fail_task_after_payload_error(store, event_sink, &task.id, &error)
+            {
+                return Err(format!(
+                    "Could not recover the task after its payload was rejected: {recovery_error}"
+                ));
+            }
+        }
+        return Err(error);
+    }
     emit_task_update(
         event_sink,
         TaskEvent {
@@ -70,6 +81,30 @@ fn step_progress(status: &TaskStepStatus) -> u8 {
     }
 }
 
+fn fail_task_after_payload_error(
+    store: &TaskStore,
+    event_sink: Option<&TaskEventSink>,
+    task_id: &str,
+    error: &str,
+) -> Result<(), String> {
+    let summary = format!(
+        "Task finalization failed because its log payload was invalid: {}",
+        redact_error_text(error)
+    );
+    if store.fail_running_task(task_id, &summary)? {
+        emit_task_update(
+            event_sink,
+            TaskEvent {
+                task_id: task_id.to_string(),
+                status: TaskStatus::Failed,
+                summary,
+                updated_at: now(),
+            },
+        );
+    }
+    Ok(())
+}
+
 pub(crate) struct StepUpdateResult {
     pub(crate) task: TaskRun,
     pub(crate) step: TaskStep,
@@ -90,12 +125,23 @@ pub(crate) fn persist_step_update(
     safe_step.summary = ssh::redact_sensitive(&safe_step.summary);
     let safe_log = log.map(sanitize_log);
     let safe_summary = task_summary.map(ssh::redact_sensitive);
-    store.update_step(
+    if let Err(error) = store.update_step(
         task_id,
         &safe_step,
         safe_log.as_ref(),
         safe_summary.as_deref(),
-    )?;
+    ) {
+        if TaskStore::is_payload_invariant_error(&error) {
+            if let Err(recovery_error) =
+                fail_task_after_payload_error(store, event_sink, task_id, &error)
+            {
+                return Err(format!(
+                    "Could not recover the task after its step payload was rejected: {recovery_error}"
+                ));
+            }
+        }
+        return Err(error);
+    }
     let task = store
         .get(task_id)?
         .ok_or_else(|| format!("Task {task_id} disappeared after its step update."))?;
@@ -130,7 +176,7 @@ pub(crate) fn append_message(
     let safe_message = redact_error_text(message);
     task.summary = safe_message.clone();
     task.logs.push(TaskLog {
-        id: format!("{task_id}-progress-{}", timestamp_millis()),
+        id: task_log_id(task_id, task.logs.len() + 1),
         task_run_id: task_id.to_string(),
         step_id: None,
         level,
@@ -271,7 +317,7 @@ fn sanitize_log(log: &TaskLog) -> TaskLog {
 
 fn log(task_id: &str, sequence: usize, level: TaskLogLevel, message: &str) -> TaskLog {
     TaskLog {
-        id: format!("{task_id}-log-{sequence}"),
+        id: task_log_id(task_id, sequence),
         task_run_id: task_id.to_string(),
         step_id: None,
         level,
@@ -284,6 +330,12 @@ fn log(task_id: &str, sequence: usize, level: TaskLogLevel, message: &str) -> Ta
         duration_ms: None,
         timed_out: None,
     }
+}
+
+/// Log ordering lives in SQLite; the nonce keeps identity unique even when a
+/// caller accidentally reuses a human-readable sequence hint.
+pub(crate) fn task_log_id(task_id: &str, sequence: usize) -> String {
+    format!("{task_id}-log-{sequence}-{}", timestamp_millis())
 }
 
 fn now() -> String {

@@ -100,9 +100,13 @@ pub(crate) async fn apply_profile(
     app: AppHandle,
     profile_id: String,
     host_ids: Vec<String>,
+    options: Option<ProfileApplyOptions>,
     timeout_ms: Option<u64>,
 ) -> Result<ProfileApplyBatchResult, String> {
-    services::profile_use_cases::execute_apply_profile(app, profile_id, host_ids, timeout_ms).await
+    services::profile_use_cases::execute_apply_profile(
+        app, profile_id, host_ids, options, timeout_ms,
+    )
+    .await
 }
 
 #[tauri::command]

@@ -1,4 +1,5 @@
 use crate::services::updater_operations::*;
+use crate::tasks::{TaskStep, TaskStepStatus};
 use crate::*;
 
 #[cfg(test)]
@@ -373,14 +374,119 @@ mod tests {
     }
 
     #[test]
+    fn invalid_task_log_payload_fails_only_its_task_and_keeps_storage_healthy() {
+        let state = empty_state();
+        let mut running = skill_task(
+            "task-invalid-log-payload",
+            "host-lab",
+            "Host lab",
+            "Update Codex",
+            TaskStatus::Running,
+            "Update is running.",
+            vec![basic_log(
+                "task-invalid-log-payload",
+                1,
+                TaskLogLevel::Info,
+                "Operation started.",
+            )],
+        );
+        running.steps = vec![
+            TaskStep {
+                task_run_id: running.id.clone(),
+                step_id: "finalization".into(),
+                sequence: 0,
+                status: TaskStepStatus::Running,
+                summary: "Finalizing task.".into(),
+                started_at: Some(timestamp_label()),
+                ended_at: None,
+            },
+            TaskStep {
+                task_run_id: running.id.clone(),
+                step_id: "cleanup".into(),
+                sequence: 1,
+                status: TaskStepStatus::Pending,
+                summary: "Waiting for cleanup.".into(),
+                started_at: None,
+                ended_at: None,
+            },
+        ];
+        running.logs[0].step_id = Some("finalization".into());
+        record_task(&state, running.clone()).expect("persist running task");
+
+        let duplicate = basic_log(
+            &running.id,
+            2,
+            TaskLogLevel::Info,
+            "Duplicate payload fixture.",
+        );
+        running.status = TaskStatus::Success;
+        running.ended_at = Some(timestamp_label());
+        running.logs.push(duplicate.clone());
+        running.logs.push(duplicate);
+
+        let error = record_task(&state, running).expect_err("invalid payload must fail");
+        assert!(error.contains("Task payload invariant violation"));
+        assert!(state
+            .task_storage_error
+            .lock()
+            .expect("task storage health lock")
+            .is_none());
+        ensure_task_storage_healthy(&state).expect("unrelated durable work remains available");
+
+        let persisted = state
+            .task_store
+            .get("task-invalid-log-payload")
+            .expect("read failed task")
+            .expect("failed task remains visible");
+        assert!(matches!(persisted.status, TaskStatus::Failed));
+        assert!(persisted.ended_at.is_some());
+        assert!(matches!(persisted.steps[0].status, TaskStepStatus::Failed));
+        assert!(matches!(persisted.steps[1].status, TaskStepStatus::Skipped));
+    }
+
+    #[test]
+    fn genuine_task_store_failure_still_blocks_later_durable_operations() {
+        let state = AppState::new(TaskStore::unavailable("injected database failure".into()));
+        let task = skill_task(
+            "task-unavailable-store",
+            "local",
+            "Local",
+            "Write durable task",
+            TaskStatus::Failed,
+            "Write failed.",
+            vec![basic_log(
+                "task-unavailable-store",
+                1,
+                TaskLogLevel::Error,
+                "Write failed.",
+            )],
+        );
+
+        let error = record_task(&state, task).expect_err("unavailable store must fail");
+        assert!(error.contains("Persistent task storage failed"));
+        assert!(ensure_task_storage_healthy(&state).is_err());
+    }
+
+    #[test]
     fn profile_and_local_skill_tasks_use_expected_public_shapes() {
         let host = test_host("lab");
+        let reload = RemoteCodexReloadResult {
+            mode: RemoteCodexReloadMode::None,
+            status: RemoteCodexReloadStatus::NotRequested,
+            targeted_count: 0,
+            stopped_count: 0,
+            preserved_cli_count: 0,
+            replacement_observed: false,
+            message: "Remote Codex reload was not requested.".into(),
+        };
         let profile_task = profile_apply_task(
             "task-profile-1",
             &host,
             TaskStatus::Success,
             "Applied profile.",
             vec![basic_log("task-profile-1", 0, TaskLogLevel::Info, "done")],
+            TaskStepStatus::Success,
+            &reload,
         );
         let skill_task = local_skill_task("Install skill", "Installed local skill.", true);
 
@@ -390,6 +496,9 @@ mod tests {
             serde_json::to_string(&profile_task.status).expect("serialize profile status"),
             "\"success\""
         );
+        assert_eq!(profile_task.steps.len(), 2);
+        assert_eq!(profile_task.steps[0].step_id, "profile-apply");
+        assert_eq!(profile_task.steps[1].step_id, "remote-codex-reload");
         assert_eq!(skill_task.host_id, "local");
         assert_eq!(skill_task.host_name, "Local machine");
         assert_eq!(skill_task.action, "Install skill");
@@ -556,6 +665,8 @@ mod tests {
         assert!(cmp_index < backup_index);
         assert!(script.contains("CODEXHUB_PROFILE_BACKUP"));
         assert!(script.contains("CODEXHUB_PROFILE_VALIDATION"));
+        assert!(!script.contains("CODEXHUB_RELOAD"));
+        assert!(!script.contains("kill -TERM"));
     }
 
     #[test]
@@ -1047,25 +1158,705 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(profiles[1].host_ids.is_empty());
     }
 
+    #[cfg(target_os = "linux")]
+    fn isolated_reload_fixture_root(name: &str) -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "codexhub-reload-{name}-{}-{}",
+            std::process::id(),
+            timestamp_millis()
+        ));
+        fs::create_dir_all(&root).expect("create isolated reload fixture root");
+        root
+    }
+
+    #[cfg(target_os = "linux")]
+    fn write_fake_proc_dir(proc_dir: &Path, pid: u32, starttime: u64, comm: &str, argv: &[&str]) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::create_dir_all(proc_dir).expect("create fake proc directory");
+        let uid = String::from_utf8(
+            std::process::Command::new("id")
+                .arg("-u")
+                .output()
+                .expect("read test uid")
+                .stdout,
+        )
+        .expect("uid is UTF-8");
+        let uid = uid.trim();
+        fs::write(
+            proc_dir.join("status"),
+            format!("Name:\t{comm}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n"),
+        )
+        .expect("write fake status");
+        fs::write(proc_dir.join("comm"), format!("{comm}\n")).expect("write fake comm");
+        let mut cmdline = Vec::new();
+        for arg in argv {
+            cmdline.extend_from_slice(arg.as_bytes());
+            cmdline.push(0);
+        }
+        fs::write(proc_dir.join("cmdline"), cmdline).expect("write fake cmdline");
+        fs::write(
+            proc_dir.join("stat"),
+            format!("{pid} ({comm}) S {} {starttime}\n", vec!["0"; 18].join(" ")),
+        )
+        .expect("write fake stat");
+        fs::set_permissions(proc_dir, fs::Permissions::from_mode(0o700))
+            .expect("protect fake proc directory");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn write_fake_proc(root: &Path, pid: u32, starttime: u64, comm: &str, argv: &[&str]) {
+        write_fake_proc_dir(&root.join(pid.to_string()), pid, starttime, comm, argv);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn run_isolated_reload_fixture(
+        root: &Path,
+        mode: RemoteCodexReloadMode,
+    ) -> (RemoteCodexReloadResult, Vec<u32>) {
+        use std::io::Write as _;
+        use std::process::Stdio;
+
+        let root_text = root.to_string_lossy();
+        assert!(!root_text.contains('\''));
+        let generated = remote_codex_reload_script(mode)
+            .replace("/proc", root_text.as_ref())
+            .replace("kill -TERM \"$pid\"", "codexhub_test_term \"$pid\"")
+            .replace("sleep 1", "codexhub_test_sleep");
+        assert!(!generated.contains("kill -TERM"));
+        let harness = format!(
+            r#"test_root='{root_text}'
+codexhub_test_term() {{
+  pid=$1
+  printf '%s\n' "$pid" >>"$test_root/term-calls"
+  [ -f "$test_root/.term-fail-$pid" ] && return 1
+  [ -f "$test_root/.term-keep-$pid" ] && return 0
+  rm -rf "$test_root/$pid"
+  if [ -d "$test_root/.reuse-$pid" ]; then
+    mv "$test_root/.reuse-$pid" "$test_root/$pid"
+  fi
+  if [ -d "$test_root/.spawn-replacement" ]; then
+    mv "$test_root/.spawn-replacement" "$test_root/900"
+  fi
+  return 0
+}}
+codexhub_test_sleep() {{ :; }}
+{generated}
+"#
+        );
+        let mut child = std::process::Command::new("sh")
+            .arg("-s")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start isolated reload shell");
+        child
+            .stdin
+            .take()
+            .expect("isolated reload stdin")
+            .write_all(harness.as_bytes())
+            .expect("write isolated reload harness");
+        let output = child
+            .wait_with_output()
+            .expect("wait for isolated reload shell");
+        let command_output = ssh::SshCommandOutput {
+            command: "isolated reload fixture".into(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: output.status.code(),
+            duration_ms: 0,
+            timed_out: false,
+        };
+        let result = parse_remote_codex_reload_result(mode, &command_output);
+        let term_calls = fs::read_to_string(root.join("term-calls"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.parse::<u32>().ok())
+            .collect();
+        (result, term_calls)
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
-    fn safe_reconnect_matching_is_single_process_only() {
-        let one = "123 codex /home/me/.local/bin/codex app-server --port 1234\n999 bash bash\n";
+    fn remote_codex_reload_script_executes_against_isolated_proc_fixtures() {
+        let app_root = isolated_reload_fixture_root("app-services");
+        write_fake_proc(
+            &app_root,
+            101,
+            1_001,
+            "codex",
+            &["/home/test/.local/bin/codex", "app-server"],
+        );
+        write_fake_proc(
+            &app_root,
+            102,
+            1_002,
+            "codex-remote-co",
+            &["/home/test/.local/bin/codex-remote-control"],
+        );
+        write_fake_proc(
+            &app_root,
+            103,
+            1_003,
+            "codex",
+            &["/home/test/.local/bin/codex", "exec"],
+        );
+        write_fake_proc_dir(
+            &app_root.join(".spawn-replacement"),
+            900,
+            9_000,
+            "codex",
+            &["/home/test/.local/bin/codex", "app-server"],
+        );
+        let (app_result, app_terms) =
+            run_isolated_reload_fixture(&app_root, RemoteCodexReloadMode::AppServices);
+        assert_eq!(app_result.status, RemoteCodexReloadStatus::Reconnected);
+        assert_eq!(app_result.targeted_count, 2);
+        assert_eq!(app_result.stopped_count, 2);
+        assert_eq!(app_result.preserved_cli_count, 1);
+        assert_eq!(app_terms, vec![101, 102]);
+
+        let all_root = isolated_reload_fixture_root("all-codex");
+        write_fake_proc(
+            &all_root,
+            201,
+            2_001,
+            "codex",
+            &["/home/test/.local/bin/codex", "exec"],
+        );
+        write_fake_proc(
+            &all_root,
+            202,
+            2_002,
+            "codex",
+            &["/home/test/.local/bin/codex", "resume"],
+        );
+        let (all_result, all_terms) =
+            run_isolated_reload_fixture(&all_root, RemoteCodexReloadMode::AllCodex);
+        assert_eq!(all_result.status, RemoteCodexReloadStatus::Reloaded);
+        assert_eq!(all_result.targeted_count, 2);
+        assert_eq!(all_result.stopped_count, 2);
+        assert_eq!(all_terms, vec![201, 202]);
+
+        let zero_root = isolated_reload_fixture_root("zero");
+        let (zero_result, zero_terms) =
+            run_isolated_reload_fixture(&zero_root, RemoteCodexReloadMode::AppServices);
+        assert_eq!(zero_result.status, RemoteCodexReloadStatus::NotRunning);
+        assert!(zero_terms.is_empty());
+
+        let term_failure_root = isolated_reload_fixture_root("term-failure");
+        write_fake_proc(
+            &term_failure_root,
+            301,
+            3_001,
+            "codex",
+            &["/home/test/.local/bin/codex", "app-server"],
+        );
+        fs::write(term_failure_root.join(".term-fail-301"), "fail").expect("mark TERM failure");
+        let (term_failure, term_failure_calls) =
+            run_isolated_reload_fixture(&term_failure_root, RemoteCodexReloadMode::AppServices);
+        assert_eq!(term_failure.status, RemoteCodexReloadStatus::ManualRequired);
+        assert!(term_failure.message.contains("TERM request failed"));
+        assert_eq!(term_failure_calls, vec![301]);
+
+        let exit_timeout_root = isolated_reload_fixture_root("exit-timeout");
+        write_fake_proc(
+            &exit_timeout_root,
+            401,
+            4_001,
+            "codex",
+            &["/home/test/.local/bin/codex", "login"],
+        );
+        fs::write(exit_timeout_root.join(".term-keep-401"), "keep")
+            .expect("mark process as still running");
+        let (exit_timeout, exit_timeout_calls) =
+            run_isolated_reload_fixture(&exit_timeout_root, RemoteCodexReloadMode::AllCodex);
+        assert_eq!(exit_timeout.status, RemoteCodexReloadStatus::ManualRequired);
+        assert!(exit_timeout.message.contains("closing the remaining"));
+        assert_eq!(exit_timeout_calls, vec![401]);
+
+        let reused_root = isolated_reload_fixture_root("pid-reuse");
+        write_fake_proc(
+            &reused_root,
+            501,
+            5_001,
+            "codex",
+            &["/home/test/.local/bin/codex", "app-server"],
+        );
+        write_fake_proc_dir(
+            &reused_root.join(".reuse-501"),
+            501,
+            5_999,
+            "codex",
+            &["/home/test/.local/bin/codex", "app-server"],
+        );
+        let (reused, reused_calls) =
+            run_isolated_reload_fixture(&reused_root, RemoteCodexReloadMode::AppServices);
+        assert_eq!(reused.status, RemoteCodexReloadStatus::Reconnected);
+        assert!(reused.replacement_observed);
+        assert_eq!(reused_calls, vec![501]);
+
+        let uncertain_root = isolated_reload_fixture_root("identity-uncertain");
+        write_fake_proc(
+            &uncertain_root,
+            601,
+            6_001,
+            "codex",
+            &["/home/test/.local/bin/codex", "app-server"],
+        );
+        fs::remove_file(uncertain_root.join("601/cmdline"))
+            .expect("make process identity incomplete");
+        let (uncertain, uncertain_calls) =
+            run_isolated_reload_fixture(&uncertain_root, RemoteCodexReloadMode::AppServices);
+        assert_eq!(uncertain.status, RemoteCodexReloadStatus::ManualRequired);
+        assert!(uncertain.message.contains("could not be verified safely"));
+        assert!(uncertain_calls.is_empty());
+
+        for root in [
+            app_root,
+            all_root,
+            zero_root,
+            term_failure_root,
+            exit_timeout_root,
+            reused_root,
+            uncertain_root,
+        ] {
+            assert!(root.starts_with(env::temp_dir()));
+            assert!(root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("codexhub-reload-")));
+            fs::remove_dir_all(root).expect("remove isolated reload fixture root");
+        }
+    }
+
+    #[test]
+    fn remote_codex_reload_script_uses_strict_proc_identity_and_graceful_term() {
+        let app_services = remote_codex_reload_script(RemoteCodexReloadMode::AppServices);
+        let all_codex = remote_codex_reload_script(RemoteCodexReloadMode::AllCodex);
+
+        assert!(app_services.contains("mode='app-services'"));
+        assert!(all_codex.contains("mode='all-codex'"));
+        for token in [
+            "for proc_dir in /proc/[0-9]*",
+            "umask 077",
+            "proc_uid=$(awk '/^Uid:/",
+            "proc_start=$(sed 's/^[^)]*) //'",
+            "codex:codex:app-server",
+            "codex:codex:remote-control",
+            "codex-app-server:codex-app-server:*",
+            "codex-remote-control:codex-remote-control:*",
+            "[ \"$proc_base\" = \"codex\" ] && [ \"$proc_comm\" = \"codex\" ]",
+            "kill -TERM \"$pid\"",
+            "kill_failed=$((kill_failed + 1))",
+            "identity_uncertain=yes",
+            "manual-required unverified-process",
+            "command -v grep",
+            "preserved_cli=$((preserved_cli + 1))",
+            "[ \"$proc_start\" = \"$expected_start\" ]",
+            "[ \"$elapsed\" -lt 5 ]",
+            "[ \"$elapsed\" -lt 15 ]",
+            "CODEXHUB_RELOAD_PRESERVED_CLI",
+            "CODEXHUB_RELOAD_REPLACEMENT_OBSERVED",
+        ] {
+            assert!(
+                app_services.contains(token),
+                "missing reload safety token: {token}"
+            );
+        }
+        for forbidden in [
+            "pkill",
+            "killall",
+            "SIGKILL",
+            "kill -KILL",
+            "kill -9",
+            "kill -- -",
+            "kill -TERM -",
+            "kill -TERM 0",
+            "[[",
+            "]]",
+            "<(",
+            ">(",
+            "declare -a",
+            "function ",
+        ] {
+            assert!(!app_services.contains(forbidden));
+            assert!(!all_codex.contains(forbidden));
+        }
+        assert!(!app_services.contains("kill -TERM \"$pid\" 2>/dev/null || true"));
+        assert!(
+            app_services
+                .matches("[ \"$proc_start\" = \"$expected_start\" ]")
+                .count()
+                >= 3
+        );
+        assert!(app_services.contains("printf '%s %s %s\\n' \"$pid\" \"$proc_start\" \"$kind\""));
+        assert!(app_services.contains("grep -q \"^$pid $proc_start \" \"$candidates\""));
+        for line in app_services.lines().filter(|line| line.contains("printf")) {
+            assert!(!line.contains("proc_argv"));
+            assert!(!line.contains("proc_arg1"));
+            assert!(!line.contains("proc_arg2"));
+        }
+    }
+
+    #[test]
+    fn remote_codex_reload_script_is_posix_shell_syntax() {
+        use std::io::Write as _;
+        use std::process::Stdio;
+
+        let mut child = match std::process::Command::new("sh")
+            .arg("-n")
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("could not start sh -n: {error}"),
+        };
+        child
+            .stdin
+            .take()
+            .expect("sh stdin")
+            .write_all(remote_codex_reload_script(RemoteCodexReloadMode::AppServices).as_bytes())
+            .expect("write reload script to sh");
+        assert!(child.wait().expect("wait for sh -n").success());
+
+        for mode in [RemoteCodexReloadMode::None, RemoteCodexReloadMode::AllCodex] {
+            let status = std::process::Command::new("sh")
+                .arg("-n")
+                .stdin(Stdio::piped())
+                .spawn()
+                .and_then(|mut child| {
+                    child
+                        .stdin
+                        .take()
+                        .expect("sh stdin")
+                        .write_all(remote_codex_reload_script(mode).as_bytes())?;
+                    child.wait()
+                })
+                .expect("validate reload script with sh -n");
+            assert!(status.success());
+        }
+    }
+
+    #[test]
+    fn remote_codex_reload_result_requires_replacement_for_app_reconnect() {
+        let reconnected = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=reconnected\nCODEXHUB_RELOAD_TARGETED=2\nCODEXHUB_RELOAD_STOPPED=2\nCODEXHUB_RELOAD_PRESERVED_CLI=1\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=yes\nCODEXHUB_RELOAD_REASON=replacement-observed".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 100,
+            timed_out: false,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &reconnected);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::Reconnected);
+        assert_eq!(parsed.targeted_count, 2);
+        assert_eq!(parsed.stopped_count, 2);
+        assert_eq!(parsed.preserved_cli_count, 1);
+        assert!(parsed.replacement_observed);
+
+        let not_running = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=not-running\nCODEXHUB_RELOAD_TARGETED=0\nCODEXHUB_RELOAD_STOPPED=0\nCODEXHUB_RELOAD_PRESERVED_CLI=2\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=no-matching-process".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 20,
+            timed_out: false,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &not_running);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::NotRunning);
+        assert_eq!(parsed.targeted_count, 0);
+        assert_eq!(parsed.preserved_cli_count, 2);
+
+        let all_codex_reloaded = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=reloaded\nCODEXHUB_RELOAD_TARGETED=3\nCODEXHUB_RELOAD_STOPPED=3\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=processes-stopped".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 120,
+            timed_out: false,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AllCodex, &all_codex_reloaded);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::Reloaded);
+        assert_eq!(parsed.targeted_count, 3);
+        assert_eq!(parsed.stopped_count, 3);
+
+        let no_replacement = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=manual-required\nCODEXHUB_RELOAD_TARGETED=1\nCODEXHUB_RELOAD_STOPPED=1\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=replacement-not-observed".into(),
+            stderr: String::new(),
+            exit_code: Some(4),
+            duration_ms: 15_000,
+            timed_out: false,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &no_replacement);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::ManualRequired);
+        assert!(parsed.message.contains("15 seconds"));
+
+        let term_failed = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=manual-required\nCODEXHUB_RELOAD_TARGETED=2\nCODEXHUB_RELOAD_STOPPED=2\nCODEXHUB_RELOAD_PRESERVED_CLI=1\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=term-failed".into(),
+            stderr: String::new(),
+            exit_code: Some(4),
+            duration_ms: 100,
+            timed_out: false,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &term_failed);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::ManualRequired);
+        assert!(parsed.message.contains("TERM request failed"));
+        assert_eq!(parsed.stopped_count, 2);
+        assert_eq!(parsed.preserved_cli_count, 1);
+
+        for (reason, targeted, stopped, expected_message) in [
+            ("old-process-still-running", 2, 1, "closing the remaining"),
+            ("unverified-process", 0, 0, "could not be verified safely"),
+            (
+                "proc-unavailable",
+                0,
+                0,
+                "identity could not be verified safely",
+            ),
+        ] {
+            let output = ssh::SshCommandOutput {
+                command: "ssh lab sh -s".into(),
+                stdout: format!(
+                    "CODEXHUB_RELOAD_STATUS=manual-required\nCODEXHUB_RELOAD_TARGETED={targeted}\nCODEXHUB_RELOAD_STOPPED={stopped}\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON={reason}"
+                ),
+                stderr: String::new(),
+                exit_code: Some(4),
+                duration_ms: 5_000,
+                timed_out: false,
+            };
+            let parsed =
+                parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &output);
+            assert_eq!(parsed.status, RemoteCodexReloadStatus::ManualRequired);
+            assert!(parsed.message.contains(expected_message));
+        }
+
+        let timed_out = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=manual-required\nCODEXHUB_RELOAD_TARGETED=1\nCODEXHUB_RELOAD_STOPPED=0\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=old-process-still-running".into(),
+            stderr: "timed out".into(),
+            exit_code: None,
+            duration_ms: 30_000,
+            timed_out: true,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &timed_out);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::Failed);
+
+        let noisy = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=not-running\nCODEXHUB_RELOAD_TARGETED=0\nCODEXHUB_RELOAD_STOPPED=0\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=no-matching-process\ncodex app-server --api-key sk-test-secret".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 20,
+            timed_out: false,
+        };
+        let parsed = parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &noisy);
+        let serialized = serde_json::to_string(&parsed).expect("serialize reload result");
+        assert!(!serialized.contains("codex app-server"));
+        assert!(!serialized.contains("sk-test-secret"));
+        let log = basic_log(
+            "task-reload-noisy",
+            0,
+            TaskLogLevel::Info,
+            &remote_codex_reload_log_message(&parsed),
+        );
+        let serialized_log = serde_json::to_string(&log).expect("serialize reload task log");
+        assert!(serialized_log.contains("targeted=0"));
+        assert!(serialized_log.contains("status=not-running"));
+        assert!(!serialized_log.contains("codex app-server"));
+        assert!(!serialized_log.contains("sk-test-secret"));
+        assert!(log.command.is_none());
+        assert!(log.stdout.is_none());
+        assert!(log.stderr.is_none());
+
+        let malformed = ssh::SshCommandOutput {
+            command: "ssh lab sh -s".into(),
+            stdout: "CODEXHUB_RELOAD_STATUS=reconnected".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            duration_ms: 10,
+            timed_out: false,
+        };
+        let parsed =
+            parse_remote_codex_reload_result(RemoteCodexReloadMode::AppServices, &malformed);
+        assert_eq!(parsed.status, RemoteCodexReloadStatus::Failed);
+
+        for contradictory in [
+            "CODEXHUB_RELOAD_STATUS=not-running\nCODEXHUB_RELOAD_TARGETED=0\nCODEXHUB_RELOAD_STOPPED=0\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no",
+            "CODEXHUB_RELOAD_STATUS=not-running\nCODEXHUB_RELOAD_TARGETED=1\nCODEXHUB_RELOAD_STOPPED=0\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=no-matching-process",
+            "CODEXHUB_RELOAD_STATUS=reloaded\nCODEXHUB_RELOAD_TARGETED=0\nCODEXHUB_RELOAD_STOPPED=0\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=processes-stopped",
+            "CODEXHUB_RELOAD_STATUS=reconnected\nCODEXHUB_RELOAD_TARGETED=1\nCODEXHUB_RELOAD_STOPPED=1\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=replacement-observed",
+            "CODEXHUB_RELOAD_STATUS=reloaded\nCODEXHUB_RELOAD_TARGETED=1\nCODEXHUB_RELOAD_STOPPED=1\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=yes\nCODEXHUB_RELOAD_REASON=processes-stopped",
+            "CODEXHUB_RELOAD_STATUS=manual-required\nCODEXHUB_RELOAD_TARGETED=1\nCODEXHUB_RELOAD_STOPPED=2\nCODEXHUB_RELOAD_PRESERVED_CLI=0\nCODEXHUB_RELOAD_REPLACEMENT_OBSERVED=no\nCODEXHUB_RELOAD_REASON=term-failed",
+        ] {
+            let output = ssh::SshCommandOutput {
+                command: "ssh lab sh -s".into(),
+                stdout: contradictory.into(),
+                stderr: String::new(),
+                exit_code: Some(0),
+                duration_ms: 10,
+                timed_out: false,
+            };
+            let parsed = parse_remote_codex_reload_result(
+                RemoteCodexReloadMode::AppServices,
+                &output,
+            );
+            assert_eq!(parsed.status, RemoteCodexReloadStatus::Failed);
+        }
+    }
+
+    #[test]
+    fn profile_apply_reload_contract_defaults_and_outcomes_are_stable() {
+        let options: ProfileApplyOptions =
+            serde_json::from_str("{}").expect("default profile apply options");
         assert_eq!(
-            safe_reconnect_decision_from_ps(one),
-            SafeReconnectDecision::Terminate(123)
+            options.remote_codex_reload_mode,
+            RemoteCodexReloadMode::AppServices
         );
 
-        let ambiguous = "123 codex codex app-server\n124 codex codex remote-control\n";
-        assert_eq!(
-            safe_reconnect_decision_from_ps(ambiguous),
-            SafeReconnectDecision::Manual("ambiguous-process-match".into())
-        );
+        let result =
+            |config_status: &str, reload_status: RemoteCodexReloadStatus| ProfileApplyHostResult {
+                host_id: "host-1".into(),
+                host_name: "Host 1".into(),
+                host_alias: "lab".into(),
+                status: config_status.into(),
+                target_path: "~/.codex/config.toml".into(),
+                backup_path: None,
+                message: "test".into(),
+                reload: RemoteCodexReloadResult {
+                    mode: RemoteCodexReloadMode::AppServices,
+                    status: reload_status,
+                    targeted_count: 0,
+                    stopped_count: 0,
+                    preserved_cli_count: 0,
+                    replacement_observed: false,
+                    message: "test".into(),
+                },
+                task: None,
+            };
 
-        let unsafe_match = "222 node node app-server\n333 codex codex login\n";
         assert_eq!(
-            safe_reconnect_decision_from_ps(unsafe_match),
-            SafeReconnectDecision::Manual("no-safe-process-match".into())
+            profile_apply_batch_outcome(&[result("success", RemoteCodexReloadStatus::Reconnected)]),
+            ProfileApplyOutcome::Success
         );
+        for completed in [
+            RemoteCodexReloadStatus::NotRequested,
+            RemoteCodexReloadStatus::NotRunning,
+            RemoteCodexReloadStatus::Reloaded,
+        ] {
+            assert_eq!(
+                profile_apply_batch_outcome(&[result("no-change", completed)]),
+                ProfileApplyOutcome::Success
+            );
+        }
+        assert_eq!(
+            profile_apply_batch_outcome(&[result(
+                "success",
+                RemoteCodexReloadStatus::ManualRequired
+            )]),
+            ProfileApplyOutcome::ManualReconnect
+        );
+        assert_eq!(
+            profile_apply_batch_outcome(&[result("success", RemoteCodexReloadStatus::Failed)]),
+            ProfileApplyOutcome::ManualReconnect
+        );
+        assert_eq!(
+            profile_apply_batch_outcome(&[
+                result("success", RemoteCodexReloadStatus::NotRunning),
+                result("failed", RemoteCodexReloadStatus::Skipped),
+            ]),
+            ProfileApplyOutcome::Partial
+        );
+        assert_eq!(
+            profile_apply_batch_outcome(&[result("failed", RemoteCodexReloadStatus::Skipped)]),
+            ProfileApplyOutcome::Failed
+        );
+    }
+
+    #[test]
+    fn profile_apply_persists_confirmed_state_before_process_reload() {
+        let source = include_str!("services/profile_operations.rs");
+        let env_check = source
+            .find("let api_key_env_present")
+            .expect("API env verification");
+        let local_persist = source
+            .find("let local_persist_error")
+            .expect("local confirmed-state persistence");
+        let reload = source
+            .find("let reload = if remote_apply_ready")
+            .expect("remote process reload");
+        let cleanup = source
+            .find("let cleanup_hard_failed = if remote_apply_ready")
+            .expect("post-reload managed release cleanup");
+
+        assert!(env_check < local_persist);
+        assert!(local_persist < reload);
+        assert!(reload < cleanup);
+        assert!(source[local_persist..reload].contains("update_host_profile_apply"));
+        assert!(source.contains(
+            "profile_apply_task_status(config_succeeded, reload_succeeded, cleanup_hard_failed)"
+        ));
+        assert!(source.contains("let hard_failed = result.hard_failed()"));
+        assert!(matches!(
+            profile_apply_task_status(true, true, false),
+            TaskStatus::Success
+        ));
+        assert!(matches!(
+            profile_apply_task_status(true, true, true),
+            TaskStatus::Failed
+        ));
+    }
+
+    #[test]
+    fn install_runtime_reconcile_and_cleanup_order_is_stable() {
+        let source = include_str!("services/host_operations.rs");
+        let reconcile_guard = source
+            .find("let should_reconcile_runtime = successful_install.is_some() || has_runtime_recovery_floor")
+            .expect("runtime recovery guard");
+        let reconcile = source
+            .find("let runtime_reconcile_result = if should_reconcile_runtime")
+            .expect("runtime reconcile phase");
+        let final_verify = source[reconcile..]
+            .find("let after_checks = run_codex_state_checks_parallel")
+            .map(|index| reconcile + index)
+            .expect("final verification phase");
+        let cleanup = source[final_verify..]
+            .find("let cleanup_ok = if verification_ok")
+            .map(|index| final_verify + index)
+            .expect("release cleanup phase");
+        assert!(reconcile < final_verify);
+        assert!(final_verify < cleanup);
+        assert!(reconcile_guard < reconcile);
+        assert!(source[reconcile..final_verify].contains("before_version.as_deref()"));
+        assert!(source[reconcile..final_verify].contains("strict_current_runtime.as_ref()"));
+        assert!(source.contains(
+            "let has_runtime_recovery_floor = before_version.is_some() || strict_current_runtime.is_some()"
+        ));
+        assert!(source.contains(
+            "let detected_installed =\n        detected_codex_installed(codex_path.is_some(), after_version.is_some())"
+        ));
+        assert!(source.contains("&alias,\n        detected_installed,"));
+        assert!(
+            source.contains("final_verification_failures(\n        successful_install.is_some(),")
+        );
+        assert!(source.contains("CodexReleaseCleanupStatus::Deferred => TaskStepStatus::Skipped"));
+        assert!(source.contains("let cleanup_ok = !result.hard_failed()"));
+        assert!(source[cleanup..].contains("action == RemoteCodexAction::Update"));
+        assert!(source[cleanup..].contains("CodexReleaseCleanupPolicy::VerifiedOlderThan"));
+        assert!(source[cleanup..].contains("CodexReleaseCleanupPolicy::ManagedOnly"));
+        let profile_source = include_str!("services/profile_operations.rs");
+        assert!(profile_source.contains("codex_runtime::CodexReleaseCleanupPolicy::ManagedOnly"));
+        assert!(!profile_source.contains("CodexReleaseCleanupPolicy::VerifiedOlderThan"));
     }
 
     #[test]
@@ -1167,6 +1958,20 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(!CODEX_OFFICIAL_INSTALL_SCRIPT.contains("curl -k"));
         assert!(!CODEX_OFFICIAL_INSTALL_SCRIPT.contains("--no-check-certificate"));
         assert!(CODEX_OFFICIAL_INSTALL_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=official"));
+        let official_query = CODEX_OFFICIAL_INSTALL_SCRIPT
+            .find("https://api.github.com/repos/openai/codex/releases/latest")
+            .expect("query official release before installer mutation");
+        let official_floor = CODEX_OFFICIAL_INSTALL_SCRIPT
+            .find("codexhub_version_meets_floors \"$candidate_version\"")
+            .expect("compare official release against floors");
+        let official_pin = CODEX_OFFICIAL_INSTALL_SCRIPT
+            .find("export CODEX_RELEASE=\"$candidate_version\"")
+            .expect("pin the official installer release");
+        let official_run = CODEX_OFFICIAL_INSTALL_SCRIPT
+            .find("timeout 75 sh \"$tmp_dir/install.sh\"")
+            .expect("run pinned official installer");
+        assert!(official_query < official_floor);
+        assert!(official_floor < official_pin && official_pin < official_run);
 
         assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
             .contains("https://registry.npmmirror.com/@openai/codex"));
@@ -1186,9 +1991,22 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("--no-check-certificate"));
         assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("vendor/$target"));
         assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT.contains("ln -sfn \"$release_dir/bin/codex\""));
+        assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
+            .contains("codexhub_version_meets_floors \"$version\""));
 
         assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("command -v npm"));
         assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("registry=https://registry.npmmirror.com"));
+        let npm_query = CODEX_REMOTE_NPM_MIRROR_SCRIPT
+            .find("npm view @openai/codex version")
+            .expect("query mirror version before mutation");
+        let npm_floor = CODEX_REMOTE_NPM_MIRROR_SCRIPT
+            .find("codexhub_version_meets_floors \"$candidate_version\"")
+            .expect("compare mirror version against floors");
+        let npm_install = CODEX_REMOTE_NPM_MIRROR_SCRIPT
+            .find("npm install -g \"@openai/codex@$candidate_version\"")
+            .expect("install exact validated mirror version");
+        assert!(npm_query < npm_floor && npm_floor < npm_install);
+        assert!(!CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("npm install -g @openai/codex --prefix"));
         assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=npm-mirror"));
     }
 
@@ -1247,6 +2065,281 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
     }
 
     #[test]
+    fn native_installers_mark_verified_releases_and_never_blindly_replace_same_version() {
+        let uploaded = codex_install_uploaded_package_script(
+            "/tmp/codexhub-codex-1-0.144.5.tgz",
+            "0.144.5",
+            "x86_64-unknown-linux-musl",
+        );
+        for script in [CODEX_REMOTE_NATIVE_MIRROR_SCRIPT, uploaded.as_str()] {
+            assert!(script.contains(".codexhub-managed-release"));
+            assert!(script.contains("CodexHub managed standalone release v1"));
+            assert!(script.contains("write_verified_marker"));
+            assert!(script.contains("is_safe_existing_release"));
+            assert!(
+                script.contains("Existing same-version release directory is not safely adoptable")
+            );
+            assert!(!script.contains("rm -rf \"$release_dir\""));
+            let dual_layout_guard = script
+                .find("[ \"$codexhub_existing_layout_count\" -eq 1 ] || return 1")
+                .expect("same-version direct layout uniqueness guard");
+            let layout_presence_check = script
+                .find("if [ -e \"$codexhub_existing_binary\" ] || [ -L \"$codexhub_existing_binary\" ]; then")
+                .expect("all direct layout paths count toward ambiguity");
+            let strict_binary_check = script
+                .find("[ -f \"$codexhub_existing_selected_binary\" ] && [ -x \"$codexhub_existing_selected_binary\" ] && [ ! -L \"$codexhub_existing_selected_binary\" ] || return 1")
+                .expect("unique direct layout binary identity guard");
+            let canonical_binary_check = script
+                .find("[ \"$codexhub_existing_binary_real\" = \"$codexhub_existing_real/$codexhub_existing_selected_relative\" ] || return 1")
+                .expect("unique direct layout canonical path guard");
+            let current_switch = script
+                .find("ln -sfn \"$release_dir\" \"$CODEX_HOME/packages/standalone/current\"")
+                .expect("standalone/current switch");
+            assert!(layout_presence_check < dual_layout_guard);
+            assert!(dual_layout_guard < strict_binary_check);
+            assert!(strict_binary_check < canonical_binary_check);
+            assert!(canonical_binary_check < current_switch);
+            assert!(script
+                .contains("[ \"$codexhub_existing_selected_relative\" = bin/codex ] || return 1"));
+            for forbidden in [
+                "\n  value=$1\n",
+                "\n  binary=$1\n",
+                "\n  release_dir=$1\n",
+                "\n  release_version=$2\n",
+                "\n  marker=\"$release_dir/",
+                "\n  direct_layout_count=0\n",
+            ] {
+                assert!(
+                    !script.contains(forbidden),
+                    "native installer helper leaks POSIX shell state: {forbidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_installer_helpers_preserve_outer_release_state_during_stage_commit_and_retry() {
+        use std::io::Write as _;
+        use std::process::Stdio;
+
+        let uploaded = codex_install_uploaded_package_script(
+            "/tmp/codexhub-codex-1-0.144.6.tgz",
+            "0.144.6",
+            "x86_64-unknown-linux-musl",
+        );
+        for (label, script, helper_end, safe_call) in [
+            (
+                "remote native",
+                CODEX_REMOTE_NATIVE_MIRROR_SCRIPT,
+                "extract_npmmirror_metadata() {",
+                "is_safe_existing_release \"$release_dir\" \"$version\" \"$release_root\"",
+            ),
+            (
+                "uploaded native",
+                uploaded.as_str(),
+                "if [ ! -s \"$remote_tarball\" ]; then",
+                "is_safe_existing_release \"$release_dir\" \"$version\"",
+            ),
+        ] {
+            let helper_start = script
+                .find("binary_version() {")
+                .expect("native binary helper");
+            let helper_end = script[helper_start..]
+                .find(helper_end)
+                .map(|index| helper_start + index)
+                .expect("native helper boundary");
+            let helpers = &script[helper_start..helper_end];
+            let harness = r###"set -eu
+root=$(mktemp -d)
+trap 'rm -rf "$root"' EXIT HUP INT TERM
+if ! command -v chmod >/dev/null 2>&1; then chmod() { :; }; fi
+release_root="$root/releases"
+mkdir -p "$release_root"
+version=0.144.6
+expected_release_dir="$release_root/$version"
+release_dir=$expected_release_dir
+stage_dir="$release_dir.tmp.123"
+marker_name=.codexhub-managed-release
+release_version=outer-release-version
+marker=outer-marker
+marker_tmp=outer-marker-tmp
+value=outer-value
+binary=outer-binary
+direct_layout_count=outer-layout-count
+selected_direct_binary=outer-selected-binary
+selected_direct_relative=outer-selected-relative
+direct_relative=outer-relative
+direct_binary=outer-direct-binary
+release_root_real=outer-root-real
+release_real=outer-release-real
+direct_binary_real=outer-direct-real
+existing_version=outer-existing-version
+
+__HELPERS__
+
+assert_outer_state() {
+  [ "$release_dir" = "$expected_release_dir" ]
+  [ "$release_root" = "$root/releases" ]
+  [ "$release_version" = outer-release-version ]
+  [ "$marker" = outer-marker ]
+  [ "$marker_tmp" = outer-marker-tmp ]
+  [ "$value" = outer-value ]
+  [ "$binary" = outer-binary ]
+  [ "$direct_layout_count" = outer-layout-count ]
+  [ "$selected_direct_binary" = outer-selected-binary ]
+  [ "$selected_direct_relative" = outer-selected-relative ]
+  [ "$direct_relative" = outer-relative ]
+  [ "$direct_binary" = outer-direct-binary ]
+  [ "$release_root_real" = outer-root-real ]
+  [ "$release_real" = outer-release-real ]
+  [ "$direct_binary_real" = outer-direct-real ]
+  [ "$existing_version" = outer-existing-version ]
+}
+
+make_stage() {
+  destination=$1
+  mkdir -p "$destination/bin"
+  cat >"$destination/bin/codex" <<'CODEXHUB_TEST_BIN'
+#!/bin/sh
+printf 'codex-cli 0.144.6\n'
+CODEXHUB_TEST_BIN
+  chmod 700 "$destination/bin/codex"
+}
+
+make_stage "$stage_dir"
+write_verified_marker "$stage_dir" "$version"
+assert_outer_state
+[ ! -e "$release_dir" ] && [ ! -L "$release_dir" ]
+mv "$stage_dir" "$release_dir"
+stage_dir=""
+__SAFE_CALL__
+assert_outer_state
+
+retry_stage="$expected_release_dir.tmp.retry"
+make_stage "$retry_stage"
+write_verified_marker "$retry_stage" "$version"
+assert_outer_state
+[ -d "$release_dir" ]
+__SAFE_CALL__
+assert_outer_state
+printf 'CODEXHUB_TEST_NATIVE_HELPERS=ok\n'
+"###
+            .replace("__HELPERS__", helpers)
+            .replace("__SAFE_CALL__", safe_call);
+
+            let mut child = match std::process::Command::new("sh")
+                .arg("-s")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => panic!("could not start native helper fixture: {error}"),
+            };
+            child
+                .stdin
+                .take()
+                .expect("native helper stdin")
+                .write_all(harness.as_bytes())
+                .expect("write native helper fixture");
+            let output = child
+                .wait_with_output()
+                .expect("wait for native helper fixture");
+            assert!(
+                output.status.success(),
+                "{label} helper fixture failed: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("CODEXHUB_TEST_NATIVE_HELPERS=ok")
+            );
+        }
+    }
+
+    #[test]
+    fn every_codexhub_runtime_writer_uses_the_shared_remote_lock() {
+        let uploaded = codex_install_uploaded_package_script(
+            "/tmp/codexhub-codex-1-0.144.5.tgz",
+            "0.144.5",
+            "x86_64-unknown-linux-musl",
+        );
+        for body in [
+            CODEX_OFFICIAL_INSTALL_SCRIPT,
+            CODEX_REMOTE_NATIVE_MIRROR_SCRIPT,
+            CODEX_REMOTE_NPM_MIRROR_SCRIPT,
+            CODEX_UNINSTALL_SCRIPT,
+            uploaded.as_str(),
+        ] {
+            let locked =
+                crate::services::codex_runtime::with_remote_codex_runtime_writer_lock(body);
+            let acquire = locked
+                .find("codexhub_runtime_lock_acquire\ncodexhub_runtime_lock_status=$?")
+                .expect("writer lock acquisition");
+            let body_start = locked.find(body).expect("wrapped runtime writer body");
+            assert!(acquire < body_start);
+            assert!(locked.contains("CodexHub runtime cleanup lock v1"));
+            assert!(locked.contains("codexhub_runtime_lock_root=\"$HOME\""));
+            assert!(!locked.contains("codexhub_runtime_lock_path=\"$HOME/.codex-hub/"));
+            assert!(locked.contains("codexhub_runtime_mv_no_replace_supported"));
+            assert!(locked.contains("trap 'exit 143' TERM"));
+        }
+
+        let host_source = include_str!("services/host_operations.rs");
+        for required in [
+            "with_remote_codex_runtime_writer_lock(CODEX_UNINSTALL_SCRIPT)",
+            "CODEX_OFFICIAL_INSTALL_SCRIPT\n                    )",
+            "CODEX_REMOTE_NATIVE_MIRROR_SCRIPT\n                    )",
+            "CODEX_REMOTE_NPM_MIRROR_SCRIPT\n                    )",
+            "with_remote_codex_runtime_writer_lock(&install)",
+        ] {
+            assert!(
+                host_source.contains(required),
+                "missing runtime writer wrapper: {required}"
+            );
+        }
+        let reconcile = crate::services::codex_runtime::remote_codex_runtime_reconcile_script();
+        assert!(
+            reconcile.find("codexhub_runtime_lock_acquire").unwrap()
+                < reconcile
+                    .find("target_file=\"$hub_dir/codex-target\"")
+                    .unwrap()
+        );
+    }
+
+    #[test]
+    fn native_installer_scripts_are_posix_shell_syntax() {
+        use std::io::Write as _;
+        use std::process::Stdio;
+
+        let uploaded = codex_install_uploaded_package_script(
+            "/tmp/codexhub-codex-1-0.144.5.tgz",
+            "0.144.5",
+            "x86_64-unknown-linux-musl",
+        );
+        for script in [CODEX_REMOTE_NATIVE_MIRROR_SCRIPT, uploaded.as_str()] {
+            let mut child = match std::process::Command::new("sh")
+                .arg("-n")
+                .stdin(Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => panic!("could not start sh -n: {error}"),
+            };
+            child
+                .stdin
+                .take()
+                .expect("sh stdin")
+                .write_all(script.as_bytes())
+                .expect("write native installer script to sh");
+            assert!(child.wait().expect("wait for sh -n").success());
+        }
+    }
+
+    #[test]
     fn codex_path_repair_script_is_managed_idempotent_and_backed_up() {
         assert!(CODEX_PATH_REPAIR_SCRIPT.contains("mkdir -p \"$local_bin\""));
         assert!(CODEX_PATH_REPAIR_SCRIPT.contains("# >>> CodexHub managed PATH"));
@@ -1272,7 +2365,7 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
     }
 
     #[test]
-    fn remote_profile_api_key_script_writes_managed_env_and_launcher() {
+    fn remote_profile_api_key_script_only_writes_managed_env() {
         let script = remote_profile_api_key_script("OPENAI_API_KEY", "sk-test'value");
 
         assert!(script.contains("env_file=\"$env_dir/env\""));
@@ -1284,10 +2377,46 @@ CODEXHUB_REMOTE_SKILL\timagegen\tyes\tvalid\t/home/test/.codex/skills/.system/im
         assert!(script.contains("repair_source_file \"$HOME/.profile\""));
         assert!(script.contains("repair_source_file \"$HOME/.bash_profile\""));
         assert!(script.contains("repair_source_file \"$HOME/.zprofile\""));
-        assert!(script.contains("CodexHub managed launcher"));
-        assert!(script.contains("target_file=\"$HOME/.codex-hub/codex-target\""));
-        assert!(script.contains("exec \"$target\" \"$@\""));
         assert!(script.contains("CODEXHUB_REMOTE_ENV_CHANGED=%s"));
-        assert!(script.contains("CODEXHUB_CODEX_LAUNCHER_CHANGED=%s"));
+        assert!(!script.contains("CodexHub managed launcher"));
+        assert!(!script.contains("codex-target"));
+        assert!(!script.contains("CODEXHUB_CODEX_LAUNCHER"));
+    }
+
+    #[test]
+    fn profile_runtime_reconcile_runs_only_after_successful_env_write() {
+        use std::cell::Cell;
+
+        let output = |success| ssh::SshCommandOutput {
+            command: "ssh test profile env".into(),
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(if success { 0 } else { 1 }),
+            duration_ms: 1,
+            timed_out: false,
+        };
+        let called = Cell::new(false);
+        let skipped = reconcile_after_successful_remote_env_write(&output(false), || {
+            called.set(true);
+            unreachable!("failed env write must skip runtime reconciliation")
+        });
+        assert!(skipped.is_none());
+        assert!(!called.get());
+
+        let completed = reconcile_after_successful_remote_env_write(&output(true), || {
+            called.set(true);
+            Ok(services::codex_runtime::CodexRuntimeReconcileResult {
+                status: services::codex_runtime::CodexRuntimeReconcileStatus::NotInstalled,
+                target_changed: false,
+                launcher_changed: false,
+                target_version: None,
+                launcher_version: None,
+                login_shell_version: None,
+                release_marked: false,
+                reason: "no-codex-entry".into(),
+            })
+        });
+        assert!(called.get());
+        assert!(completed.expect("reconcile result").is_ok());
     }
 }
