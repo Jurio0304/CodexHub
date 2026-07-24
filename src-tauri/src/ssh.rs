@@ -122,6 +122,31 @@ pub struct SshCommandOutput {
     pub timed_out: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReverseProxyTunnel {
+    local_port: u16,
+    remote_port: u16,
+}
+
+impl ReverseProxyTunnel {
+    pub fn new(local_port: u16, remote_port: u16) -> Result<Self, String> {
+        if local_port == 0 || remote_port == 0 {
+            return Err("Proxy tunnel ports must be non-zero.".into());
+        }
+        Ok(Self {
+            local_port,
+            remote_port,
+        })
+    }
+
+    fn remote_forward_spec(&self) -> String {
+        format!(
+            "127.0.0.1:{}:127.0.0.1:{}",
+            self.remote_port, self.local_port
+        )
+    }
+}
+
 impl SshCommandOutput {
     pub fn success(&self) -> bool {
         self.exit_code == Some(0) && !self.timed_out
@@ -894,6 +919,7 @@ pub fn run_ssh_echo_ok(host_alias: &str, timeout_ms: u64) -> Result<SshCommandOu
         timeout_ms,
         "echo ok",
         vec![("StrictHostKeyChecking".into(), "accept-new".into())],
+        None,
     )
 }
 
@@ -902,7 +928,16 @@ pub fn run_ssh_script(
     script: &str,
     timeout_ms: u64,
 ) -> Result<SshCommandOutput, String> {
-    run_ssh_script_with_timeout_limit(host_alias, script, timeout_ms, MAX_TIMEOUT_MS)
+    run_ssh_script_with_timeout_limit(host_alias, script, timeout_ms, MAX_TIMEOUT_MS, None)
+}
+
+pub fn run_ssh_script_with_reverse_proxy(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    tunnel: &ReverseProxyTunnel,
+) -> Result<SshCommandOutput, String> {
+    run_ssh_script_with_timeout_limit(host_alias, script, timeout_ms, MAX_TIMEOUT_MS, Some(tunnel))
 }
 
 /// 仅供已知会线性复核多个远端对象的脚本使用，其他 SSH 操作仍保持 120 秒上限。
@@ -916,6 +951,23 @@ pub fn run_ssh_script_with_extended_timeout(
         script,
         timeout_ms,
         MAX_EXTENDED_SCRIPT_TIMEOUT_MS,
+        None,
+    )
+}
+
+/// 仅供需要保持临时反向隧道的有界安装脚本使用。
+pub fn run_ssh_script_with_extended_timeout_and_reverse_proxy(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    tunnel: &ReverseProxyTunnel,
+) -> Result<SshCommandOutput, String> {
+    run_ssh_script_with_timeout_limit(
+        host_alias,
+        script,
+        timeout_ms,
+        MAX_EXTENDED_SCRIPT_TIMEOUT_MS,
+        Some(tunnel),
     )
 }
 
@@ -924,6 +976,7 @@ fn run_ssh_script_with_timeout_limit(
     script: &str,
     timeout_ms: u64,
     maximum_timeout_ms: u64,
+    tunnel: Option<&ReverseProxyTunnel>,
 ) -> Result<SshCommandOutput, String> {
     // Windows OpenSSH can lose shell quotes when an entire script is passed as
     // the remote command argument. Send scripts through stdin so POSIX shell
@@ -935,11 +988,13 @@ fn run_ssh_script_with_timeout_limit(
         vec!["sh".into(), "-s".into()],
         timeout_ms,
         extra_options.clone(),
+        tunnel,
     )?;
     let command = format!(
-        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} sh -s",
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{}{} {} sh -s",
         connect_timeout_secs,
         display_extra_options(&extra_options),
+        display_reverse_proxy_tunnel(tunnel),
         host_alias
     );
     let stdin_input = script_stdin(script);
@@ -962,18 +1017,102 @@ pub fn run_ssh_script_streaming<F>(
 where
     F: FnMut(ProcessStreamEvent),
 {
-    let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
+    run_ssh_script_streaming_inner(
+        host_alias,
+        script,
+        timeout_ms,
+        MAX_TIMEOUT_MS,
+        None,
+        on_event,
+    )
+}
+
+pub fn run_ssh_script_streaming_with_reverse_proxy<F>(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    tunnel: &ReverseProxyTunnel,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    run_ssh_script_streaming_inner(
+        host_alias,
+        script,
+        timeout_ms,
+        MAX_TIMEOUT_MS,
+        Some(tunnel),
+        on_event,
+    )
+}
+
+/// 执行有界长时间远程脚本，同时保留实时输出。
+pub fn run_ssh_script_streaming_with_extended_timeout<F>(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    run_ssh_script_streaming_inner(
+        host_alias,
+        script,
+        timeout_ms,
+        MAX_EXTENDED_SCRIPT_TIMEOUT_MS,
+        None,
+        on_event,
+    )
+}
+
+/// 为有界长时间安装同时保持实时输出和临时反向隧道。
+pub fn run_ssh_script_streaming_with_extended_timeout_and_reverse_proxy<F>(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    tunnel: &ReverseProxyTunnel,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    run_ssh_script_streaming_inner(
+        host_alias,
+        script,
+        timeout_ms,
+        MAX_EXTENDED_SCRIPT_TIMEOUT_MS,
+        Some(tunnel),
+        on_event,
+    )
+}
+
+fn run_ssh_script_streaming_inner<F>(
+    host_alias: &str,
+    script: &str,
+    timeout_ms: u64,
+    maximum_timeout_ms: u64,
+    tunnel: Option<&ReverseProxyTunnel>,
+    on_event: F,
+) -> Result<SshCommandOutput, String>
+where
+    F: FnMut(ProcessStreamEvent),
+{
+    let timeout_ms = timeout_ms.clamp(MIN_TIMEOUT_MS, maximum_timeout_ms);
     let extra_options = Vec::new();
     let (host_alias, connect_timeout_secs, args) = build_ssh_args(
         host_alias,
         vec!["sh".into(), "-s".into()],
         timeout_ms,
         extra_options.clone(),
+        tunnel,
     )?;
     let command = format!(
-        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} sh -s",
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{}{} {} sh -s",
         connect_timeout_secs,
         display_extra_options(&extra_options),
+        display_reverse_proxy_tunnel(tunnel),
         host_alias
     );
     let stdin_input = script_stdin(script);
@@ -1166,15 +1305,22 @@ fn run_ssh_command(
     timeout_ms: u64,
     display_remote_command: &str,
     extra_options: Vec<(String, String)>,
+    tunnel: Option<&ReverseProxyTunnel>,
 ) -> Result<SshCommandOutput, String> {
     let timeout_ms = normalize_timeout_ms(Some(timeout_ms));
-    let (host_alias, connect_timeout_secs, args) =
-        build_ssh_args(host_alias, remote_args, timeout_ms, extra_options.clone())?;
+    let (host_alias, connect_timeout_secs, args) = build_ssh_args(
+        host_alias,
+        remote_args,
+        timeout_ms,
+        extra_options.clone(),
+        tunnel,
+    )?;
 
     let command = format!(
-        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{} {} {}",
+        "ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o ConnectTimeout={}{}{} {} {}",
         connect_timeout_secs,
         display_extra_options(&extra_options),
+        display_reverse_proxy_tunnel(tunnel),
         host_alias,
         display_remote_command
     );
@@ -1186,6 +1332,7 @@ fn build_ssh_args(
     remote_args: Vec<String>,
     timeout_ms: u64,
     extra_options: Vec<(String, String)>,
+    tunnel: Option<&ReverseProxyTunnel>,
 ) -> Result<(String, String, Vec<String>), String> {
     let host_alias = validate_ssh_alias(host_alias)?;
     let connect_timeout_secs = ((timeout_ms + 999) / 1000).clamp(1, 120).to_string();
@@ -1196,12 +1343,18 @@ fn build_ssh_args(
         "NumberOfPasswordPrompts=0".to_string(),
         "-o".to_string(),
         format!("ConnectTimeout={connect_timeout_secs}"),
-        host_alias.clone(),
     ];
     for (key, value) in extra_options {
-        args.insert(args.len() - 1, "-o".to_string());
-        args.insert(args.len() - 1, format!("{key}={value}"));
+        args.push("-o".to_string());
+        args.push(format!("{key}={value}"));
     }
+    if let Some(tunnel) = tunnel {
+        args.push("-o".to_string());
+        args.push("ExitOnForwardFailure=yes".to_string());
+        args.push("-R".to_string());
+        args.push(tunnel.remote_forward_spec());
+    }
+    args.push(host_alias.clone());
     args.extend(remote_args);
 
     Ok((host_alias, connect_timeout_secs, args))
@@ -1212,6 +1365,17 @@ fn display_extra_options(extra_options: &[(String, String)]) -> String {
         .iter()
         .map(|(key, value)| format!(" -o {key}={value}"))
         .collect::<String>()
+}
+
+fn display_reverse_proxy_tunnel(tunnel: Option<&ReverseProxyTunnel>) -> String {
+    tunnel
+        .map(|tunnel| {
+            format!(
+                " -o ExitOnForwardFailure=yes -R {}",
+                tunnel.remote_forward_spec()
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn run_process_with_timeout(
@@ -2713,9 +2877,14 @@ mod tests {
 
     #[test]
     fn ssh_script_invocation_uses_stdin_shell() {
-        let (_, _, args) =
-            build_ssh_args("lab", vec!["sh".into(), "-s".into()], 10_000, Vec::new())
-                .expect("build args");
+        let (_, _, args) = build_ssh_args(
+            "lab",
+            vec!["sh".into(), "-s".into()],
+            10_000,
+            Vec::new(),
+            None,
+        )
+        .expect("build args");
 
         let tail = args
             .iter()
@@ -2740,6 +2909,7 @@ mod tests {
             vec!["echo".into(), "ok".into()],
             10_000,
             vec![("StrictHostKeyChecking".into(), "accept-new".into())],
+            None,
         )
         .expect("build args");
 
@@ -2752,6 +2922,40 @@ mod tests {
             .position(|arg| arg == "StrictHostKeyChecking=accept-new")
             .expect("accept-new option");
         assert!(option_index < host_index);
+    }
+
+    #[test]
+    fn reverse_proxy_forward_is_loopback_only_and_precedes_host_alias() {
+        let tunnel = ReverseProxyTunnel::new(7890, 43123).expect("proxy tunnel");
+        let (_, _, args) = build_ssh_args(
+            "lab",
+            vec!["sh".into(), "-s".into()],
+            10_000,
+            Vec::new(),
+            Some(&tunnel),
+        )
+        .expect("build args");
+
+        let host_index = args
+            .iter()
+            .position(|arg| arg == "lab")
+            .expect("host alias");
+        let forward_index = args
+            .iter()
+            .position(|arg| arg == "-R")
+            .expect("reverse forward");
+        assert!(forward_index < host_index);
+        assert_eq!(
+            args.get(forward_index + 1).map(String::as_str),
+            Some("127.0.0.1:43123:127.0.0.1:7890")
+        );
+        assert!(args.iter().any(|arg| arg == "ExitOnForwardFailure=yes"));
+    }
+
+    #[test]
+    fn reverse_proxy_forward_rejects_zero_ports() {
+        assert!(ReverseProxyTunnel::new(0, 43123).is_err());
+        assert!(ReverseProxyTunnel::new(7890, 0).is_err());
     }
 
     #[test]

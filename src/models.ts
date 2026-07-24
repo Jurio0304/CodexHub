@@ -5,6 +5,7 @@ import type {
   CpuSnapshotDto,
   DeleteOperationResultDto,
   GpuProcessSnapshotDto,
+  GpuMemoryModeDto,
   GpuSnapshotDto,
   GpuVendorDto,
   HealthDto,
@@ -410,6 +411,7 @@ export type RemoteProbeBatchResult = RemoteProbeBatchResultDto;
 export type HostResourceStatus = HostResourceStatusDto;
 export type HostResourceSshStatus = HostResourceSshStatusDto;
 export type GpuVendor = GpuVendorDto;
+export type GpuMemoryMode = GpuMemoryModeDto;
 export type GpuTool = "nvidia-smi" | "rocm-smi" | "lspci" | "none" | string;
 export type CpuSnapshot = CpuSnapshotDto;
 export type MemorySnapshot = MemorySnapshotDto;

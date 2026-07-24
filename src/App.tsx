@@ -291,6 +291,12 @@ type MonitorGpuUserUsage = {
   color: string;
 };
 type MonitorGpuUserColorMap = ReadonlyMap<string, string>;
+type MonitorGpuMemoryUsage = {
+  capacityBytes: number | null;
+  mode: HostResourceSnapshot["gpus"][number]["memoryMode"];
+  processUsedBytes: number;
+  usedBytes: number;
+};
 type MonitorMeterTone = "memory" | "cpu" | "gpu" | "green" | "yellow" | "red" | "gray";
 type MonitorDragState = {
   alias: string;
@@ -510,6 +516,9 @@ export const uiCopy = {
       command: "Command",
       noGpu: "No GPU data",
       detectedOnly: "Detected only",
+      unifiedMemory: "Unified memory",
+      mixedMemory: "Mixed GPU memory",
+      unknownMemoryCapacity: "Memory capacity unavailable",
       statusOnline: "Online",
       statusPartial: "Partial",
       statusFailed: "Failed",
@@ -1302,7 +1311,10 @@ export const uiCopy = {
       pid: "PID",
       command: "命令",
       noGpu: "无 GPU 数据",
-      detectedOnly: "统一内存",
+      detectedOnly: "仅检测到设备",
+      unifiedMemory: "统一内存",
+      mixedMemory: "混合 GPU 内存",
+      unknownMemoryCapacity: "内存上限未知",
       statusOnline: "在线",
       statusPartial: "部分",
       statusFailed: "失败",
@@ -5332,9 +5344,10 @@ function MonitorHostCard({
   const [rowSpan, setRowSpan] = useState(44);
   const cpuPercent = monitorCpuPercent(snapshot?.cpu);
   const memoryPercent = snapshot?.memory?.usedPercent ?? null;
+  const hostMemoryTotalBytes = snapshot?.memory?.totalBytes ?? null;
   const gpus = snapshot?.gpus ?? [];
   const gpuCount = gpus.length;
-  const gpuMemory = summarizeGpuMemory(gpus, copy);
+  const gpuMemory = summarizeGpuMemory(gpus, hostMemoryTotalBytes, copy);
 
   const setCardElement = useCallback((element: HTMLElement | null) => {
     cardRef.current = element;
@@ -5422,6 +5435,7 @@ function MonitorHostCard({
             <MonitorGpuBlock
               copy={copy}
               gpu={gpu}
+              hostMemoryTotalBytes={hostMemoryTotalBytes}
               key={`${gpu.uuid ?? gpu.index ?? index}-${index}`}
               userColorByUser={userColorByUser}
             />
@@ -5467,10 +5481,12 @@ function MonitorSummaryTile({
 function MonitorGpuBlock({
   copy,
   gpu,
+  hostMemoryTotalBytes,
   userColorByUser
 }: {
   copy: UICopy;
   gpu: HostResourceSnapshot["gpus"][number];
+  hostMemoryTotalBytes: number | null;
   userColorByUser: MonitorGpuUserColorMap;
 }) {
   const userUsages = aggregateGpuProcessUsers(gpu, userColorByUser);
@@ -5478,9 +5494,14 @@ function MonitorGpuBlock({
     <article className="monitorGpuBlock" data-status={gpu.status}>
       <header className="monitorGpuLineHeader">
         <strong>{`${gpu.index ? `GPU ${gpu.index}` : copy.monitor.gpu} · ${formatGpuName(gpu.name)}`}</strong>
-        <span>{formatGpuCoreDetails(gpu, copy)}</span>
+        <span>{formatGpuCoreDetails(gpu, hostMemoryTotalBytes, copy)}</span>
       </header>
-      <MonitorGpuMeter copy={copy} gpu={gpu} userUsages={userUsages} />
+      <MonitorGpuMeter
+        copy={copy}
+        gpu={gpu}
+        hostMemoryTotalBytes={hostMemoryTotalBytes}
+        userUsages={userUsages}
+      />
       {gpu.status === "detected" ? (
         <p className="monitorGpuDetected">{copy.monitor.detectedOnly}</p>
       ) : userUsages.length > 0 ? (
@@ -5519,8 +5540,9 @@ function MonitorHostDragGhost({
 }) {
   const cpuPercent = monitorCpuPercent(snapshot?.cpu);
   const memoryPercent = snapshot?.memory?.usedPercent ?? null;
+  const hostMemoryTotalBytes = snapshot?.memory?.totalBytes ?? null;
   const gpus = snapshot?.gpus ?? [];
-  const gpuMemory = summarizeGpuMemory(gpus, copy);
+  const gpuMemory = summarizeGpuMemory(gpus, hostMemoryTotalBytes, copy);
   return (
     <div
       className="monitorDragGhost"
@@ -5569,14 +5591,17 @@ function MonitorHostDragGhost({
 function MonitorGpuMeter({
   copy,
   gpu,
+  hostMemoryTotalBytes,
   userUsages
 }: {
   copy: UICopy;
   gpu: HostResourceSnapshot["gpus"][number];
+  hostMemoryTotalBytes: number | null;
   userUsages: MonitorGpuUserUsage[];
 }) {
-  const denominator = gpu.memoryTotalBytes || userUsages.reduce((sum, usage) => sum + usage.usedMemoryBytes, 0);
-  if (userUsages.length === 0 || denominator <= 0) {
+  const memoryUsage = resolveMonitorGpuMemoryUsage(gpu, hostMemoryTotalBytes);
+  const denominator = memoryUsage.capacityBytes;
+  if (userUsages.length === 0 || denominator === null) {
     return <MonitorMeter value={gpu.utilizationPercent} tone="gpu" />;
   }
   return (
@@ -5590,7 +5615,7 @@ function MonitorGpuMeter({
               width: `${width > 0 && width < 1 ? 1 : width}%`,
               background: usage.color
             } as CSSProperties}
-            title={`${usage.user}: ${formatBytes(usage.usedMemoryBytes, copy)}`}
+            title={`${usage.user}: ${formatBytes(usage.usedMemoryBytes, copy)} / ${formatBytes(denominator, copy)} ${memoryUsage.mode === "unified" ? copy.monitor.unifiedMemory : copy.monitor.vram}`}
           />
         );
       })}
@@ -10088,30 +10113,63 @@ function monitorCpuPercent(cpu: HostResourceSnapshot["cpu"] | null | undefined) 
   return null;
 }
 
-function summarizeGpuMemory(gpus: HostResourceSnapshot["gpus"], copy: UICopy) {
+function summarizeGpuMemory(
+  gpus: HostResourceSnapshot["gpus"],
+  hostMemoryTotalBytes: number | null,
+  copy: UICopy
+) {
   if (gpus.length === 0) return { detail: copy.monitor.noGpu, percent: null };
-  let usedBytes = 0;
-  let totalBytes = 0;
-  let hasUsed = false;
-  let hasTotal = false;
-  for (const gpu of gpus) {
-    if (typeof gpu.memoryUsedBytes === "number") {
-      usedBytes += gpu.memoryUsedBytes;
-      hasUsed = true;
-    }
-    if (typeof gpu.memoryTotalBytes === "number") {
-      totalBytes += gpu.memoryTotalBytes;
-      hasTotal = true;
-    }
+  const usages = gpus.map((gpu) => resolveMonitorGpuMemoryUsage(gpu, hostMemoryTotalBytes));
+  const scaled = usages.filter((usage) => usage.capacityBytes !== null);
+  if (scaled.length !== usages.length) {
+    return {
+      detail: scaled.length > 0
+        ? copy.monitor.mixedMemory
+        : gpus.every((gpu) => gpu.status === "detected")
+          ? copy.monitor.detectedOnly
+          : copy.monitor.unknownMemoryCapacity,
+      percent: null
+    };
   }
-  if (!hasTotal) {
-    return { detail: copy.monitor.detectedOnly, percent: 0 };
+  const modes = new Set(scaled.map((usage) => usage.mode));
+  if (modes.size !== 1) {
+    return { detail: copy.monitor.mixedMemory, percent: null };
   }
-  const used = hasUsed ? usedBytes : 0;
+  const mode = scaled[0]?.mode ?? "unknown";
+  const usedBytes = scaled.reduce((sum, usage) => sum + usage.usedBytes, 0);
+  const totalBytes = mode === "unified"
+    ? scaled[0]?.capacityBytes ?? 0
+    : scaled.reduce((sum, usage) => sum + (usage.capacityBytes ?? 0), 0);
+  const suffix = mode === "unified" ? ` ${copy.monitor.unifiedMemory}` : "";
   return {
-    detail: `${formatGpuMemoryBytes(used, copy)} / ${formatGpuMemoryBytes(totalBytes, copy)}`,
-    percent: totalBytes > 0 ? used / totalBytes * 100 : 0
+    detail: `${formatGpuMemoryBytes(usedBytes, copy)} / ${formatGpuMemoryBytes(totalBytes, copy)}${suffix}`,
+    percent: totalBytes > 0 ? usedBytes / totalBytes * 100 : null
   };
+}
+
+export function resolveMonitorGpuMemoryUsage(
+  gpu: HostResourceSnapshot["gpus"][number],
+  hostMemoryTotalBytes: number | null
+): MonitorGpuMemoryUsage {
+  const processUsedBytes = (gpu.processes ?? []).reduce(
+    (sum, process) => sum + (typeof process.usedMemoryBytes === "number" ? Math.max(0, process.usedMemoryBytes) : 0),
+    0
+  );
+  const dedicatedCapacity = positiveMonitorBytes(gpu.memoryTotalBytes);
+  const unifiedCapacity = gpu.memoryMode === "unified" ? positiveMonitorBytes(hostMemoryTotalBytes) : null;
+  const capacityBytes = dedicatedCapacity ?? unifiedCapacity;
+  const mode = dedicatedCapacity !== null ? "dedicated" : gpu.memoryMode;
+  const deviceUsedBytes = typeof gpu.memoryUsedBytes === "number" ? Math.max(0, gpu.memoryUsedBytes) : null;
+  return {
+    capacityBytes,
+    mode,
+    processUsedBytes,
+    usedBytes: mode === "unified" ? processUsedBytes : deviceUsedBytes ?? processUsedBytes
+  };
+}
+
+function positiveMonitorBytes(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function formatGpuMemoryBytes(value: number | null | undefined, copy: UICopy) {
@@ -10181,9 +10239,16 @@ function formatGpuName(name: string) {
   return (match?.[1] ?? (compact || name)).replace(/\s+/g, " ");
 }
 
-function formatGpuCoreDetails(gpu: HostResourceSnapshot["gpus"][number], copy: UICopy) {
+function formatGpuCoreDetails(
+  gpu: HostResourceSnapshot["gpus"][number],
+  hostMemoryTotalBytes: number | null,
+  copy: UICopy
+) {
   if (gpu.status === "detected") return copy.monitor.detectedOnly;
-  const memory = summarizeGpuMemory([gpu], copy).detail;
+  const usage = resolveMonitorGpuMemoryUsage(gpu, hostMemoryTotalBytes);
+  const memory = usage.capacityBytes === null
+    ? copy.monitor.unknownMemoryCapacity
+    : `${formatGpuMemoryBytes(usage.usedBytes, copy)} / ${formatGpuMemoryBytes(usage.capacityBytes, copy)}${usage.mode === "unified" ? ` ${copy.monitor.unifiedMemory}` : ""}`;
   return [
     formatCompactPercent(gpu.utilizationPercent, copy),
     formatWatts(gpu.powerWatts, copy),

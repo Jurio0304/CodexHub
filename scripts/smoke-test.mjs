@@ -120,7 +120,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.4.7") fail("package version should be 0.4.7");
+if (packageJson.version !== "0.4.8") fail("package version should be 0.4.8");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:linux:release", "build:linux:updater", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:linux-updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -151,11 +151,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.4.7") fail("stable Tauri version should be 0.4.7");
+if (tauriConfig.version !== "0.4.8") fail("stable Tauri version should be 0.4.8");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.4.7") fail("dev Tauri version should be 0.4.7");
+if (devTauriConfig.version !== "0.4.8") fail("dev Tauri version should be 0.4.8");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -263,9 +263,9 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows、macOS 和 Linux"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.4.7_aarch64.dmg"],
-  [readme, "CodexHub_0.4.7_amd64.deb"],
-  [readme, "CodexHub_0.4.7_arm64.deb"],
+  [readme, "CodexHub_0.4.8_aarch64.dmg"],
+  [readme, "CodexHub_0.4.8_amd64.deb"],
+  [readme, "CodexHub_0.4.8_arm64.deb"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Settings > Codex > Connections"],
@@ -628,7 +628,7 @@ for (const token of ["AppUpdateStatus", "AppUpdateState", "CODEXHUB_STABLE_UPDAT
 if (!cargoToml.includes('tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }')) {
   fail("stable updater must use native TLS so release checks can use the OS trust store");
 }
-if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }')) {
+if (!cargoToml.includes('reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "native-tls"] }')) {
   fail("stable updater GitHub feed resolver must use reqwest with native TLS");
 }
 if (!cargoToml.includes('keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }')) {
@@ -637,7 +637,13 @@ if (!cargoToml.includes('keyring = { version = "3", features = ["apple-native", 
 for (const token of ["stable_update_endpoints", "resolve_github_latest_json_asset_endpoint", "github_release_api_url", "OCTET_STREAM_ACCEPT", "api.github.com/repos", "stable_update_network_routes", "LOCAL_PROXY_PORTS", "NetworkProxyMode", "detect_network_proxy_status", "builder.proxy(proxy)"]) {
   if (!rustBackend.includes(token)) fail(`missing GitHub updater feed fallback token: ${token}`);
 }
-for (const token of ["mod resource_monitor", "sample_host_resources", "resource_monitor::sample_host_resources_with_progress", "HostResourceProgressEvent", "host-resource-progress", "RESOURCE_SAMPLE_CONCURRENCY", "query-compute-apps", "CH_GPU_PROCESS", "etimes"]) {
+for (const token of ["remote_codex_proxy_tunnel_candidates", "preflight_remote_codex_proxy_tunnel", "REMOTE_CODEX_PROXY_PREFLIGHT_ENDPOINTS", "official_installer_network_failure", "remote_proxy_port_candidates", "official Codex installer (local proxy tunnel)"]) {
+  if (!rustBackend.includes(token)) fail(`missing remote official-installer proxy retry token: ${token}`);
+}
+for (const token of ["ReverseProxyTunnel", "ExitOnForwardFailure=yes", "run_ssh_script_with_reverse_proxy", "run_ssh_script_streaming_with_reverse_proxy", "127.0.0.1:{}:127.0.0.1:{}"]) {
+  if (!sshRs.includes(token)) fail(`missing restricted SSH reverse-proxy token: ${token}`);
+}
+for (const token of ["mod resource_monitor", "sample_host_resources", "resource_monitor::sample_host_resources_with_progress", "HostResourceProgressEvent", "host-resource-progress", "RESOURCE_SAMPLE_CONCURRENCY", "query-compute-apps", "CH_GPU_PROCESS", "CH_SYSTEM_PRODUCT", "GpuMemoryMode", "classify_gpu_memory_mode", "nvidiadgxspark", "etimes"]) {
   if (!rustBackend.includes(token)) fail(`missing resource monitor backend token: ${token}`);
 }
 for (const token of ["app_update_check_task", "app_update_install_task", "app_update_state_label", "record_task(&state, app_update_check_task(running, &status, &attempts))", "Install app update", "Check app update"]) {
@@ -1149,8 +1155,9 @@ for (const token of [
 }
 for (const token of [
   "select_verified_current_binary()",
-  "for current_relative in bin/codex codex; do",
-  '[ "$current_match_count" -eq 1 ] || return 1',
+  "select_canonical_release_binary()",
+  'select_canonical_release_binary "$current_dir_real" || return 1',
+  '[ "$(readlink "$codexhub_layout_compat" 2>/dev/null)" = bin/codex ] || return 1',
   'standalone_current="$current_link/$saved_current_relative"',
   'normalized_target_file_value="$standalone_current"',
   'mark_verified_release "$legacy_release_dir" "$legacy_release_version"',
@@ -1249,7 +1256,7 @@ const mockApiSource = read("src/api/mock.ts");
 const modalFrameSource = read("src/ui/ModalFrame.tsx");
 const operationProgressSource = read("src/ui/OperationProgress.tsx");
 const alertModalFrameSource = read("src/ui/AlertModalFrame.tsx");
-for (const token of ["MonitorView", "MonitorHostCard", "MonitorHostStatusIndicator", "CircularStatusIndicator", "HostStatusIndicator", "resolveMonitorHostIndicatorState", "resolveHostStatusIndicatorState", "applyRemoteProbeResultToHosts", "applyRemoteProbeBatchResultsToHosts", "resourcePendingHostAliases", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory", 'aria-label={label}', 'role="img"', 'stroke="currentColor"']) {
+for (const token of ["MonitorView", "MonitorHostCard", "MonitorHostStatusIndicator", "CircularStatusIndicator", "HostStatusIndicator", "resolveMonitorHostIndicatorState", "resolveHostStatusIndicatorState", "applyRemoteProbeResultToHosts", "applyRemoteProbeBatchResultsToHosts", "resourcePendingHostAliases", "monitorBentoGrid", "ResizeObserver", "resourceMonitorAutoRefresh", "resourceMonitorRefreshSeconds", "resourceMonitorHostOrder", "monitorAutoRefreshControl", "pillToggle", "monitorDragHandle", "monitorSegmentedMeter", "aggregateGpuProcessUsers", "elapsedSeconds", "copy.monitor.refreshNow", "copy.monitor.autoRefresh", "copy.monitor.gpuProcesses", "copy.monitor.unifiedMemory", "resolveMonitorGpuMemoryUsage", "hostMemoryTotalBytes", "sampleHostResources", "mergeHostResourceSnapshot", "resource-monitor-${Date.now()}", "监控", "onPointerDown", "previewMonitorHostOrder", "monitorDragGhost", "data-placeholder", "requestAnimationFrame", "stopMonitorAutoScroll", "MonitorMeterTone", "host.hostAlias", "formatCpuLoadSummary", "pendingReorderTimerRef", "monitorCpuPercent", "summarizeGpuMemory", 'aria-label={label}', 'role="img"', 'stroke="currentColor"']) {
   if (!app.includes(token)) fail(`missing resource monitor UI token: ${token}`);
 }
 if (!/<th className="sshHostsAliasCol">[\s\S]*?<th className="sshHostsOnlineCol">[\s\S]*?<th className="sshHostsSourceCol">/.test(app)) {
@@ -1941,7 +1948,7 @@ for (const token of ["chooseCloseButtonBehavior", "choose_close_button_behavior"
 for (const token of ["connectSshHost", "ssh-bootstrap-progress", "host-operation-progress", "remote-probe-batch-item-completed", "mockSshBootstrapHostWithProgress", "mockRemoteManageCodexWithProgress", "remoteManageCodex", "batchRemoteProbeCodex", "batchRemoteUpdateCodex", "onItemCompleted"]) {
   if (!api.includes(token)) fail(`missing bootstrap API token: ${token}`);
 }
-for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "HostResourceProgressEvent", "host-resource-progress", "mockSampleHostResources", "mockSampleHostResourcesWithProgress", "recordTask?: boolean", "recordTask = true", "sshStatus", "timedOut", "gpuUuid", "processes"]) {
+for (const token of ["sampleHostResources", "sample_host_resources", "HostResourceBatchResult", "HostResourceProgressEvent", "host-resource-progress", "mockSampleHostResources", "mockSampleHostResourcesWithProgress", "recordTask?: boolean", "recordTask = true", "sshStatus", "timedOut", "gpuUuid", "memoryMode", "processes"]) {
   if (!api.includes(token)) fail(`missing resource monitor API token: ${token}`);
 }
 for (const token of [
@@ -2069,7 +2076,7 @@ for (const token of [
 ]) {
   if (!models.includes(token)) fail(`missing Profile/API model token: ${token}`);
 }
-for (const token of ["HostResourceSnapshot", "GpuSnapshot", "GpuProcessSnapshot", "HostResourceBatchResult", "CpuSnapshot", "MemorySnapshot", "elapsedSeconds"]) {
+for (const token of ["HostResourceSnapshot", "GpuSnapshot", "GpuMemoryMode", "GpuProcessSnapshot", "HostResourceBatchResult", "CpuSnapshot", "MemorySnapshot", "elapsedSeconds"]) {
   if (!models.includes(token)) fail(`missing resource monitor model token: ${token}`);
 }
 for (const token of ["SshConfigDeleteResult", "DeleteOperationResult", "task: TaskRun"]) {

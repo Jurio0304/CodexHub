@@ -135,6 +135,16 @@ test("Mock resource sampling emits one progressive snapshot per completed host",
   expect(result.snapshots.map((snapshot) => snapshot.hostAlias)).toEqual(aliases);
 });
 
+test("Mock resource sampling includes a unified-memory GPU fixture", async () => {
+  const result = await mockApi.sampleHostResources(["mock-gpu-01"], 8000, false);
+  expect(result.snapshots[0]?.gpus[0]).toEqual(expect.objectContaining({
+    name: "NVIDIA GB10",
+    memoryMode: "unified",
+    memoryUsedBytes: null,
+    memoryTotalBytes: null
+  }));
+});
+
 test("Mock recorded resource sampling keeps one typed log per host plus a warning summary", async () => {
   await mockApi.clearTaskHistory();
   await mockApi.sampleHostResources(["mock-gpu-01", "mock-cpu-01", "mock-timeout-host"], 10000, true);

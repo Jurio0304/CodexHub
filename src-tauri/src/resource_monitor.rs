@@ -161,6 +161,7 @@ pub(crate) struct GpuSnapshot {
     uuid: Option<String>,
     name: String,
     status: GpuStatus,
+    memory_mode: GpuMemoryMode,
     utilization_percent: Option<f64>,
     #[ts(type = "number | null")]
     memory_used_bytes: Option<u64>,
@@ -170,6 +171,15 @@ pub(crate) struct GpuSnapshot {
     power_watts: Option<f64>,
     driver_version: Option<String>,
     processes: Vec<GpuProcessSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(rename = "GpuMemoryModeDto")]
+pub(crate) enum GpuMemoryMode {
+    Dedicated,
+    Unified,
+    Unknown,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -374,6 +384,7 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
     let mut mem = None;
     let mut cores = None;
     let mut model = None;
+    let mut system_product = None;
     let mut gpu_tool = "none".to_string();
     let mut nvidia_rows = Vec::new();
     let mut nvidia_process_rows = Vec::new();
@@ -407,6 +418,8 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
             cores = parse_u16(value);
         } else if let Some(value) = line.strip_prefix("CH_CPU_MODEL=") {
             model = nonempty(value);
+        } else if let Some(value) = line.strip_prefix("CH_SYSTEM_PRODUCT=") {
+            system_product = nonempty(value);
         } else if let Some(value) = line.strip_prefix("CH_GPU_TOOL=") {
             gpu_tool = value.trim().to_string();
         } else if let Some(value) = line.strip_prefix("CH_GPU_NVIDIA|") {
@@ -468,6 +481,7 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
             uuid: None,
             name: format!("{gpu_tool} available, no GPU rows returned"),
             status: GpuStatus::Unavailable,
+            memory_mode: GpuMemoryMode::Unknown,
             utilization_percent: None,
             memory_used_bytes: None,
             memory_total_bytes: None,
@@ -476,6 +490,9 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
             driver_version: None,
             processes: Vec::new(),
         });
+    }
+    for gpu in &mut gpus {
+        gpu.memory_mode = classify_gpu_memory_mode(gpu, system_product.as_deref());
     }
 
     HostResourceSnapshot {
@@ -510,6 +527,11 @@ awk '{ printf "CH_LOAD=%s|%s|%s\n", $1, $2, $3; exit }' /proc/loadavg 2>/dev/nul
 awk '/^MemTotal:/ { total=$2 } /^MemAvailable:/ { available=$2 } END { printf "CH_MEM=%s|%s\n", total+0, available+0 }' /proc/meminfo 2>/dev/null
 printf 'CH_CPU_CORES=%s\n' "$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || printf '')"
 awk -F: '/model name|Hardware|Processor/ { gsub(/^[ \t]+/, "", $2); print "CH_CPU_MODEL="$2; exit }' /proc/cpuinfo 2>/dev/null
+system_product=''
+if [ -r /sys/class/dmi/id/product_name ]; then
+  system_product=$(sed -n '1p' /sys/class/dmi/id/product_name 2>/dev/null)
+fi
+printf 'CH_SYSTEM_PRODUCT=%s\n' "$(sanitize_monitor_field "$system_product")"
 if command -v nvidia-smi >/dev/null 2>&1; then
   printf 'CH_GPU_TOOL=nvidia-smi\n'
   nvidia-smi --query-gpu=index,uuid,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,driver_version --format=csv,noheader,nounits 2>/dev/null | sed 's/^/CH_GPU_NVIDIA|/'
@@ -596,6 +618,7 @@ fn parse_nvidia_row(row: &str) -> Option<GpuSnapshot> {
         uuid: if has_uuid { nonempty(parts[1]) } else { None },
         name: nonempty(parts[name_index]).unwrap_or_else(|| "NVIDIA GPU".into()),
         status: GpuStatus::Ok,
+        memory_mode: GpuMemoryMode::Unknown,
         utilization_percent: parse_f64(parts[metric_index]).map(round1),
         memory_used_bytes: parse_mb_to_bytes(parts[metric_index + 1]),
         memory_total_bytes: parse_mb_to_bytes(parts[metric_index + 2]),
@@ -669,6 +692,7 @@ fn parse_amd_json(content: &str) -> Vec<GpuSnapshot> {
                 uuid: None,
                 name,
                 status: GpuStatus::Ok,
+                memory_mode: GpuMemoryMode::Unknown,
                 utilization_percent: find_number(object, &[&["gpu", "use"], &["gpu", "busy"]])
                     .map(round1),
                 memory_used_bytes: None,
@@ -703,6 +727,7 @@ fn gpu_from_pci(row: &str) -> GpuSnapshot {
         uuid: None,
         name: row.trim().to_string(),
         status: GpuStatus::Detected,
+        memory_mode: GpuMemoryMode::Unknown,
         utilization_percent: None,
         memory_used_bytes: None,
         memory_total_bytes: None,
@@ -711,6 +736,34 @@ fn gpu_from_pci(row: &str) -> GpuSnapshot {
         driver_version: None,
         processes: Vec::new(),
     }
+}
+
+// DGX Spark exposes GB10 process allocations but reports dedicated FB memory as N/A.
+// Keep other missing-capacity GPUs unknown so host RAM is never used as a generic fallback.
+fn classify_gpu_memory_mode(gpu: &GpuSnapshot, system_product: Option<&str>) -> GpuMemoryMode {
+    if gpu.memory_total_bytes.is_some_and(|value| value > 0) {
+        return GpuMemoryMode::Dedicated;
+    }
+    if !matches!(gpu.vendor, GpuVendor::Nvidia)
+        || !normalized_hardware_label(&gpu.name).contains("gb10")
+    {
+        return GpuMemoryMode::Unknown;
+    }
+    if system_product
+        .is_some_and(|value| normalized_hardware_label(value).contains("nvidiadgxspark"))
+    {
+        GpuMemoryMode::Unified
+    } else {
+        GpuMemoryMode::Unknown
+    }
+}
+
+fn normalized_hardware_label(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 fn find_number(
@@ -869,6 +922,7 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
         assert_eq!(snapshot.gpus.len(), 1);
         assert_eq!(snapshot.gpus[0].uuid.as_deref(), Some("GPU-aaaa"));
         assert_eq!(snapshot.gpus[0].utilization_percent, Some(73.0));
+        assert_eq!(snapshot.gpus[0].memory_mode, GpuMemoryMode::Dedicated);
         assert_eq!(snapshot.gpus[0].driver_version.as_deref(), Some("550.54"));
         assert_eq!(snapshot.gpus[0].processes.len(), 1);
         assert_eq!(snapshot.gpus[0].processes[0].pid, Some(4242));
@@ -878,6 +932,50 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|python train.py
         );
         assert_eq!(snapshot.gpus[0].processes[0].user.as_deref(), Some("amax"));
         assert_eq!(snapshot.gpus[0].processes[0].elapsed_seconds, Some(3661));
+    }
+
+    #[test]
+    fn marks_dgx_spark_gb10_as_unified_memory() {
+        let output = "\
+CH_MEM=125511744|95643156
+CH_SYSTEM_PRODUCT=NVIDIA_DGX_Spark
+CH_GPU_TOOL=nvidia-smi
+CH_GPU_NVIDIA|0, GPU-spark, NVIDIA GB10, 2, [N/A], [N/A], [N/A], 13, 580.95
+CH_GPU_PROCESS|GPU-spark, 4242, python, 5067|wzy|1800|python train.py
+";
+        let snapshot = parse_resource_stdout("Spark-4", output, 80);
+        let memory = snapshot.memory.as_ref().expect("host memory");
+        assert_eq!(memory.total_bytes, Some(128_524_025_856));
+        assert_eq!(snapshot.gpus[0].memory_mode, GpuMemoryMode::Unified);
+        assert_eq!(snapshot.gpus[0].memory_total_bytes, None);
+        assert_eq!(
+            snapshot.gpus[0].processes[0].used_memory_bytes,
+            Some(5_313_134_592)
+        );
+    }
+
+    #[test]
+    fn keeps_missing_gpu_capacity_unknown_on_other_hosts() {
+        let output = "\
+CH_MEM=125511744|95643156
+CH_SYSTEM_PRODUCT=Other_Workstation
+CH_GPU_TOOL=nvidia-smi
+CH_GPU_NVIDIA|0, GPU-unknown, NVIDIA GB10, 2, [N/A], [N/A], [N/A], 13, 580.95
+CH_GPU_PROCESS|GPU-unknown, 4242, python, 5067|wzy|1800|python train.py
+";
+        let snapshot = parse_resource_stdout("other", output, 80);
+        assert_eq!(snapshot.gpus[0].memory_mode, GpuMemoryMode::Unknown);
+    }
+
+    #[test]
+    fn keeps_gb10_unknown_without_dgx_spark_product_identity() {
+        let output = "\
+CH_MEM=125511744|95643156
+CH_GPU_TOOL=nvidia-smi
+CH_GPU_NVIDIA|0, GPU-unknown, NVIDIA GB10, 2, [N/A], [N/A], [N/A], 13, 580.95
+";
+        let snapshot = parse_resource_stdout("unknown", output, 80);
+        assert_eq!(snapshot.gpus[0].memory_mode, GpuMemoryMode::Unknown);
     }
 
     #[test]

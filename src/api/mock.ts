@@ -791,16 +791,18 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
   const gpuCount = profile === 2 ? 4 : nvidia ? 2 : 1;
   const nvidiaGpus = Array.from({ length: gpuCount }, (_, gpuIndex) => {
     const uuid = `GPU-mock-${index}-${gpuIndex}`;
-    const busy = profile === 2 && gpuIndex < 2;
+    const unified = profile === 0 && gpuIndex === 0;
+    const busy = unified || profile === 2 && gpuIndex < 2;
     return {
       vendor: "nvidia" as const,
       index: String(gpuIndex),
       uuid,
-      name: profile === 2 ? "NVIDIA A800 80GB PCIe" : "NVIDIA RTX 4090",
+      name: unified ? "NVIDIA GB10" : profile === 2 ? "NVIDIA A800 80GB PCIe" : "NVIDIA RTX 4090",
       status: "ok" as const,
+      memoryMode: unified ? "unified" as const : "dedicated" as const,
       utilizationPercent: busy ? 78 - gpuIndex * 12 : 6 + gpuIndex * 8,
-      memoryUsedBytes: (busy ? 42_000 - gpuIndex * 8_000 : 1_024 + gpuIndex * 512) * 1024 ** 2,
-      memoryTotalBytes: (profile === 2 ? 81_920 : 24_576) * 1024 ** 2,
+      memoryUsedBytes: unified ? null : (busy ? 42_000 - gpuIndex * 8_000 : 1_024 + gpuIndex * 512) * 1024 ** 2,
+      memoryTotalBytes: unified ? null : (profile === 2 ? 81_920 : 24_576) * 1024 ** 2,
       temperatureC: busy ? 68 - gpuIndex : 42 + gpuIndex,
       powerWatts: busy ? 252.4 - gpuIndex * 18 : 62.5 + gpuIndex * 12,
       driverVersion: "550.54",
@@ -858,6 +860,7 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
           uuid: null,
           name: "Intel display controller detected by lspci",
           status: "detected",
+          memoryMode: "unknown",
           utilizationPercent: null,
           memoryUsedBytes: null,
           memoryTotalBytes: null,

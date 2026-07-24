@@ -1973,10 +1973,12 @@ codexhub_test_sleep() {{ :; }}
             .find("export CODEX_RELEASE=\"$candidate_version\"")
             .expect("pin the official installer release");
         let official_run = CODEX_OFFICIAL_INSTALL_SCRIPT
-            .find("timeout 75 sh \"$tmp_dir/install.sh\"")
+            .find("timeout 240 sh \"$tmp_dir/install.sh\"")
             .expect("run pinned official installer");
         assert!(official_query < official_floor);
         assert!(official_floor < official_pin && official_pin < official_run);
+        assert!(CODEX_OFFICIAL_INSTALL_SCRIPT
+            .contains("Official Codex installer exceeded the 240-second download/install limit."));
 
         assert!(CODEX_REMOTE_NATIVE_MIRROR_SCRIPT
             .contains("https://registry.npmmirror.com/@openai/codex"));
@@ -2013,6 +2015,80 @@ codexhub_test_sleep() {{ :; }}
         assert!(npm_query < npm_floor && npm_floor < npm_install);
         assert!(!CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("npm install -g @openai/codex --prefix"));
         assert!(CODEX_REMOTE_NPM_MIRROR_SCRIPT.contains("CODEXHUB_INSTALL_METHOD=npm-mirror"));
+    }
+
+    #[test]
+    fn official_release_version_parser_handles_compact_json_and_rejects_unsafe_inputs() {
+        use std::io::Write as _;
+        use std::process::Stdio;
+
+        let begin = "# CODEXHUB_OFFICIAL_RELEASE_VERSION_PARSER_BEGIN";
+        let end = "# CODEXHUB_OFFICIAL_RELEASE_VERSION_PARSER_END";
+        let parser_start = CODEX_OFFICIAL_INSTALL_SCRIPT
+            .find(begin)
+            .expect("official release parser start marker");
+        let parser_end = CODEX_OFFICIAL_INSTALL_SCRIPT[parser_start..]
+            .find(end)
+            .map(|index| parser_start + index + end.len())
+            .expect("official release parser end marker");
+        let parser = &CODEX_OFFICIAL_INSTALL_SCRIPT[parser_start..parser_end];
+        let harness = format!("{parser}\ncodexhub_parse_official_release_version\n");
+
+        let run_parser = |fixture: &str| {
+            let mut child = match std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&harness)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(child) => child,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+                Err(error) => panic!("could not start official release parser: {error}"),
+            };
+            child
+                .stdin
+                .take()
+                .expect("official release parser stdin")
+                .write_all(fixture.as_bytes())
+                .expect("write official release fixture");
+            Some(child.wait_with_output().expect("wait for release parser"))
+        };
+
+        let compact = run_parser(
+            r#"{"url":"https://api.github.com/releases/1","tag_name":"rust-v0.145.0","assets":[]}"#,
+        );
+        let Some(compact) = compact else {
+            return;
+        };
+        assert!(compact.status.success());
+        assert_eq!(String::from_utf8_lossy(&compact.stdout).trim(), "0.145.0");
+
+        let formatted = run_parser(
+            "{\n  \"tag_name\": \"rust-v0.146.0-beta.2\",\n  \"assets\": [{\"tag_name\": \"rust-v9.9.9\"}]\n}\n",
+        )
+        .expect("sh remains available");
+        assert!(formatted.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&formatted.stdout).trim(),
+            "0.146.0-beta.2"
+        );
+
+        for unsafe_fixture in [
+            r#"{"tag_name":"rust-v0.145.0","tag_name":"rust-v0.146.0"}"#,
+            r#"{"tag_name":"rust-v0.145.0-rc.1"}"#,
+            r#"{"tag_name":"v0.145.0"}"#,
+            r#"{"tag_name":"rust-v0.145.0""#,
+            "<html>authentication required</html>",
+        ] {
+            let output = run_parser(unsafe_fixture).expect("sh remains available");
+            assert!(
+                !output.status.success(),
+                "unsafe release fixture unexpectedly passed: {unsafe_fixture}"
+            );
+            assert!(output.stdout.is_empty());
+        }
     }
 
     #[test]
@@ -2085,27 +2161,26 @@ codexhub_test_sleep() {{ :; }}
                 script.contains("Existing same-version release directory is not safely adoptable")
             );
             assert!(!script.contains("rm -rf \"$release_dir\""));
-            let dual_layout_guard = script
-                .find("[ \"$codexhub_existing_layout_count\" -eq 1 ] || return 1")
-                .expect("same-version direct layout uniqueness guard");
             let layout_presence_check = script
-                .find("if [ -e \"$codexhub_existing_binary\" ] || [ -L \"$codexhub_existing_binary\" ]; then")
-                .expect("all direct layout paths count toward ambiguity");
+                .find("[ -e \"$codexhub_existing_selected_binary\" ] && [ ! -L \"$codexhub_existing_selected_binary\" ] || return 1")
+                .expect("canonical package binary presence guard");
+            let compatibility_guard = script
+                .find("[ \"$(readlink \"$codexhub_existing_compat\" 2>/dev/null)\" = bin/codex ] || return 1")
+                .expect("official compatibility link guard");
             let strict_binary_check = script
                 .find("[ -f \"$codexhub_existing_selected_binary\" ] && [ -x \"$codexhub_existing_selected_binary\" ] && [ ! -L \"$codexhub_existing_selected_binary\" ] || return 1")
-                .expect("unique direct layout binary identity guard");
+                .expect("canonical package binary identity guard");
             let canonical_binary_check = script
                 .find("[ \"$codexhub_existing_binary_real\" = \"$codexhub_existing_real/$codexhub_existing_selected_relative\" ] || return 1")
-                .expect("unique direct layout canonical path guard");
+                .expect("canonical package path guard");
             let current_switch = script
                 .find("ln -sfn \"$release_dir\" \"$CODEX_HOME/packages/standalone/current\"")
                 .expect("standalone/current switch");
-            assert!(layout_presence_check < dual_layout_guard);
-            assert!(dual_layout_guard < strict_binary_check);
+            assert!(layout_presence_check < compatibility_guard);
+            assert!(compatibility_guard < strict_binary_check);
             assert!(strict_binary_check < canonical_binary_check);
             assert!(canonical_binary_check < current_switch);
-            assert!(script
-                .contains("[ \"$codexhub_existing_selected_relative\" = bin/codex ] || return 1"));
+            assert!(script.contains("codexhub_existing_selected_relative=bin/codex"));
             for forbidden in [
                 "\n  value=$1\n",
                 "\n  binary=$1\n",
@@ -2295,7 +2370,7 @@ printf 'CODEXHUB_TEST_NATIVE_HELPERS=ok\n'
         let host_source = normalized_fixture_source(include_str!("services/host_operations.rs"));
         for required in [
             "with_remote_codex_runtime_writer_lock(CODEX_UNINSTALL_SCRIPT)",
-            "CODEX_OFFICIAL_INSTALL_SCRIPT\n                    )",
+            "with_remote_codex_runtime_writer_lock(CODEX_OFFICIAL_INSTALL_SCRIPT)",
             "CODEX_REMOTE_NATIVE_MIRROR_SCRIPT\n                    )",
             "CODEX_REMOTE_NPM_MIRROR_SCRIPT\n                    )",
             "with_remote_codex_runtime_writer_lock(&install)",
@@ -2324,7 +2399,11 @@ printf 'CODEXHUB_TEST_NATIVE_HELPERS=ok\n'
             "0.144.5",
             "x86_64-unknown-linux-musl",
         );
-        for script in [CODEX_REMOTE_NATIVE_MIRROR_SCRIPT, uploaded.as_str()] {
+        for script in [
+            CODEX_OFFICIAL_INSTALL_SCRIPT,
+            CODEX_REMOTE_NATIVE_MIRROR_SCRIPT,
+            uploaded.as_str(),
+        ] {
             let mut child = match std::process::Command::new("sh")
                 .arg("-n")
                 .stdin(Stdio::piped())

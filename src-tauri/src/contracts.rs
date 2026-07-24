@@ -5,7 +5,7 @@ use crate::tasks::{TaskRun, TaskStatus};
 use crate::{
     platform::RuntimePlatform,
     resource_monitor::{
-        CpuSnapshot, GpuProcessSnapshot, GpuSnapshot, GpuStatus, GpuVendor,
+        CpuSnapshot, GpuMemoryMode, GpuProcessSnapshot, GpuSnapshot, GpuStatus, GpuVendor,
         HostResourceBatchResult, HostResourceProgressEvent, HostResourceSnapshot,
         HostResourceSshStatus, HostResourceStatus, MemorySnapshot,
     },
@@ -303,6 +303,7 @@ mod tests {
             MemorySnapshot::decl(&config),
             GpuVendor::decl(&config),
             GpuStatus::decl(&config),
+            GpuMemoryMode::decl(&config),
             GpuProcessSnapshot::decl(&config),
             GpuSnapshot::decl(&config),
             HostResourceSnapshot::decl(&config),

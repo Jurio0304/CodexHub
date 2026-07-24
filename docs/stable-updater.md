@@ -1,7 +1,7 @@
 # CodexHub Stable Updater Foundation
 
 Date: 2026-07-20
-Version baseline: v0.4.7
+Version baseline: v0.4.8
 
 This document records the internal updater foundation. Public user-facing install instructions stay in `README.md`.
 
@@ -12,7 +12,7 @@ This document records the internal updater foundation. Public user-facing instal
 - The Rust backend initializes `tauri-plugin-updater` and exposes `get_app_update_status`, `check_stable_update`, and `install_stable_update`.
 - `tauri-plugin-updater` is built with `native-tls` and `zip` only, so stable feed checks use the OS trust store instead of the default Rustls web PKI path. This avoids false failures on desktop networks that rely on system-managed certificates or inspection roots.
 - When the configured feed is a GitHub `releases/latest/download/latest.json` or tag download URL, the backend first resolves the current `latest.json` asset through the GitHub Releases API and asks Tauri updater to read that asset with `Accept: application/octet-stream`, then keeps the original URL as a fallback. This avoids false check failures on networks where the public release-download redirect path is unstable.
-- Stable update checks and installs can retry through a configured proxy route. Settings > Other exposes Network proxy below the close-button behavior control with Auto, Direct, and Manual modes. Auto reads common proxy environment variables and probes common local ports such as `7890`, `7897`, `1080`, `8080`, `9090`, and `20171`; Manual opens a dialog that accepts a port such as `7890` or a URL such as `http://127.0.0.1:7890`. Proxy URLs with credentials are redacted in task logs.
+- Stable update checks and installs can retry through a configured proxy route. Settings > Other exposes Network proxy below the close-button behavior control with Auto, Direct, and Manual modes. Auto reads common proxy environment variables and probes common local ports such as `7890`, `7897`, `7891`, `7892`, `1080`, `10808`, `8080`, `9090`, and `20171`; Manual opens a dialog that accepts a port such as `7892` or a URL such as `http://127.0.0.1:7892`. Proxy URLs with credentials are redacted in task logs.
 - Settings shows a compact `Version info` table below Local keys with software name, current version, install time, latest version, and last update-check time.
 - The check button is available on `stable` builds. If the feed or public key is absent, the backend returns `pending-configuration` instead of pretending a real update check ran.
 - Every check attempt records a `Check app update` task run. After an updater error, Settings must not display the latest-version cell as `Not checked` / `未检查`; it should show the failed state, open a log dialog with the failure evidence, and keep the same run reviewable from Tasks.
@@ -57,4 +57,4 @@ The Windows, macOS, and Linux release workflows only upload updater assets to an
 
 `dev` does not use automatic updates because it represents local development, previews, and acceptance artifacts that should never become a public update source.
 
-Portable packaging remains manual/local for now. The v0.4.7 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package. The v0.4.7 macOS public artifact remains unsigned/ad-hoc and is documented only in README, docs, and Release notes; its real-device validation baseline is complete, and the app UI must not display unsigned or notarization warnings.
+Portable packaging remains manual/local for now. The v0.4.8 Windows public Release keeps the signed updater-enabled setup installer as the only Windows app package. The v0.4.8 macOS public artifact remains unsigned/ad-hoc and is documented only in README, docs, and Release notes; its real-device validation baseline is complete, and the app UI must not display unsigned or notarization warnings.

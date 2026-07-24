@@ -17,7 +17,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.7-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.4.8-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -107,11 +107,11 @@ Linux 桌面应用需要：
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- Windows：下载并运行 `CodexHub_0.4.7_x64-setup.exe`。
-- macOS Apple Silicon：下载 `CodexHub_0.4.7_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.4.7 macOS 资产仍为 unsigned/ad-hoc；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- Windows：下载并运行 `CodexHub_0.4.8_x64-setup.exe`。
+- macOS Apple Silicon：下载 `CodexHub_0.4.8_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.4.8 macOS 资产仍为 unsigned/ad-hoc；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
-- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.4.7_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换；已验证的 Linux stable 构建会进入签名自动更新 feed。
-- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.4.7_arm64.deb`。已验证的 Linux stable 构建会进入签名自动更新 feed。
+- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.4.8_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换；已验证的 Linux stable 构建会进入签名自动更新 feed。
+- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.4.8_arm64.deb`。已验证的 Linux stable 构建会进入签名自动更新 feed。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
 ## ⚡ 快速开始
@@ -144,8 +144,8 @@ Linux 桌面应用需要：
 - 安装目标为 `$HOME/.local/bin` 和 `$HOME/.codex`。
 - PATH 修复会检查 `.bashrc` 或 `.zshrc`、`.profile`，以及已存在的 `.bash_profile` / `.zprofile`，并写入幂等的 CodexHub 托管 block。
 - 优先尝试官方 installer；mirror 和本地上传 fallback 会记录到日志。
-- 安装或更新方式成功后，对于身份已验证的 standalone runtime，CodexHub 会让托管 target 跟随 `~/.codex/packages/standalone/current` 选出的可执行文件（旧版/本地 release 为 `bin/codex`，当前官方布局为 `codex`），并验证 target、托管启动器和登录 Shell 中的 `codex` 版本一致。每个写阶段都会获取绑定当前 UID、PID 和 starttime 的锁，入锁后重新读取运行时，并拒绝低于最高已验证版本下限的候选或写后状态。
-- 最终验证通过后，Install 和 Profile 应用仍只清理已有严格 marker 的旧托管版本；Update 会进一步接管所有可严格确认、版本低于新版本的 `releases/<entry>` 直接子目录，并把合格 release、启动器 capture 及已知残留 launcher/helper 链接移入 `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`。任务结果会报告安全的备份 ID；备份保留供人工检查，明确删除备份前不会释放占用空间。current/target、同版本或更高版本、非法 marker、双布局、竞态、正在使用及身份不明目录都会保留。所有清理均共用运行时锁、复核进程身份、要求同文件系统的禁止覆盖移动，并且不会覆盖已有备份。仅这个可恢复的 Update 分阶段备份流程允许忽略 `/proc/<pid>/exe` 不可读、但经双次稳定核验的当前用户 `sshd`、`(sd-pam)`、`sftp-server`、`fusermount3` 会话辅助进程；完整命令行严格为 `/usr/lib/systemd/systemd --user` 或 `/lib/systemd/systemd --user` 且无额外参数的用户管理器；以及 state=`Z`、cmdline 为空、`Threads: 1` 且仅含 leader TID 的僵尸进程。每次候选复核都必须与 PID/starttime/state/comm/完整 cmdline 初始快照一致，僵尸还要重复证明单线程，任务摘要会记录忽略数量。Install/Profile 仍保持严格，新出现、身份变化、未知、多线程僵尸或疑似 Codex 的进程仍会使清理延期。
+- 安装或更新方式成功后，对于身份已验证的 standalone runtime，CodexHub 会让托管 target 跟随 `~/.codex/packages/standalone/current` 选出的规范可执行文件：本地及当前官方 package release 使用 `bin/codex`，并允许官方 package 精确的 `codex -> bin/codex` 兼容链接；旧版官方布局仍可使用 `codex`。随后验证 target、托管启动器和登录 Shell 中的 `codex` 版本一致。每个写阶段都会获取绑定当前 UID、PID 和 starttime 的锁，入锁后重新读取运行时，并拒绝低于最高已验证版本下限的候选或写后状态。
+- 最终验证通过后，Install 和 Profile 应用仍只清理已有严格 marker 的旧托管版本；Update 会进一步接管所有可严格确认、版本低于新版本的 `releases/<entry>` 直接子目录，并把合格 release、启动器 capture 及已知残留 launcher/helper 链接移入 `~/.codex-hub/deletion-backups/update-<UTC>-<PID>/`。官方精确的 `codex -> bin/codex` 兼容链接按同一个规范 package 布局处理；两个独立可执行文件或非规范链接仍视为歧义。任务结果会报告安全的备份 ID；备份保留供人工检查，明确删除备份前不会释放占用空间。current/target、同版本或更高版本、非法 marker、竞态、正在使用及身份不明目录都会保留。所有清理均共用运行时锁、复核进程身份、要求同文件系统的禁止覆盖移动，并且不会覆盖已有备份。仅这个可恢复的 Update 分阶段备份流程允许忽略 `/proc/<pid>/exe` 不可读、但经双次稳定核验的当前用户 `sshd`、`(sd-pam)`、`sftp-server`、`fusermount3` 会话辅助进程；完整命令行严格为 `/usr/lib/systemd/systemd --user` 或 `/lib/systemd/systemd --user` 且无额外参数的用户管理器；以及 state=`Z`、cmdline 为空、`Threads: 1` 且仅含 leader TID 的僵尸进程。每次候选复核都必须与 PID/starttime/state/comm/完整 cmdline 初始快照一致，僵尸还要重复证明单线程，任务摘要会记录忽略数量。Install/Profile 仍保持严格，新出现、身份变化、未知、多线程僵尸或疑似 Codex 的进程仍会使清理延期。
 
 ### 应用 Profile
 

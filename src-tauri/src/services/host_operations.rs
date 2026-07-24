@@ -4,7 +4,11 @@ use crate::*;
 use super::codex_runtime::{
     self, CodexReleaseCleanupPolicy, CodexReleaseCleanupStatus, CodexRuntimeReconcileStatus,
 };
+use super::updater_operations::{
+    preflight_remote_codex_proxy_tunnel, remote_codex_proxy_tunnel_candidates,
+};
 
+const OFFICIAL_INSTALLER_SSH_TIMEOUT_MS: u64 = 360_000;
 const PROBE_STEP_IDS: &[(&str, &str)] = &[
     ("ssh-check", "Checking SSH connectivity."),
     ("system", "Reading the remote system environment."),
@@ -204,6 +208,61 @@ fn next_installation_method(attempt_outcomes: &[bool]) -> Option<usize> {
     } else {
         (attempt_outcomes.len() < 4).then_some(attempt_outcomes.len())
     }
+}
+
+fn official_installer_network_failure(output: &ssh::SshCommandOutput) -> bool {
+    if output.success() {
+        return false;
+    }
+    if output.timed_out {
+        return true;
+    }
+    if output.exit_code == Some(255) {
+        return false;
+    }
+    if matches!(
+        output.exit_code,
+        Some(4 | 5 | 6 | 7 | 28 | 35 | 47 | 52 | 55 | 56 | 124)
+    ) {
+        return true;
+    }
+    let detail = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
+    [
+        "curl: (5)",
+        "curl: (6)",
+        "curl: (7)",
+        "curl: (28)",
+        "could not resolve host",
+        "temporary failure in name resolution",
+        "network is unreachable",
+        "connection timed out",
+        "operation timed out",
+        "failed to connect",
+        "connection reset by peer",
+        "tls connect error",
+        "wget: unable to resolve host address",
+    ]
+    .iter()
+    .any(|marker| detail.contains(marker))
+}
+
+fn remote_forward_setup_failure(output: &ssh::SshCommandOutput) -> bool {
+    let detail = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
+    detail.contains("remote port forwarding failed")
+        || detail.contains("cannot listen to port")
+        || detail.contains("port forwarding is disabled")
+        || detail.contains("administratively prohibited")
+}
+
+fn remote_proxy_port_candidates(task_id: &str) -> [u16; 3] {
+    const START: u16 = 42_000;
+    const RANGE: u64 = 10_000;
+    let seed = task_id
+        .bytes()
+        .fold(1_469_598_103_934_665_603u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(1_099_511_628_211)
+        });
+    [0u64, 3_301, 6_607].map(|offset| START + ((seed + offset) % RANGE) as u16)
 }
 
 fn final_verification_failures(
@@ -2820,6 +2879,15 @@ pub(crate) fn run_remote_manage_codex(
         "remote-npm-mirror",
         "local-upload",
     ];
+    let proxy_settings = read_settings(&state.paths).unwrap_or_else(|error| {
+        eprintln!(
+            "Could not read proxy settings for remote Codex installation: {}",
+            redact_error_text(&error)
+        );
+        let mut settings = AppSettings::default();
+        settings.network_proxy_mode = NetworkProxyMode::Direct;
+        settings
+    });
     let mut successful_install = None;
     let mut installation_failure_summary = None;
     let mut attempt_outcomes = Vec::new();
@@ -2839,11 +2907,11 @@ pub(crate) fn run_remote_manage_codex(
                 &task_id,
                 &mut logs,
                 &mut next_log_index,
-                timeout,
                 before_version.as_deref(),
                 strict_current_runtime
                     .as_ref()
                     .map(|runtime| runtime.version.as_str()),
+                &proxy_settings,
                 Some(&progress),
             ),
             "remote-native-mirror" => run_remote_native_mirror_install(
@@ -3377,6 +3445,35 @@ pub(crate) fn run_codex_step(
     failure_level: TaskLogLevel,
     progress: Option<&CodexProgressContext<'_>>,
 ) -> ssh::SshCommandOutput {
+    run_codex_step_with_tunnel(
+        alias,
+        task_id,
+        logs,
+        next_log_index,
+        label,
+        script,
+        timeout,
+        failure_level,
+        None,
+        false,
+        progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_codex_step_with_tunnel(
+    alias: &str,
+    task_id: &str,
+    logs: &mut Vec<TaskLog>,
+    next_log_index: &mut usize,
+    label: &str,
+    script: &str,
+    timeout: u64,
+    failure_level: TaskLogLevel,
+    tunnel: Option<&ssh::ReverseProxyTunnel>,
+    extended_timeout: bool,
+    progress: Option<&CodexProgressContext<'_>>,
+) -> ssh::SshCommandOutput {
     emit_remote_codex_progress(
         progress,
         label,
@@ -3390,11 +3487,44 @@ pub(crate) fn run_codex_step(
         None,
     );
     let output = if let Some(progress) = progress {
-        ssh::run_ssh_script_streaming(alias, script, timeout, |event| {
-            emit_remote_codex_stream_event(progress, label, event);
-        })
+        match (extended_timeout, tunnel) {
+            (true, Some(tunnel)) => {
+                ssh::run_ssh_script_streaming_with_extended_timeout_and_reverse_proxy(
+                    alias,
+                    script,
+                    timeout,
+                    tunnel,
+                    |event| emit_remote_codex_stream_event(progress, label, event),
+                )
+            }
+            (true, None) => ssh::run_ssh_script_streaming_with_extended_timeout(
+                alias,
+                script,
+                timeout,
+                |event| emit_remote_codex_stream_event(progress, label, event),
+            ),
+            (false, Some(tunnel)) => ssh::run_ssh_script_streaming_with_reverse_proxy(
+                alias,
+                script,
+                timeout,
+                tunnel,
+                |event| emit_remote_codex_stream_event(progress, label, event),
+            ),
+            (false, None) => ssh::run_ssh_script_streaming(alias, script, timeout, |event| {
+                emit_remote_codex_stream_event(progress, label, event);
+            }),
+        }
     } else {
-        ssh::run_ssh_script(alias, script, timeout)
+        match (extended_timeout, tunnel) {
+            (true, Some(tunnel)) => ssh::run_ssh_script_with_extended_timeout_and_reverse_proxy(
+                alias, script, timeout, tunnel,
+            ),
+            (true, None) => ssh::run_ssh_script_with_extended_timeout(alias, script, timeout),
+            (false, Some(tunnel)) => {
+                ssh::run_ssh_script_with_reverse_proxy(alias, script, timeout, tunnel)
+            }
+            (false, None) => ssh::run_ssh_script(alias, script, timeout),
+        }
     }
     .unwrap_or_else(|error| {
         failed_command_output(
@@ -3421,40 +3551,198 @@ pub(crate) fn run_codex_step(
     output
 }
 
+fn official_codex_installer_script(
+    minimum_version: Option<&str>,
+    minimum_current_version: Option<&str>,
+    proxy_url: Option<&str>,
+) -> String {
+    let proxy_exports = proxy_url
+        .map(|url| {
+            let url = shell_single_quote(url);
+            format!(
+                "export HTTPS_PROXY={url}\nexport https_proxy={url}\nexport HTTP_PROXY={url}\nexport http_proxy={url}\nexport ALL_PROXY={url}\nexport all_proxy={url}\n"
+            )
+        })
+        .unwrap_or_default();
+    codex_runtime::remote_version_floor_prelude(minimum_version, minimum_current_version)
+        .map(|prelude| {
+            format!(
+                "{prelude}\n{proxy_exports}{}",
+                codex_runtime::with_remote_codex_runtime_writer_lock(CODEX_OFFICIAL_INSTALL_SCRIPT)
+            )
+        })
+        .unwrap_or_else(|_| {
+            "printf 'Codex update version floor was invalid.\\n' >&2; exit 69".into()
+        })
+}
+
 pub(crate) fn run_official_codex_installer(
     alias: &str,
     task_id: &str,
     logs: &mut Vec<TaskLog>,
     next_log_index: &mut usize,
-    timeout: u64,
     minimum_version: Option<&str>,
     minimum_current_version: Option<&str>,
+    proxy_settings: &AppSettings,
     progress: Option<&CodexProgressContext<'_>>,
 ) -> ssh::SshCommandOutput {
-    let script =
-        codex_runtime::remote_version_floor_prelude(minimum_version, minimum_current_version)
-            .map(|prelude| {
-                format!(
-                    "{prelude}\n{}",
-                    codex_runtime::with_remote_codex_runtime_writer_lock(
-                        CODEX_OFFICIAL_INSTALL_SCRIPT
-                    )
-                )
-            })
-            .unwrap_or_else(|_| {
-                "printf 'Codex update version floor was invalid.\\n' >&2; exit 69".into()
-            });
-    run_codex_step(
+    let direct_script =
+        official_codex_installer_script(minimum_version, minimum_current_version, None);
+    // 官方包通过本地代理反向隧道下载时可能超过通用 SSH 的 120 秒上限。
+    let direct_output = run_codex_step_with_tunnel(
         alias,
         task_id,
         logs,
         next_log_index,
-        "official Codex installer",
-        &script,
-        timeout,
+        "official Codex installer (direct)",
+        &direct_script,
+        OFFICIAL_INSTALLER_SSH_TIMEOUT_MS,
         TaskLogLevel::Error,
+        None,
+        true,
         progress,
-    )
+    );
+    if direct_output.success() || !official_installer_network_failure(&direct_output) {
+        return direct_output;
+    }
+    if let Some(log) = logs.last_mut() {
+        log.level = TaskLogLevel::Warn;
+    }
+
+    emit_remote_codex_progress(
+        progress,
+        "official Codex installer proxy retry",
+        "running",
+        "Direct network access failed; checking local proxy tunnel routes.".into(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    let (routes, notes) = remote_codex_proxy_tunnel_candidates(proxy_settings);
+    if routes.is_empty() {
+        let detail = if notes.is_empty() {
+            "No eligible localhost proxy route was detected.".to_string()
+        } else {
+            format!(
+                "No eligible localhost proxy route was detected: {}.",
+                notes.join("; ")
+            )
+        };
+        logs.push(basic_log(
+            task_id,
+            *next_log_index,
+            TaskLogLevel::Warn,
+            &detail,
+        ));
+        *next_log_index += 1;
+        return direct_output;
+    }
+
+    let (selected_route, preflight_errors) =
+        select_proxy_route_with_preflight(routes, preflight_remote_codex_proxy_tunnel);
+    for error in preflight_errors {
+        logs.push(basic_log(
+            task_id,
+            *next_log_index,
+            TaskLogLevel::Warn,
+            &redact_error_text(&error),
+        ));
+        *next_log_index += 1;
+    }
+    let Some((route, preflight_confirmed)) = selected_route else {
+        return direct_output;
+    };
+    let (level, message) = if preflight_confirmed {
+        (
+            TaskLogLevel::Info,
+            format!(
+                "Local proxy route {} reached the official Codex endpoints.",
+                route.source
+            ),
+        )
+    } else {
+        (
+            TaskLogLevel::Warn,
+            format!(
+                "All local proxy endpoint preflights failed; attempting route {} through a real SSH tunnel.",
+                route.source
+            ),
+        )
+    };
+    logs.push(basic_log(task_id, *next_log_index, level, &message));
+    *next_log_index += 1;
+
+    let mut last_tunnel_output = None;
+    for remote_port in remote_proxy_port_candidates(task_id) {
+        let tunnel = ssh::ReverseProxyTunnel::new(route.local_port, remote_port)
+            .expect("validated proxy tunnel ports");
+        let proxy_url = match route.proxy_environment_url(remote_port) {
+            Ok(url) => url,
+            Err(error) => {
+                logs.push(basic_log(
+                    task_id,
+                    *next_log_index,
+                    TaskLogLevel::Error,
+                    &redact_error_text(&error),
+                ));
+                *next_log_index += 1;
+                return direct_output;
+            }
+        };
+        let tunnel_script = official_codex_installer_script(
+            minimum_version,
+            minimum_current_version,
+            Some(&proxy_url),
+        );
+        let output = run_codex_step_with_tunnel(
+            alias,
+            task_id,
+            logs,
+            next_log_index,
+            "official Codex installer (local proxy tunnel)",
+            &tunnel_script,
+            OFFICIAL_INSTALLER_SSH_TIMEOUT_MS,
+            TaskLogLevel::Error,
+            Some(&tunnel),
+            true,
+            progress,
+        );
+        if output.success() || !remote_forward_setup_failure(&output) {
+            return output;
+        }
+        if let Some(log) = logs.last_mut() {
+            log.level = TaskLogLevel::Warn;
+        }
+        last_tunnel_output = Some(output);
+    }
+    last_tunnel_output.unwrap_or(direct_output)
+}
+
+/// Prefer a preflight-confirmed route, but keep the first eligible route as an advisory fallback.
+fn select_proxy_route_with_preflight<T, F>(
+    routes: Vec<T>,
+    mut preflight: F,
+) -> (Option<(T, bool)>, Vec<String>)
+where
+    F: FnMut(&T) -> Result<(), String>,
+{
+    let mut fallback = None;
+    let mut errors = Vec::new();
+    for route in routes {
+        match preflight(&route) {
+            Ok(()) => return (Some((route, true)), errors),
+            Err(error) => {
+                errors.push(error);
+                if fallback.is_none() {
+                    fallback = Some(route);
+                }
+            }
+        }
+    }
+    (fallback.map(|route| (route, false)), errors)
 }
 
 pub(crate) fn run_remote_native_mirror_install(
@@ -4532,20 +4820,17 @@ is_safe_existing_release() {
   codexhub_existing_root_real=$(readlink -f "$release_root" 2>/dev/null) || return 1
   codexhub_existing_real=$(readlink -f "$codexhub_existing_dir" 2>/dev/null) || return 1
   [ "$codexhub_existing_real" = "$codexhub_existing_root_real/$codexhub_existing_version" ] || return 1
-  codexhub_existing_layout_count=0
-  codexhub_existing_selected_binary=""
-  codexhub_existing_selected_relative=""
-  # A second direct path is ambiguous even when it is invalid or a broken symlink.
-  for codexhub_existing_relative in bin/codex codex; do
-    codexhub_existing_binary="$codexhub_existing_dir/$codexhub_existing_relative"
-    if [ -e "$codexhub_existing_binary" ] || [ -L "$codexhub_existing_binary" ]; then
-      codexhub_existing_layout_count=$((codexhub_existing_layout_count + 1))
-      codexhub_existing_selected_binary=$codexhub_existing_binary
-      codexhub_existing_selected_relative=$codexhub_existing_relative
-    fi
-  done
-  [ "$codexhub_existing_layout_count" -eq 1 ] || return 1
-  [ "$codexhub_existing_selected_relative" = bin/codex ] || return 1
+  codexhub_existing_selected_binary="$codexhub_existing_dir/bin/codex"
+  codexhub_existing_selected_relative=bin/codex
+  codexhub_existing_compat="$codexhub_existing_dir/codex"
+  [ -e "$codexhub_existing_selected_binary" ] && [ ! -L "$codexhub_existing_selected_binary" ] || return 1
+  if [ -e "$codexhub_existing_compat" ] || [ -L "$codexhub_existing_compat" ]; then
+    # The official package adds only this exact compatibility link.
+    [ -L "$codexhub_existing_compat" ] || return 1
+    [ "$(readlink "$codexhub_existing_compat" 2>/dev/null)" = bin/codex ] || return 1
+    codexhub_existing_compat_real=$(readlink -f "$codexhub_existing_compat" 2>/dev/null) || return 1
+    [ "$codexhub_existing_compat_real" = "$codexhub_existing_selected_binary" ] || return 1
+  fi
   [ -f "$codexhub_existing_selected_binary" ] && [ -x "$codexhub_existing_selected_binary" ] && [ ! -L "$codexhub_existing_selected_binary" ] || return 1
   codexhub_existing_binary_real=$(readlink -f "$codexhub_existing_selected_binary" 2>/dev/null) || return 1
   [ "$codexhub_existing_binary_real" = "$codexhub_existing_real/$codexhub_existing_selected_relative" ] || return 1
@@ -4675,6 +4960,139 @@ pub(crate) fn codex_maintenance_task(
 mod host_operation_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    fn installer_output(
+        exit_code: Option<i32>,
+        stderr: &str,
+        timed_out: bool,
+    ) -> ssh::SshCommandOutput {
+        ssh::SshCommandOutput {
+            command: "official installer fixture".into(),
+            stdout: String::new(),
+            stderr: stderr.into(),
+            exit_code,
+            duration_ms: 1,
+            timed_out,
+        }
+    }
+
+    #[test]
+    fn official_installer_has_a_dedicated_six_minute_ssh_budget() {
+        assert_eq!(OFFICIAL_INSTALLER_SSH_TIMEOUT_MS, 360_000);
+    }
+
+    #[test]
+    fn official_installer_retries_proxy_only_for_remote_network_failures() {
+        assert!(official_installer_network_failure(&installer_output(
+            Some(28),
+            "curl: (28) Operation timed out",
+            false,
+        )));
+        assert!(official_installer_network_failure(&installer_output(
+            None, "", true,
+        )));
+        assert!(official_installer_network_failure(&installer_output(
+            Some(1),
+            "wget: unable to resolve host address 'chatgpt.com'",
+            false,
+        )));
+
+        assert!(!official_installer_network_failure(&installer_output(
+            Some(0),
+            "",
+            false,
+        )));
+        assert!(!official_installer_network_failure(&installer_output(
+            Some(2),
+            "installer rejected an invalid version",
+            false,
+        )));
+        assert!(!official_installer_network_failure(&installer_output(
+            Some(255),
+            "ssh: connect to host timed out",
+            false,
+        )));
+    }
+
+    #[test]
+    fn remote_proxy_ports_are_deterministic_high_and_distinct() {
+        let first = remote_proxy_port_candidates("task-install-alpha");
+        let second = remote_proxy_port_candidates("task-install-alpha");
+
+        assert_eq!(first, second);
+        assert!(first.iter().all(|port| (42_000..52_000).contains(port)));
+        assert_eq!(
+            first
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn official_installer_proxy_environment_is_scoped_to_the_remote_script() {
+        let proxy_url = "http://127.0.0.1:43210/";
+        let tunneled = official_codex_installer_script(None, None, Some(proxy_url));
+        for name in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ] {
+            assert!(tunneled.contains(&format!("export {name}='{proxy_url}'")));
+        }
+        assert_eq!(tunneled.matches(proxy_url).count(), 6);
+        assert!(tunneled.contains("https://chatgpt.com/codex/install.sh"));
+
+        let direct = official_codex_installer_script(None, None, None);
+        assert!(!direct.contains("export HTTPS_PROXY="));
+        assert!(!direct.contains("export ALL_PROXY="));
+    }
+
+    #[test]
+    fn only_remote_forward_setup_errors_rotate_tunnel_ports() {
+        assert!(remote_forward_setup_failure(&installer_output(
+            Some(255),
+            "Error: remote port forwarding failed for listen port 43210",
+            false,
+        )));
+        assert!(remote_forward_setup_failure(&installer_output(
+            Some(255),
+            "administratively prohibited",
+            false,
+        )));
+        assert!(!remote_forward_setup_failure(&installer_output(
+            Some(7),
+            "curl: (7) Failed to connect through proxy",
+            false,
+        )));
+    }
+
+    #[test]
+    fn proxy_route_selection_prefers_a_later_preflight_success() {
+        let (selected, errors) =
+            select_proxy_route_with_preflight(vec!["first", "second"], |route| match *route {
+                "second" => Ok(()),
+                _ => Err(format!("{route} connection failed")),
+            });
+
+        assert_eq!(selected, Some(("second", true)));
+        assert_eq!(errors, vec!["first connection failed"]);
+    }
+
+    #[test]
+    fn proxy_route_selection_keeps_first_route_when_all_preflights_fail() {
+        let (selected, errors) =
+            select_proxy_route_with_preflight(vec!["first", "second"], |route| {
+                Err(format!("{route} timed out"))
+            });
+
+        assert_eq!(selected, Some(("first", false)));
+        assert_eq!(errors, vec!["first timed out", "second timed out"]);
+    }
 
     #[test]
     fn bounded_pool_limits_concurrency_refills_and_preserves_input_order() {

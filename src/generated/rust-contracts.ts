@@ -180,9 +180,11 @@ export type GpuVendorDto = "nvidia" | "amd" | "intel" | "unknown";
 
 export type GpuStatusDto = "ok" | "detected" | "unavailable";
 
+export type GpuMemoryModeDto = "dedicated" | "unified" | "unknown";
+
 export type GpuProcessSnapshotDto = { gpuUuid: string | null, pid: number | null, name: string, usedMemoryBytes: number | null, user: string | null, elapsedSeconds: number | null, command: string | null, };
 
-export type GpuSnapshotDto = { vendor: GpuVendorDto, index: string | null, uuid: string | null, name: string, status: GpuStatusDto, utilizationPercent: number | null, memoryUsedBytes: number | null, memoryTotalBytes: number | null, temperatureC: number | null, powerWatts: number | null, driverVersion: string | null, processes: Array<GpuProcessSnapshotDto>, };
+export type GpuSnapshotDto = { vendor: GpuVendorDto, index: string | null, uuid: string | null, name: string, status: GpuStatusDto, memoryMode: GpuMemoryModeDto, utilizationPercent: number | null, memoryUsedBytes: number | null, memoryTotalBytes: number | null, temperatureC: number | null, powerWatts: number | null, driverVersion: string | null, processes: Array<GpuProcessSnapshotDto>, };
 
 export type HostResourceSnapshotDto = { hostAlias: string, status: HostResourceStatusDto, sshStatus: HostResourceSshStatusDto, timedOut: boolean, sampledAt: string, latencyMs: number | null, error: string | null, cpu: CpuSnapshotDto | null, memory: MemorySnapshotDto | null, gpuTool: string, gpus: Array<GpuSnapshotDto>, };
 

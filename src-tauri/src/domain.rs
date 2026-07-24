@@ -1275,10 +1275,123 @@ else
   printf 'curl or wget is not available for the official Codex installer.\n' >&2
   exit 127
 fi
-candidate_version=$(sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"rust-v\([^"]*\)".*/\1/p' "$tmp_dir/latest.json" | awk '
-  NF { count += 1; value = $1 }
-  END { if (count == 1) print value; else exit 1 }
-') || {
+
+# CODEXHUB_OFFICIAL_RELEASE_VERSION_PARSER_BEGIN
+codexhub_parse_official_release_version() {
+  # Folding bounds awk records while preserving JSON semantics because literal
+  # newlines cannot occur inside JSON strings.
+  LC_ALL=C fold -b -w 4096 | LC_ALL=C awk '
+    function finish_string(value) {
+      if (object_depth == 1 && array_depth == 0 && key == "tag_name") {
+        tag_count += 1
+        tag_value = value
+      }
+      expecting_value = 0
+      key = ""
+    }
+
+    {
+      for (i = 1; i <= length($0); i++) {
+        char = substr($0, i, 1)
+
+        if (in_string) {
+          if (escaped) {
+            token = token "\\" char
+            escaped = 0
+          } else if (char == "\\") {
+            escaped = 1
+          } else if (char == "\"") {
+            in_string = 0
+            if (string_is_value) {
+              finish_string(token)
+            } else {
+              pending_key = token
+            }
+          } else {
+            token = token char
+          }
+          continue
+        }
+
+        if (!document_started) {
+          if (char ~ /^[[:space:]]$/) {
+            continue
+          }
+          if (char != "{") {
+            invalid = 1
+            continue
+          }
+          document_started = 1
+          object_depth = 1
+          continue
+        }
+        if (document_finished) {
+          if (char !~ /^[[:space:]]$/) {
+            invalid = 1
+          }
+          continue
+        }
+
+        if (char == "\"") {
+          in_string = 1
+          token = ""
+          escaped = 0
+          string_is_value = expecting_value
+        } else if (char == ":" && pending_key != "") {
+          key = pending_key
+          pending_key = ""
+          expecting_value = 1
+        } else if (char == "{") {
+          object_depth += 1
+          expecting_value = 0
+          key = ""
+        } else if (char == "}") {
+          object_depth -= 1
+          if (object_depth < 0) {
+            invalid = 1
+          } else if (object_depth == 0) {
+            if (array_depth != 0) {
+              invalid = 1
+            }
+            document_finished = 1
+          }
+          expecting_value = 0
+          key = ""
+          pending_key = ""
+        } else if (char == "[") {
+          array_depth += 1
+          expecting_value = 0
+          key = ""
+        } else if (char == "]") {
+          array_depth -= 1
+          if (array_depth < 0) {
+            invalid = 1
+          }
+          expecting_value = 0
+          key = ""
+          pending_key = ""
+        } else if (char == ",") {
+          expecting_value = 0
+          key = ""
+          pending_key = ""
+        }
+      }
+    }
+
+    END {
+      if (invalid || !document_started || !document_finished || in_string ||
+          object_depth != 0 || array_depth != 0 || tag_count != 1 ||
+          tag_value !~ /^rust-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$/) {
+        exit 1
+      }
+      sub(/^rust-v/, "", tag_value)
+      print tag_value
+    }
+  '
+}
+# CODEXHUB_OFFICIAL_RELEASE_VERSION_PARSER_END
+
+candidate_version=$(codexhub_parse_official_release_version <"$tmp_dir/latest.json") || {
   printf 'Could not resolve the official Codex candidate version safely.\n' >&2
   exit 69
 }
@@ -1292,7 +1405,17 @@ codexhub_version_meets_floors "$candidate_version" || {
 }
 export CODEX_RELEASE="$candidate_version"
 if command -v timeout >/dev/null 2>&1; then
-  timeout 75 sh "$tmp_dir/install.sh"
+  codexhub_official_stderr="$tmp_dir/install.stderr"
+  if timeout 240 sh "$tmp_dir/install.sh" 2>"$codexhub_official_stderr"; then
+    cat "$codexhub_official_stderr" >&2
+  else
+    codexhub_official_status=$?
+    if [ "$codexhub_official_status" -eq 124 ]; then
+      printf 'Official Codex installer exceeded the 240-second download/install limit.\n' >&2
+    fi
+    cat "$codexhub_official_stderr" >&2
+    exit "$codexhub_official_status"
+  fi
 else
   sh "$tmp_dir/install.sh"
 fi
@@ -1461,20 +1584,17 @@ is_safe_existing_release() {
   codexhub_existing_root_real=$(readlink -f "$codexhub_existing_root" 2>/dev/null) || return 1
   codexhub_existing_real=$(readlink -f "$codexhub_existing_dir" 2>/dev/null) || return 1
   [ "$codexhub_existing_real" = "$codexhub_existing_root_real/$codexhub_existing_version" ] || return 1
-  codexhub_existing_layout_count=0
-  codexhub_existing_selected_binary=""
-  codexhub_existing_selected_relative=""
-  # A second direct path is ambiguous even when it is invalid or a broken symlink.
-  for codexhub_existing_relative in bin/codex codex; do
-    codexhub_existing_binary="$codexhub_existing_dir/$codexhub_existing_relative"
-    if [ -e "$codexhub_existing_binary" ] || [ -L "$codexhub_existing_binary" ]; then
-      codexhub_existing_layout_count=$((codexhub_existing_layout_count + 1))
-      codexhub_existing_selected_binary=$codexhub_existing_binary
-      codexhub_existing_selected_relative=$codexhub_existing_relative
-    fi
-  done
-  [ "$codexhub_existing_layout_count" -eq 1 ] || return 1
-  [ "$codexhub_existing_selected_relative" = bin/codex ] || return 1
+  codexhub_existing_selected_binary="$codexhub_existing_dir/bin/codex"
+  codexhub_existing_selected_relative=bin/codex
+  codexhub_existing_compat="$codexhub_existing_dir/codex"
+  [ -e "$codexhub_existing_selected_binary" ] && [ ! -L "$codexhub_existing_selected_binary" ] || return 1
+  if [ -e "$codexhub_existing_compat" ] || [ -L "$codexhub_existing_compat" ]; then
+    # The official package adds only this exact compatibility link.
+    [ -L "$codexhub_existing_compat" ] || return 1
+    [ "$(readlink "$codexhub_existing_compat" 2>/dev/null)" = bin/codex ] || return 1
+    codexhub_existing_compat_real=$(readlink -f "$codexhub_existing_compat" 2>/dev/null) || return 1
+    [ "$codexhub_existing_compat_real" = "$codexhub_existing_selected_binary" ] || return 1
+  fi
   [ -f "$codexhub_existing_selected_binary" ] && [ -x "$codexhub_existing_selected_binary" ] && [ ! -L "$codexhub_existing_selected_binary" ] || return 1
   codexhub_existing_binary_real=$(readlink -f "$codexhub_existing_selected_binary" 2>/dev/null) || return 1
   [ "$codexhub_existing_binary_real" = "$codexhub_existing_real/$codexhub_existing_selected_relative" ] || return 1

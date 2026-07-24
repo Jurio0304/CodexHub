@@ -290,6 +290,46 @@ codexhub_runtime_normalized_version() {
   '
 }
 
+# The official package layout keeps bin/codex as the canonical executable and
+# adds codex -> bin/codex for compatibility. Accept only that exact dual path.
+codexhub_runtime_select_release_binary() {
+  codexhub_layout_dir=$1
+  codexhub_layout_selected_binary=""
+  codexhub_layout_selected_relative=""
+  [ -d "$codexhub_layout_dir" ] && [ ! -L "$codexhub_layout_dir" ] || return 1
+  codexhub_layout_dir_real=$(readlink -f "$codexhub_layout_dir" 2>/dev/null) || return 1
+  [ "$codexhub_layout_dir_real" = "$codexhub_layout_dir" ] || return 1
+  codexhub_layout_bin="$codexhub_layout_dir/bin/codex"
+  codexhub_layout_compat="$codexhub_layout_dir/codex"
+  codexhub_layout_bin_present=no
+  codexhub_layout_compat_present=no
+  { [ -e "$codexhub_layout_bin" ] || [ -L "$codexhub_layout_bin" ]; } && codexhub_layout_bin_present=yes
+  { [ -e "$codexhub_layout_compat" ] || [ -L "$codexhub_layout_compat" ]; } && codexhub_layout_compat_present=yes
+  case "$codexhub_layout_bin_present:$codexhub_layout_compat_present" in
+    yes:no)
+      codexhub_layout_selected_binary=$codexhub_layout_bin
+      codexhub_layout_selected_relative=bin/codex
+      ;;
+    no:yes)
+      codexhub_layout_selected_binary=$codexhub_layout_compat
+      codexhub_layout_selected_relative=codex
+      ;;
+    yes:yes)
+      [ -f "$codexhub_layout_bin" ] && [ -x "$codexhub_layout_bin" ] && [ ! -L "$codexhub_layout_bin" ] || return 1
+      [ -L "$codexhub_layout_compat" ] || return 1
+      [ "$(readlink "$codexhub_layout_compat" 2>/dev/null)" = bin/codex ] || return 1
+      codexhub_layout_compat_real=$(readlink -f "$codexhub_layout_compat" 2>/dev/null) || return 1
+      [ "$codexhub_layout_compat_real" = "$codexhub_layout_bin" ] || return 1
+      codexhub_layout_selected_binary=$codexhub_layout_bin
+      codexhub_layout_selected_relative=bin/codex
+      ;;
+    *) return 1 ;;
+  esac
+  [ -f "$codexhub_layout_selected_binary" ] && [ -x "$codexhub_layout_selected_binary" ] &&
+    [ ! -L "$codexhub_layout_selected_binary" ] || return 1
+  return 0
+}
+
 codexhub_runtime_version_not_lower() {
   required_version=$1
   candidate_version=$2
@@ -356,18 +396,9 @@ codexhub_runtime_capture_locked_state() {
     current_entry=${current_dir_real#"$current_release_root_real"/}
     case "$current_entry" in "" | "." | ".." | */* | *[!A-Za-z0-9._+-]*) return 1 ;; esac
     [ "$current_dir_real" = "$current_release_root_real/$current_entry" ] || return 1
-    current_match_count=0
-    for current_relative in bin/codex codex; do
-      current_binary="$current_dir_real/$current_relative"
-      if [ -e "$current_binary" ] || [ -L "$current_binary" ]; then
-        current_match_count=$((current_match_count + 1))
-        current_selected_binary=$current_binary
-        current_selected_relative=$current_relative
-      fi
-    done
-    [ "$current_match_count" -eq 1 ] || return 1
-    [ -f "$current_selected_binary" ] && [ -x "$current_selected_binary" ] &&
-      [ ! -L "$current_selected_binary" ] || return 1
+    codexhub_runtime_select_release_binary "$current_dir_real" || return 1
+    current_selected_binary=$codexhub_layout_selected_binary
+    current_selected_relative=$codexhub_layout_selected_relative
     current_binary_real=$(readlink -f "$current_selected_binary" 2>/dev/null) || return 1
     [ "$current_binary_real" = "$current_dir_real/$current_selected_relative" ] || return 1
     current_version=$(codexhub_runtime_normalized_version "$current_selected_binary") || return 1
@@ -418,16 +449,8 @@ codexhub_runtime_restore_locked_current() {
   locked_dir_real=$(readlink -f "$codexhub_locked_current_dir" 2>/dev/null) || return 1
   [ "$locked_release_root_real" = "$locked_release_root" ] || return 1
   [ "$locked_dir_real" = "$locked_release_root_real/$codexhub_locked_current_entry" ] || return 1
-  locked_match_count=0
-  for locked_relative in bin/codex codex; do
-    locked_direct="$codexhub_locked_current_dir/$locked_relative"
-    if [ -e "$locked_direct" ] || [ -L "$locked_direct" ]; then
-      locked_match_count=$((locked_match_count + 1))
-      locked_selected_relative=$locked_relative
-    fi
-  done
-  [ "$locked_match_count" -eq 1 ] || return 1
-  [ "$locked_selected_relative" = "$codexhub_locked_current_binary_relative_path" ] || return 1
+  codexhub_runtime_select_release_binary "$codexhub_locked_current_dir" || return 1
+  [ "$codexhub_layout_selected_relative" = "$codexhub_locked_current_binary_relative_path" ] || return 1
   locked_binary="$codexhub_locked_current_dir/$codexhub_locked_current_binary_relative_path"
   [ -d "$codexhub_locked_current_dir" ] && [ ! -L "$codexhub_locked_current_dir" ] || return 1
   [ -f "$locked_binary" ] && [ -x "$locked_binary" ] && [ ! -L "$locked_binary" ] || return 1
@@ -1032,7 +1055,19 @@ legacy_layout=no
 case "$bin_layout:$legacy_layout" in
   yes:no) binary_relative_path=bin/codex ;;
   no:yes) binary_relative_path=codex ;;
-  yes:yes) fail_current current-binary-layout-ambiguous ;;
+  yes:yes)
+    # Official package releases add only this exact compatibility link.
+    [ -f "$release_dir/bin/codex" ] && [ -x "$release_dir/bin/codex" ] &&
+      [ ! -L "$release_dir/bin/codex" ] || fail_current current-binary-layout-ambiguous
+    [ -L "$release_dir/codex" ] || fail_current current-binary-layout-ambiguous
+    [ "$(readlink "$release_dir/codex" 2>/dev/null)" = bin/codex ] ||
+      fail_current current-binary-layout-ambiguous
+    compat_real=$(readlink -f "$release_dir/codex" 2>/dev/null) ||
+      fail_current current-binary-layout-ambiguous
+    [ "$compat_real" = "$release_dir/bin/codex" ] ||
+      fail_current current-binary-layout-ambiguous
+    binary_relative_path=bin/codex
+    ;;
   *) fail_current current-binary-identity-unknown ;;
 esac
 binary="$release_dir/$binary_relative_path"
@@ -1242,6 +1277,43 @@ normalized_version_for_path() {
   '
 }
 
+# Select one canonical executable while accepting the official package's exact
+# codex -> bin/codex compatibility link.
+select_canonical_release_binary() {
+  codexhub_layout_dir=$1
+  codexhub_layout_selected_binary=""
+  codexhub_layout_selected_relative=""
+  codexhub_layout_bin="$codexhub_layout_dir/bin/codex"
+  codexhub_layout_compat="$codexhub_layout_dir/codex"
+  codexhub_layout_bin_present=no
+  codexhub_layout_compat_present=no
+  { [ -e "$codexhub_layout_bin" ] || [ -L "$codexhub_layout_bin" ]; } && codexhub_layout_bin_present=yes
+  { [ -e "$codexhub_layout_compat" ] || [ -L "$codexhub_layout_compat" ]; } && codexhub_layout_compat_present=yes
+  case "$codexhub_layout_bin_present:$codexhub_layout_compat_present" in
+    yes:no)
+      codexhub_layout_selected_binary=$codexhub_layout_bin
+      codexhub_layout_selected_relative=bin/codex
+      ;;
+    no:yes)
+      codexhub_layout_selected_binary=$codexhub_layout_compat
+      codexhub_layout_selected_relative=codex
+      ;;
+    yes:yes)
+      [ -f "$codexhub_layout_bin" ] && [ -x "$codexhub_layout_bin" ] && [ ! -L "$codexhub_layout_bin" ] || return 1
+      [ -L "$codexhub_layout_compat" ] || return 1
+      [ "$(readlink "$codexhub_layout_compat" 2>/dev/null)" = bin/codex ] || return 1
+      codexhub_layout_compat_real=$(readlink -f "$codexhub_layout_compat" 2>/dev/null) || return 1
+      [ "$codexhub_layout_compat_real" = "$codexhub_layout_bin" ] || return 1
+      codexhub_layout_selected_binary=$codexhub_layout_bin
+      codexhub_layout_selected_relative=bin/codex
+      ;;
+    *) return 1 ;;
+  esac
+  [ -f "$codexhub_layout_selected_binary" ] && [ -x "$codexhub_layout_selected_binary" ] &&
+    [ ! -L "$codexhub_layout_selected_binary" ] || return 1
+  return 0
+}
+
 # Accepts only a literal canonical release entry with a supported binary layout.
 verify_direct_release_target() {
   path=$1
@@ -1255,17 +1327,9 @@ verify_direct_release_target() {
   release_dir="$release_root/$release_entry"
   [ -d "$release_root" ] && [ ! -L "$release_root" ] || return 1
   [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || return 1
-  direct_layout_count=0
-  selected_direct_relative=""
-  for direct_relative in bin/codex codex; do
-    direct_binary="$release_dir/$direct_relative"
-    if [ -e "$direct_binary" ] || [ -L "$direct_binary" ]; then
-      direct_layout_count=$((direct_layout_count + 1))
-      selected_direct_relative=$direct_relative
-    fi
-  done
-  [ "$direct_layout_count" -eq 1 ] || return 1
-  [ "$selected_direct_relative" = "$relative" ] || return 1
+  select_canonical_release_binary "$release_dir" || return 1
+  [ "$codexhub_layout_selected_relative" = "$relative" ] || return 1
+  [ "$codexhub_layout_selected_binary" = "$path" ] || return 1
   [ -f "$path" ] && [ -x "$path" ] && [ ! -L "$path" ] || return 1
   release_root_real=$(readlink -f "$release_root" 2>/dev/null) || return 1
   release_dir_real=$(readlink -f "$release_dir" 2>/dev/null) || return 1
@@ -1295,17 +1359,9 @@ select_verified_current_binary() {
   current_entry=${current_dir_real#"$release_root"/}
   is_safe_component "$current_entry" || return 1
   [ "$current_dir_real" = "$release_root/$current_entry" ] || return 1
-  current_match_count=0
-  for current_relative in bin/codex codex; do
-    current_direct="$current_dir_real/$current_relative"
-    if [ -e "$current_direct" ] || [ -L "$current_direct" ]; then
-      current_match_count=$((current_match_count + 1))
-      [ "$current_match_count" -eq 1 ] || return 1
-      saved_current_direct=$current_direct
-      saved_current_relative=$current_relative
-    fi
-  done
-  [ "$current_match_count" -eq 1 ] || return 1
+  select_canonical_release_binary "$current_dir_real" || return 1
+  saved_current_direct=$codexhub_layout_selected_binary
+  saved_current_relative=$codexhub_layout_selected_relative
   verify_direct_release_target "$saved_current_direct" || return 1
   [ "$verified_release_entry" = "$current_entry" ] || return 1
   standalone_current="$current_link/$saved_current_relative"
@@ -1584,8 +1640,8 @@ runtime_signal_failure() {
 }
 trap runtime_signal_failure HUP INT TERM
 
-# Re-selects the exact pre-operation standalone entry. This is deliberately
-# independent from the installer-mutated current link and rejects dual layouts.
+# Re-selects the exact pre-operation standalone entry independently from the
+# installer-mutated current link and accepts only the verified package alias.
 restore_exact_current_floor() {
   [ "$exact_current_floor_available" = yes ] || return 1
   verify_direct_release_target "$floor_binary" || return 1
@@ -1681,7 +1737,7 @@ elif [ -n "$minimum_current_entry" ] || [ -n "$minimum_current_binary_relative_p
   fail_runtime minimum-current-markers-inconsistent
 fi
 
-# A present standalone/current must have exactly one direct executable layout.
+# A present standalone/current must resolve to one canonical executable layout.
 # When the exact floor is known, repair a missing, ambiguous, or regressed link
 # before any ordinary candidate floor can reject the recovery path.
 current_verified=no
@@ -2681,17 +2737,33 @@ select_release_binary() {
   release_dir_basename=${release_dir##*/}
   is_safe_release_entry "$release_dir_basename" || return 1
   [ "$release_dir_real" = "$release_root_real/$release_dir_basename" ] || return 1
-  release_binary_match_count=0
-  for binary_relative_path in bin/codex codex; do
-    binary="$release_dir/$binary_relative_path"
-    if [ -e "$binary" ] || [ -L "$binary" ]; then
-      release_binary_match_count=$((release_binary_match_count + 1))
-      [ "$release_binary_match_count" -eq 1 ] || return 1
-      saved_release_binary=$binary
-      saved_release_binary_relative_path=$binary_relative_path
-    fi
-  done
-  [ "$release_binary_match_count" -eq 1 ] || return 1
+  release_bin="$release_dir/bin/codex"
+  release_compat="$release_dir/codex"
+  release_bin_present=no
+  release_compat_present=no
+  { [ -e "$release_bin" ] || [ -L "$release_bin" ]; } && release_bin_present=yes
+  { [ -e "$release_compat" ] || [ -L "$release_compat" ]; } && release_compat_present=yes
+  case "$release_bin_present:$release_compat_present" in
+    yes:no)
+      saved_release_binary=$release_bin
+      saved_release_binary_relative_path=bin/codex
+      ;;
+    no:yes)
+      saved_release_binary=$release_compat
+      saved_release_binary_relative_path=codex
+      ;;
+    yes:yes)
+      # Treat the official compatibility link as one canonical package layout.
+      [ -f "$release_bin" ] && [ -x "$release_bin" ] && [ ! -L "$release_bin" ] || return 1
+      [ -L "$release_compat" ] || return 1
+      [ "$(readlink "$release_compat" 2>/dev/null)" = bin/codex ] || return 1
+      release_compat_real=$(readlink -f "$release_compat" 2>/dev/null) || return 1
+      [ "$release_compat_real" = "$release_bin" ] || return 1
+      saved_release_binary=$release_bin
+      saved_release_binary_relative_path=bin/codex
+      ;;
+    *) return 1 ;;
+  esac
   [ -f "$saved_release_binary" ] && [ -x "$saved_release_binary" ] &&
     [ ! -L "$saved_release_binary" ] || return 1
   binary_real=$(readlink -f "$saved_release_binary" 2>/dev/null) || return 1
@@ -4606,7 +4678,7 @@ rm -rf "$root"
     }
 
     #[test]
-    fn reconcile_current_layout_count_precedes_unique_binary_validation() {
+    fn canonical_release_layout_selection_precedes_binary_validation() {
         let script = remote_codex_runtime_reconcile_script();
         let selector = script
             .split_once("select_verified_current_binary() {")
@@ -4615,20 +4687,13 @@ rm -rf "$root"
                     .map(|(body, _)| body)
             })
             .expect("current selector");
-        let direct_count = selector
-            .find("current_match_count=$((current_match_count + 1))")
-            .expect("direct executable layout count");
-        let existence_count = selector
-            .find("if [ -e \"$current_direct\" ] || [ -L \"$current_direct\" ]; then")
-            .expect("all current direct paths count toward ambiguity");
-        let unique_guard = selector
-            .find("[ \"$current_match_count\" -eq 1 ] || return 1")
-            .expect("unique executable layout guard");
+        let layout_selection = selector
+            .find("select_canonical_release_binary \"$current_dir_real\"")
+            .expect("canonical current layout selection");
         let identity_check = selector
             .find("verify_direct_release_target \"$saved_current_direct\"")
-            .expect("unique layout identity check");
-        assert!(existence_count < direct_count && direct_count < unique_guard);
-        assert!(unique_guard < identity_check);
+            .expect("canonical layout identity check");
+        assert!(layout_selection < identity_check);
         assert!(script.contains(
             "select_verified_current_binary || fail_runtime current-release-identity-unknown"
         ));
@@ -4641,20 +4706,17 @@ rm -rf "$root"
                     .map(|(body, _)| body)
             })
             .expect("cleanup release selector");
-        let cleanup_count = cleanup_selector
-            .find("release_binary_match_count=$((release_binary_match_count + 1))")
-            .expect("cleanup direct layout count");
-        let cleanup_existence = cleanup_selector
-            .find("if [ -e \"$binary\" ] || [ -L \"$binary\" ]; then")
-            .expect("all cleanup direct paths count toward ambiguity");
+        let cleanup_compatibility = cleanup_selector
+            .find("[ \"$(readlink \"$release_compat\" 2>/dev/null)\" = bin/codex ]")
+            .expect("cleanup official compatibility link guard");
         let cleanup_identity = cleanup_selector
             .find("binary_version=$(normalized_version_for_binary \"$saved_release_binary\"")
-            .expect("cleanup unique layout identity check");
-        assert!(cleanup_existence < cleanup_count && cleanup_count < cleanup_identity);
+            .expect("cleanup canonical layout identity check");
+        assert!(cleanup_compatibility < cleanup_identity);
     }
 
     #[test]
-    fn every_direct_release_verification_rejects_dual_layouts_before_mutation() {
+    fn every_direct_release_verification_accepts_only_the_official_compatibility_link() {
         let script = remote_codex_runtime_reconcile_script();
         let verifier = script
             .split_once("verify_direct_release_target() {")
@@ -4663,25 +4725,19 @@ rm -rf "$root"
                     .map(|(body, _)| body)
             })
             .expect("direct release verifier");
-        let layout_count = verifier
-            .find("direct_layout_count=$((direct_layout_count + 1))")
-            .expect("direct layout count");
-        let existence_count = verifier
-            .find("if [ -e \"$direct_binary\" ] || [ -L \"$direct_binary\" ]; then")
-            .expect("all direct paths count toward ambiguity");
-        let unique_guard = verifier
-            .find("[ \"$direct_layout_count\" -eq 1 ] || return 1")
-            .expect("direct layout unique guard");
+        let layout_selection = verifier
+            .find("select_canonical_release_binary \"$release_dir\"")
+            .expect("canonical direct layout selector");
         let version_probe = verifier
             .find("binary_version=$(normalized_version_for_path")
             .expect("binary version probe");
-        assert!(existence_count < layout_count);
-        assert!(layout_count < unique_guard && unique_guard < version_probe);
+        assert!(layout_selection < version_probe);
 
         let writer = REMOTE_CODEX_RUNTIME_WRITER_LOCK_PRELUDE;
         for required in [
-            "if [ -e \"$current_binary\" ] || [ -L \"$current_binary\" ]; then",
-            "if [ -e \"$locked_direct\" ] || [ -L \"$locked_direct\" ]; then",
+            "codexhub_runtime_select_release_binary \"$current_dir_real\" || return 1",
+            "codexhub_runtime_select_release_binary \"$codexhub_locked_current_dir\" || return 1",
+            "[ \"$(readlink \"$codexhub_layout_compat\" 2>/dev/null)\" = bin/codex ] || return 1",
             "[ \"$locked_binary_real\" = \"$locked_dir_real/$codexhub_locked_current_binary_relative_path\" ] || return 1",
         ] {
             assert!(writer.contains(required), "missing writer layout guard: {required}");
@@ -4689,6 +4745,7 @@ rm -rf "$root"
         for required in [
             "{ [ -e \"$release_dir/bin/codex\" ] || [ -L \"$release_dir/bin/codex\" ]; }",
             "{ [ -e \"$release_dir/codex\" ] || [ -L \"$release_dir/codex\" ]; }",
+            "[ \"$(readlink \"$release_dir/codex\" 2>/dev/null)\" = bin/codex ]",
         ] {
             assert!(
                 REMOTE_STRICT_CURRENT_VERSION_SCRIPT.contains(required),
@@ -5048,7 +5105,7 @@ rm -rf "$root"
     }
 
     #[test]
-    fn strict_current_probe_rejects_a_bad_second_direct_layout() {
+    fn strict_current_probe_accepts_the_official_package_compatibility_link() {
         let harness = r###"set -eu
 root=$(mktemp -d)
 home="$root/home"
@@ -5081,11 +5138,54 @@ rm -rf "$root"
             "strict current fixture failed: {}",
             output.stderr
         );
+        let current = parse_remote_strict_current_version_output(&output)
+            .expect("official package current probe")
+            .expect("official package current runtime");
+        assert_eq!(current.version, "0.145.0");
+        assert_eq!(current.release_entry, "0.145.0");
+        assert_eq!(current.binary_relative_path, "bin/codex");
+        assert!(output.stdout.contains("CODEXHUB_TEST_STATUS=0"));
+    }
+
+    #[test]
+    fn strict_current_probe_rejects_a_noncanonical_second_direct_layout() {
+        let harness = r###"set -eu
+root=$(mktemp -d)
+home="$root/home"
+release="$home/.codex/packages/standalone/releases/0.145.0"
+mkdir -p "$release/bin" "$release/other"
+cat >"$release/bin/codex" <<'CODEXHUB_BIN'
+#!/bin/sh
+printf 'codex-cli 0.145.0\n'
+CODEXHUB_BIN
+chmod 700 "$release/bin/codex"
+ln -s other/codex "$release/codex"
+ln -s "$release" "$home/.codex/packages/standalone/current"
+cat >"$root/probe.sh" <<'CODEXHUB_PROBE_SCRIPT'
+__PROBE_SCRIPT__
+CODEXHUB_PROBE_SCRIPT
+set +e
+HOME="$home" sh "$root/probe.sh" >"$root/out"
+status=$?
+set -e
+cat "$root/out"
+printf 'CODEXHUB_TEST_STATUS=%s\n' "$status"
+rm -rf "$root"
+"###
+        .replace("__PROBE_SCRIPT__", REMOTE_STRICT_CURRENT_VERSION_SCRIPT);
+        let Some(output) = run_sh(&harness) else {
+            return;
+        };
+        assert!(
+            output.success(),
+            "strict current invalid compatibility fixture failed: {}",
+            output.stderr
+        );
         let error = parse_remote_strict_current_version_output(&ssh::SshCommandOutput {
             exit_code: Some(1),
             ..output.clone()
         })
-        .expect_err("a second symlink layout must be ambiguous");
+        .expect_err("a noncanonical compatibility link must remain ambiguous");
         assert!(error.contains("current-binary-layout-ambiguous"));
         assert!(output.stdout.contains("CODEXHUB_TEST_STATUS=1"));
     }
@@ -5409,7 +5509,11 @@ rm -rf "$root"
     #[test]
     fn reconcile_accepts_native_launcher_aliasing_the_verified_current_binary() {
         let generated = remote_codex_runtime_reconcile_script();
-        for (layout_name, relative) in [("legacy", "bin/codex"), ("official", "codex")] {
+        for (layout_name, relative, compatibility_link) in [
+            ("legacy", "bin/codex", false),
+            ("official-legacy", "codex", false),
+            ("official-package", "bin/codex", true),
+        ] {
             let harness = r###"set -eu
 root=$(mktemp -d)
 home="$root/home"
@@ -5422,6 +5526,7 @@ cat >"$release/$relative" <<'CODEXHUB_NATIVE_BIN'
 printf 'codex-cli 0.144.6\n'
 CODEXHUB_NATIVE_BIN
 chmod 700 "$release/$relative"
+__COMPATIBILITY_LINK__
 printf 'CodexHub managed standalone release v1\nversion=0.144.6\n' >"$release/.codexhub-managed-release"
 ln -s "$release" "$home/.codex/packages/standalone/current"
 # Native installers leave the public command as a symlink to the same verified binary.
@@ -5446,6 +5551,14 @@ rm -rf "$root"
 exit "$status"
 "###
             .replace("__RELATIVE__", relative)
+            .replace(
+                "__COMPATIBILITY_LINK__",
+                if compatibility_link {
+                    "ln -s bin/codex \"$release/codex\""
+                } else {
+                    ""
+                },
+            )
             .replace("__RECONCILE_SCRIPT__", generated);
             let Some(output) = run_sh(&harness) else {
                 return;
@@ -5975,7 +6088,7 @@ exit 0
             "active_candidate=\"\"",
             "rm -rf \"$quarantine\"",
             "binary_version=$(normalized_version_for_binary",
-            "[ \"$release_binary_match_count\" -eq 1 ] || return 1",
+            "[ \"$(readlink \"$release_compat\" 2>/dev/null)\" = bin/codex ] || return 1",
             "capture_marker_suffix=\".codexhub-managed-capture\"",
             "verify_capture_candidate \"$candidate\"",
             "[ \"$observed_proc_exe\" = \"$capture_real\" ]",
@@ -6705,6 +6818,52 @@ rm -rf "$root"
     }
 
     #[test]
+    fn shared_writer_accepts_official_package_compatibility_layout_after_install() {
+        let generated = with_remote_codex_runtime_writer_lock(
+            r#"release="$HOME/.codex/packages/standalone/releases/0.145.0-aarch64-unknown-linux-musl"
+mkdir -p "$release/bin"
+cat >"$release/bin/codex" <<'CODEXHUB_TEST_BIN'
+#!/bin/sh
+printf 'codex-cli 0.145.0\n'
+CODEXHUB_TEST_BIN
+chmod 700 "$release/bin/codex"
+ln -s bin/codex "$release/codex"
+ln -s "$release" "$HOME/.codex/packages/standalone/current"
+codexhub_runtime_verify_post_mutation_floor || exit 69
+printf 'CODEXHUB_TEST_POST_VERIFY=success\n'"#,
+        );
+        let harness = r###"set -eu
+root=$(mktemp -d)
+home="$root/home"
+mkdir -p "$home/.codex/packages/standalone/releases"
+cat >"$root/writer.sh" <<'CODEXHUB_WRITER_SCRIPT'
+__WRITER_SCRIPT__
+CODEXHUB_WRITER_SCRIPT
+HOME="$home" PATH="$PATH" sh "$root/writer.sh" >"$root/out"
+cat "$root/out"
+if [ -e "$home/.codexhub-runtime-cleanup.lock" ]; then lock=present; else lock=absent; fi
+printf 'CODEXHUB_TEST_LOCK=%s\n' "$lock"
+printf 'CODEXHUB_TEST_CURRENT=%s\n' "$(readlink -f "$home/.codex/packages/standalone/current")"
+rm -rf "$root"
+"###
+        .replace("__WRITER_SCRIPT__", &generated);
+        let Some(output) = run_sh(&harness) else {
+            return;
+        };
+        assert!(
+            output.success(),
+            "official package writer fixture failed: stdout={} stderr={}",
+            output.stdout,
+            output.stderr
+        );
+        assert!(output.stdout.contains("CODEXHUB_TEST_POST_VERIFY=success"));
+        assert!(output.stdout.contains("CODEXHUB_TEST_LOCK=absent"));
+        assert!(output
+            .stdout
+            .contains("/releases/0.145.0-aarch64-unknown-linux-musl"));
+    }
+
+    #[test]
     fn shared_writer_uses_locked_runtime_floor_and_restores_exact_current_on_failure() {
         let floor_prelude = remote_version_floor_prelude(None, None).expect("empty host floors");
         let reject_body = r#"if codexhub_version_meets_floors 0.144.5; then
@@ -7071,7 +7230,7 @@ for item in \
   "VENDOR_OLD:$releases/0.141.0-x86_64-unknown-linux-musl" \
   "IN_USE_OLD:$releases/0.142.0" \
   "INVALID_MARKER:$releases/0.143.0" \
-  "AMBIGUOUS:$releases/0.144.0" \
+  "OFFICIAL_PACKAGE:$releases/0.144.0" \
   "CURRENT:$releases/0.145.0" \
   "EQUAL:$releases/0.145.0-other" \
   "HIGHER:$releases/0.146.0"
@@ -7092,6 +7251,7 @@ for item in \
   "BACKUP_MARKED_OLD:$backup/releases/0.139.0" \
   "BACKUP_UNMARKED_OLD:$backup/releases/0.140.0" \
   "BACKUP_VENDOR_OLD:$backup/releases/0.141.0-x86_64-unknown-linux-musl" \
+  "BACKUP_OFFICIAL_PACKAGE:$backup/releases/0.144.0" \
   "BACKUP_LOCAL_LINK:$backup/links/local-bin/codex.codexhub.bak.fixture" \
   "BACKUP_TMP_LINK:$backup/links/codex-tmp-arg0/codex-arg0fixture/apply_patch"
 do
@@ -7139,21 +7299,27 @@ rm -rf "$root"
             ..output.clone()
         })
         .expect("second update cleanup result");
-        assert_eq!(first_result.adopted_count, 3);
-        assert_eq!(first_result.removed_count, 3);
-        assert_eq!(first_result.backed_up_count, 3);
+        assert_eq!(first_result.adopted_count, 4);
+        assert_eq!(first_result.removed_count, 4);
+        assert_eq!(first_result.backed_up_count, 4);
         assert!(first_result.backup_id.is_some());
-        assert_eq!(first_result.retained_count, 6);
+        assert_eq!(first_result.retained_count, 5);
         assert_eq!(second_result.adopted_count, 0);
         assert_eq!(second_result.removed_count, 1);
         assert_eq!(second_result.backed_up_count, 0);
         assert!(second_result.backup_id.is_none());
-        assert_eq!(second_result.retained_count, 5);
+        assert_eq!(second_result.retained_count, 4);
         assert!(second.contains("CODEXHUB_TEST_IN_USE_MARKER=valid"));
-        for label in ["MARKED_OLD", "UNMARKED_OLD", "VENDOR_OLD", "IN_USE_OLD"] {
+        for label in [
+            "MARKED_OLD",
+            "UNMARKED_OLD",
+            "VENDOR_OLD",
+            "IN_USE_OLD",
+            "OFFICIAL_PACKAGE",
+        ] {
             assert!(second.contains(&format!("CODEXHUB_TEST_{label}=absent")));
         }
-        for label in ["INVALID_MARKER", "AMBIGUOUS", "CURRENT", "EQUAL", "HIGHER"] {
+        for label in ["INVALID_MARKER", "CURRENT", "EQUAL", "HIGHER"] {
             assert!(second.contains(&format!("CODEXHUB_TEST_{label}=present")));
         }
         assert!(second.contains("CODEXHUB_TEST_INVALID_MARKER_TEXT=unmanaged marker"));
@@ -7164,6 +7330,7 @@ rm -rf "$root"
             "BACKUP_MARKED_OLD",
             "BACKUP_UNMARKED_OLD",
             "BACKUP_VENDOR_OLD",
+            "BACKUP_OFFICIAL_PACKAGE",
             "BACKUP_LOCAL_LINK",
             "BACKUP_TMP_LINK",
         ] {

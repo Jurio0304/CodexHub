@@ -478,7 +478,16 @@ impl StableUpdateNetworkRoute {
     }
 }
 
-const LOCAL_PROXY_PORTS: &[u16] = &[7890, 7897, 7891, 1080, 10808, 8080, 9090, 20171];
+const LOCAL_PROXY_PORTS: &[u16] = &[7890, 7897, 7891, 7892, 1080, 10808, 8080, 9090, 20171];
+const REMOTE_CODEX_PROXY_PREFLIGHT_ENDPOINTS: &[(&str, &str)] = &[
+    ("official installer", "https://chatgpt.com/codex/install.sh"),
+    (
+        "Codex release API",
+        "https://api.github.com/repos/openai/codex/releases/latest",
+    ),
+];
+const REMOTE_CODEX_PROXY_PREFLIGHT_ATTEMPTS: usize = 2;
+const REMOTE_CODEX_PROXY_PREFLIGHT_RETRY_DELAY: Duration = Duration::from_millis(250);
 const PROXY_ENV_NAMES: &[&str] = &[
     "HTTPS_PROXY",
     "https_proxy",
@@ -574,6 +583,172 @@ pub(crate) fn local_proxy_candidates() -> Vec<(String, Url)> {
                 .map(|url| (format!("local-port:{port}"), url))
         })
         .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteCodexProxyTunnelRoute {
+    pub(crate) source: String,
+    pub(crate) local_port: u16,
+    proxy_url: Url,
+}
+
+impl RemoteCodexProxyTunnelRoute {
+    pub(crate) fn proxy_environment_url(&self, remote_port: u16) -> Result<String, String> {
+        if remote_port == 0 {
+            return Err("Remote proxy tunnel port must be non-zero.".into());
+        }
+        let mut url = self.proxy_url.clone();
+        url.set_host(Some("127.0.0.1"))
+            .map_err(|_| "Could not build the remote proxy tunnel URL.".to_string())?;
+        url.set_port(Some(remote_port))
+            .map_err(|_| "Could not set the remote proxy tunnel port.".to_string())?;
+        url.set_path("");
+        url.set_query(None);
+        url.set_fragment(None);
+        Ok(url.to_string())
+    }
+}
+
+/// Resolve only short-lived localhost proxy routes that are safe to expose through SSH -R.
+pub(crate) fn remote_codex_proxy_tunnel_candidates(
+    settings: &AppSettings,
+) -> (Vec<RemoteCodexProxyTunnelRoute>, Vec<String>) {
+    if settings.network_proxy_mode == NetworkProxyMode::Direct {
+        return (Vec::new(), vec!["proxy mode is direct".into()]);
+    }
+
+    let mut notes = Vec::new();
+    let entries = match settings.network_proxy_mode {
+        NetworkProxyMode::Direct => Vec::new(),
+        NetworkProxyMode::Manual => match normalize_proxy_url(&settings.network_proxy_url) {
+            Some(url) => vec![("manual".into(), url)],
+            None => {
+                if !settings.network_proxy_url.trim().is_empty() {
+                    notes.push("manual proxy URL is invalid".into());
+                }
+                Vec::new()
+            }
+        },
+        NetworkProxyMode::Auto => {
+            let mut entries = env_proxy_candidates();
+            entries.extend(local_proxy_candidates());
+            dedupe_proxy_entries(entries)
+        }
+    };
+
+    let mut routes = Vec::new();
+    for (source, url) in entries {
+        if !matches!(url.scheme(), "http" | "https") {
+            notes.push(format!(
+                "{source} uses an unsupported remote-install proxy scheme"
+            ));
+            continue;
+        }
+        if !proxy_is_localhost(&url) {
+            notes.push(format!("{source} is not a localhost proxy"));
+            continue;
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            notes.push(format!("{source} requires proxy credentials"));
+            continue;
+        }
+        if !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
+            notes.push(format!(
+                "{source} contains unsupported proxy URL components"
+            ));
+            continue;
+        }
+        let Some(local_port) = url.port_or_known_default() else {
+            notes.push(format!("{source} has no usable proxy port"));
+            continue;
+        };
+        if !localhost_proxy_port_is_open(local_port) {
+            notes.push(format!("{source} did not accept a local TCP connection"));
+            continue;
+        }
+        // The reverse tunnel always targets IPv4 loopback. Canonicalizing here
+        // keeps the local preflight and the later SSH forwarding on one endpoint.
+        let mut proxy_url = url;
+        if proxy_url.set_host(Some("127.0.0.1")).is_err() {
+            notes.push(format!("{source} could not be normalized to localhost"));
+            continue;
+        }
+        routes.push(RemoteCodexProxyTunnelRoute {
+            source,
+            local_port,
+            proxy_url,
+        });
+    }
+    (routes, notes)
+}
+
+pub(crate) fn preflight_remote_codex_proxy_tunnel(
+    route: &RemoteCodexProxyTunnelRoute,
+) -> Result<(), String> {
+    let proxy = reqwest::Proxy::all(route.proxy_url.as_str())
+        .map_err(|_| format!("Proxy route {} is invalid.", route.source))?;
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .proxy(proxy)
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::limited(8))
+        .user_agent(format!("CodexHub/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|_| format!("Proxy route {} could not be initialized.", route.source))?;
+
+    for (endpoint_name, endpoint_url) in REMOTE_CODEX_PROXY_PREFLIGHT_ENDPOINTS {
+        retry_remote_codex_proxy_preflight(
+            endpoint_name,
+            REMOTE_CODEX_PROXY_PREFLIGHT_ATTEMPTS,
+            REMOTE_CODEX_PROXY_PREFLIGHT_RETRY_DELAY,
+            || match client.get(*endpoint_url).send() {
+                Ok(response) if response.status().is_success() => Ok(()),
+                Ok(_) => Err("returned an unsuccessful HTTP status"),
+                Err(error) => Err(remote_codex_proxy_preflight_failure(&error)),
+            },
+        )
+        .map_err(|error| format!("Proxy route {} {error}.", route.source))?;
+    }
+    Ok(())
+}
+
+fn remote_codex_proxy_preflight_failure(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timed out"
+    } else if error.is_connect() {
+        "connection failed"
+    } else if error.is_redirect() {
+        "redirect failed"
+    } else {
+        "request failed"
+    }
+}
+
+/// Retry only the advisory local endpoint check; the real SSH tunnel remains authoritative.
+fn retry_remote_codex_proxy_preflight<T, F>(
+    endpoint_name: &str,
+    attempts: usize,
+    retry_delay: Duration,
+    mut request: F,
+) -> Result<T, String>
+where
+    F: FnMut() -> Result<T, &'static str>,
+{
+    let attempts = attempts.max(1);
+    let mut last_failure = "request failed";
+    for attempt in 1..=attempts {
+        match request() {
+            Ok(value) => return Ok(value),
+            Err(failure) => last_failure = failure,
+        }
+        if attempt < attempts && !retry_delay.is_zero() {
+            std::thread::sleep(retry_delay);
+        }
+    }
+    Err(format!(
+        "preflight for {endpoint_name} {last_failure} after {attempts} attempts"
+    ))
 }
 
 pub(crate) fn dedupe_proxy_entries(entries: Vec<(String, Url)>) -> Vec<(String, Url)> {
@@ -959,4 +1134,143 @@ where
     tauri::async_runtime::spawn_blocking(command)
         .await
         .map_err(|error| format!("{label} worker failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manual_proxy_settings(value: impl Into<String>) -> AppSettings {
+        let mut settings = AppSettings::default();
+        settings.network_proxy_mode = NetworkProxyMode::Manual;
+        settings.network_proxy_url = value.into();
+        settings
+    }
+
+    #[test]
+    fn direct_mode_disables_remote_codex_proxy_tunnels() {
+        let mut settings = AppSettings::default();
+        settings.network_proxy_mode = NetworkProxyMode::Direct;
+        settings.network_proxy_url = "http://127.0.0.1:7890".into();
+
+        let (routes, notes) = remote_codex_proxy_tunnel_candidates(&settings);
+
+        assert!(routes.is_empty());
+        assert_eq!(notes, vec!["proxy mode is direct"]);
+    }
+
+    #[test]
+    fn auto_detection_includes_local_proxy_port_7892() {
+        assert!(LOCAL_PROXY_PORTS.contains(&7892));
+        assert_eq!(
+            LOCAL_PROXY_PORTS
+                .iter()
+                .filter(|port| **port == 7892)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn manual_loopback_http_proxy_is_eligible_for_remote_tunnel() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind proxy fixture");
+        let local_port = listener.local_addr().expect("proxy fixture address").port();
+        let settings = manual_proxy_settings(format!("http://localhost:{local_port}"));
+
+        let (routes, notes) = remote_codex_proxy_tunnel_candidates(&settings);
+
+        assert!(notes.is_empty());
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].source, "manual");
+        assert_eq!(routes[0].local_port, local_port);
+        assert_eq!(routes[0].proxy_url.host_str(), Some("127.0.0.1"));
+    }
+
+    #[test]
+    fn remote_tunnel_rejects_non_loopback_authenticated_and_socks_proxies() {
+        let cases = [
+            ("http://192.0.2.10:7890", "not a localhost proxy"),
+            (
+                "http://user:secret@127.0.0.1:7890",
+                "requires proxy credentials",
+            ),
+            (
+                "socks5://127.0.0.1:7890",
+                "unsupported remote-install proxy scheme",
+            ),
+        ];
+
+        for (value, expected_note) in cases {
+            let (routes, notes) =
+                remote_codex_proxy_tunnel_candidates(&manual_proxy_settings(value));
+            assert!(routes.is_empty(), "unexpected route for {value}");
+            assert!(
+                notes.iter().any(|note| note.contains(expected_note)),
+                "missing rejection note for {value}: {notes:?}"
+            );
+            assert!(!notes.join(" ").contains("secret"));
+        }
+    }
+
+    #[test]
+    fn remote_proxy_environment_url_uses_tunnel_loopback_and_port() {
+        let route = RemoteCodexProxyTunnelRoute {
+            source: "fixture".into(),
+            local_port: 7890,
+            proxy_url: Url::parse("https://localhost:7890").expect("fixture proxy URL"),
+        };
+
+        assert_eq!(
+            route
+                .proxy_environment_url(43_210)
+                .expect("remote proxy URL"),
+            "https://127.0.0.1:43210/"
+        );
+        assert!(route.proxy_environment_url(0).is_err());
+    }
+
+    #[test]
+    fn remote_proxy_preflight_recovers_after_one_transient_failure() {
+        let mut attempts = 0;
+
+        let result = retry_remote_codex_proxy_preflight(
+            "official installer",
+            REMOTE_CODEX_PROXY_PREFLIGHT_ATTEMPTS,
+            Duration::ZERO,
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("timed out")
+                } else {
+                    Ok("reachable")
+                }
+            },
+        );
+
+        assert_eq!(result.as_deref(), Ok("reachable"));
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn remote_proxy_preflight_stops_after_two_failed_attempts() {
+        let mut attempts = 0;
+
+        let error = retry_remote_codex_proxy_preflight(
+            "Codex release API",
+            REMOTE_CODEX_PROXY_PREFLIGHT_ATTEMPTS,
+            Duration::ZERO,
+            || {
+                attempts += 1;
+                Err::<(), _>("connection failed")
+            },
+        )
+        .expect_err("preflight should report the bounded failure");
+
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            error,
+            "preflight for Codex release API connection failed after 2 attempts"
+        );
+        assert!(!error.contains("https://"));
+    }
 }
