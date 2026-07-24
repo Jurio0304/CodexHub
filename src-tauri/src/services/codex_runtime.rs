@@ -2946,17 +2946,33 @@ verify_backup_release() {
   backup_candidate_real=$(readlink -f "$backup_candidate" 2>/dev/null) || return 1
   [ "$backup_candidate_parent_real" = "$backup_releases_real" ] || return 1
   [ "$backup_candidate_real" = "$backup_releases_real/$expected_name" ] || return 1
-  backup_binary_count=0
-  for backup_binary_relative in bin/codex codex; do
-    backup_binary="$backup_candidate/$backup_binary_relative"
-    if [ -e "$backup_binary" ] || [ -L "$backup_binary" ]; then
-      backup_binary_count=$((backup_binary_count + 1))
-      [ "$backup_binary_count" -eq 1 ] || return 1
-      selected_backup_binary=$backup_binary
-      selected_backup_binary_relative=$backup_binary_relative
-    fi
-  done
-  [ "$backup_binary_count" -eq 1 ] || return 1
+  backup_bin="$backup_candidate/bin/codex"
+  backup_compat="$backup_candidate/codex"
+  backup_bin_present=no
+  backup_compat_present=no
+  { [ -e "$backup_bin" ] || [ -L "$backup_bin" ]; } && backup_bin_present=yes
+  { [ -e "$backup_compat" ] || [ -L "$backup_compat" ]; } && backup_compat_present=yes
+  case "$backup_bin_present:$backup_compat_present" in
+    yes:no)
+      selected_backup_binary=$backup_bin
+      selected_backup_binary_relative=bin/codex
+      ;;
+    no:yes)
+      selected_backup_binary=$backup_compat
+      selected_backup_binary_relative=codex
+      ;;
+    yes:yes)
+      # Keep the exact official compatibility link valid after staging the backup.
+      [ -f "$backup_bin" ] && [ -x "$backup_bin" ] && [ ! -L "$backup_bin" ] || return 1
+      [ -L "$backup_compat" ] || return 1
+      [ "$(readlink "$backup_compat" 2>/dev/null)" = bin/codex ] || return 1
+      backup_compat_real=$(readlink -f "$backup_compat" 2>/dev/null) || return 1
+      [ "$backup_compat_real" = "$backup_candidate_real/bin/codex" ] || return 1
+      selected_backup_binary=$backup_bin
+      selected_backup_binary_relative=bin/codex
+      ;;
+    *) return 1 ;;
+  esac
   [ -f "$selected_backup_binary" ] && [ -x "$selected_backup_binary" ] &&
     [ ! -L "$selected_backup_binary" ] || return 1
   selected_backup_binary_real=$(readlink -f "$selected_backup_binary" 2>/dev/null) || return 1
@@ -4713,6 +4729,23 @@ rm -rf "$root"
             .find("binary_version=$(normalized_version_for_binary \"$saved_release_binary\"")
             .expect("cleanup canonical layout identity check");
         assert!(cleanup_compatibility < cleanup_identity);
+
+        let backup_verifier = cleanup
+            .split_once("verify_backup_release() {")
+            .and_then(|(_, tail)| {
+                tail.split_once("verify_backup_capture() {")
+                    .map(|(body, _)| body)
+            })
+            .expect("backup release verifier");
+        for required in [
+            "[ \"$(readlink \"$backup_compat\" 2>/dev/null)\" = bin/codex ]",
+            "[ \"$backup_compat_real\" = \"$backup_candidate_real/bin/codex\" ]",
+        ] {
+            assert!(
+                backup_verifier.contains(required),
+                "missing backup compatibility guard: {required}"
+            );
+        }
     }
 
     #[test]
