@@ -19,6 +19,8 @@ import type {
   LatestCodexVersionDto,
   LocalCodexStatusDto,
   MemorySnapshotDto,
+  StorageSnapshotDto,
+  StorageFilesystemSnapshotDto,
   NetworkProxyCandidateDto,
   NetworkProxyStatusDto,
   RemoteCodexActionDto,
@@ -420,6 +422,8 @@ export type GpuMemoryMode = GpuMemoryModeDto;
 export type GpuTool = "nvidia-smi" | "rocm-smi" | "lspci" | "none" | string;
 export type CpuSnapshot = CpuSnapshotDto;
 export type MemorySnapshot = MemorySnapshotDto;
+export type StorageSnapshot = StorageSnapshotDto;
+export type StorageFilesystemSnapshot = StorageFilesystemSnapshotDto;
 export type GpuProcessSnapshot = GpuProcessSnapshotDto;
 export type GpuSnapshot = GpuSnapshotDto;
 export type HostResourceSnapshot = HostResourceSnapshotDto;

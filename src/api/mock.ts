@@ -774,17 +774,19 @@ async function mockRemoteProbeWithProgress(
 
 function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourceBatchResult["snapshots"][number] {
   const host = fallbackHostForAlias(hostAlias);
+  const sampledAt = new Date().toISOString();
   if (hostAlias.toLowerCase().includes("timeout")) {
     return {
       hostAlias: host.hostAlias,
       status: "failed",
       sshStatus: "offline",
       timedOut: true,
-      sampledAt: new Date().toISOString(),
+      sampledAt,
       latencyMs: null,
       error: "Resource sampling timed out after 10000 ms.",
       cpu: null,
       memory: null,
+      storage: null,
       gpuTool: "none",
       gpus: []
     };
@@ -840,7 +842,7 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
     status: profile === 1 ? "partial" : "ok",
     sshStatus: "online",
     timedOut: false,
-    sampledAt: new Date().toISOString(),
+    sampledAt,
     latencyMs: 35 + index * 18,
     error: null,
     cpu: {
@@ -855,6 +857,22 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
       totalBytes: nvidia ? 256 * 1024 ** 3 : 128 * 1024 ** 3,
       availableBytes: nvidia ? 114 * 1024 ** 3 : 92 * 1024 ** 3,
       usedPercent: nvidia ? 55.5 : 28.1
+    },
+    storage: {
+      totalBytes: 2 * 1024 ** 4,
+      availableBytes: (profile === 2 ? 256 : 768) * 1024 ** 3,
+      usedPercent: profile === 2 ? 87.5 : 62.5,
+      filesystems: [
+        {
+          totalBytes: 1024 ** 4, availableBytes: (profile === 2 ? 128 : 256) * 1024 ** 3,
+          source: "/dev/mock-system", filesystemType: "ext4", mountPoints: ["/"]
+        },
+        {
+          totalBytes: 1024 ** 4, availableBytes: (profile === 2 ? 128 : 512) * 1024 ** 3,
+          source: "/dev/mock-data", filesystemType: "xfs", mountPoints: ["/data"]
+        }
+      ],
+      sampledAt
     },
     gpuTool: nvidia ? "nvidia-smi" : "lspci",
     gpus: nvidia

@@ -176,7 +176,9 @@ export function mergeHostResourceSnapshot(
   hostAliases: string[]
 ) {
   const byAlias = new Map(current.map((item) => [item.hostAlias, item]));
-  byAlias.set(snapshot.hostAlias, snapshot);
+  // Keep the last storage reading and its own timestamp when an optional probe fails.
+  const storage = snapshot.storage ?? byAlias.get(snapshot.hostAlias)?.storage ?? null;
+  byAlias.set(snapshot.hostAlias, { ...snapshot, storage });
   return hostAliases.flatMap((hostAlias) => {
     const item = byAlias.get(hostAlias);
     return item ? [item] : [];
@@ -335,7 +337,7 @@ type MonitorGpuMemoryUsage = {
   processUsedBytes: number;
   usedBytes: number;
 };
-type MonitorMeterTone = "memory" | "cpu" | "gpu" | "green" | "yellow" | "red" | "gray";
+type MonitorMeterTone = "memory" | "storage" | "cpu" | "gpu" | "green" | "yellow" | "red" | "gray";
 type MonitorDragState = {
   alias: string;
   offsetX: number;
@@ -570,6 +572,8 @@ export const uiCopy = {
       noData: "No sample yet.",
       cpu: "CPU",
       memory: "Memory",
+      storage: "Storage",
+      storageLastSample: "Last storage sample",
       gpu: "GPU",
       load: "Load",
       cores: "Cores",
@@ -1481,6 +1485,8 @@ export const uiCopy = {
       noData: "尚无采样。",
       cpu: "CPU",
       memory: "内存",
+      storage: "存储",
+      storageLastSample: "上次存储采样",
       gpu: "GPU",
       load: "负载",
       cores: "核心",
@@ -3192,7 +3198,10 @@ function App() {
           setHosts((current) => applyHostResourceConnectivityToHosts(current, event.snapshot, copy.common.justNow));
         }
       );
-      setResourceSnapshots(result.snapshots);
+      setResourceSnapshots((current) => result.snapshots.reduce(
+        (next, snapshot) => mergeHostResourceSnapshot(next, snapshot, hostAliases),
+        current
+      ));
       setHosts((current) => result.snapshots.reduce(
         (next, snapshot) => applyHostResourceConnectivityToHosts(next, snapshot, copy.common.justNow),
         current
@@ -6131,7 +6140,7 @@ export function CircularStatusIndicator({ label, state }: { label: string; state
   );
 }
 
-function MonitorHostCard({
+export function MonitorHostCard({
   copy,
   dragging,
   host,
@@ -6224,6 +6233,7 @@ function MonitorHostCard({
           tone="memory"
           value={formatPercent(memoryPercent, copy)}
         />
+        <MonitorStorageTile copy={copy} snapshot={snapshot} />
         <MonitorSummaryTile
           copy={copy}
           detail={formatMonitorMetricDetail(copy.monitor.load, formatCpuLoadSummary(snapshot?.cpu, copy), copy)}
@@ -6238,7 +6248,7 @@ function MonitorHostCard({
           label={copy.monitor.gpu}
           meterValue={gpuMemory.percent}
           tone={gpuCount > 0 ? "gpu" : "gray"}
-          value={String(gpuCount)}
+          value={formatPercent(gpuMemory.percent, copy)}
         />
       </div>
 
@@ -6270,6 +6280,8 @@ function MonitorSummaryTile({
   detail,
   label,
   meterValue,
+  stale,
+  title,
   tone,
   value
 }: {
@@ -6277,18 +6289,43 @@ function MonitorSummaryTile({
   detail: string;
   label: string;
   meterValue?: number | null;
+  stale?: boolean;
+  title?: string;
   tone: MonitorMeterTone;
-  value: string;
+  value?: string;
 }) {
   return (
-    <div className="monitorSummaryTile">
+    <div className="monitorSummaryTile" data-stale={stale || undefined} title={title}>
       <div>
         <span>{label}</span>
-        <strong>{value}</strong>
+        {value ? <strong>{value}</strong> : null}
       </div>
       {typeof meterValue === "number" || meterValue === null ? <MonitorMeter value={meterValue ?? null} tone={tone} /> : null}
       <small>{detail || copy.hosts.unknown}</small>
     </div>
+  );
+}
+
+function MonitorStorageTile({ copy, snapshot }: { copy: UICopy; snapshot: HostResourceSnapshot | null }) {
+  const personalInfo = usePersonalInfoMasking();
+  const storage = snapshot?.storage;
+  const stale = Boolean(storage && storage.sampledAt !== snapshot?.sampledAt);
+  const sampledAt = storage ? new Date(storage.sampledAt).toLocaleString(copy.common.locale) : "";
+  const filesystemDetails = (storage?.filesystems ?? []).map((filesystem) =>
+    `${filesystem.mountPoints.join(", ")}: ${formatBytes(filesystem.availableBytes, copy)} / ${formatBytes(filesystem.totalBytes, copy)}`
+  ).join("\n");
+  return (
+    <MonitorSummaryTile
+      copy={copy}
+      detail={formatMonitorMetricDetail(copy.monitor.available,
+        `${formatBytes(storage?.availableBytes, copy)} / ${formatBytes(storage?.totalBytes, copy)}`, copy)}
+      label={copy.monitor.storage}
+      meterValue={storage?.usedPercent ?? null}
+      stale={stale}
+      title={storage ? personalInfo.maskText(`${filesystemDetails}\n${stale ? copy.monitor.storageLastSample : copy.monitor.sampledAt}: ${sampledAt}`) : undefined}
+      tone="storage"
+      value={formatPercent(storage?.usedPercent, copy)}
+    />
   );
 }
 
@@ -6473,6 +6510,7 @@ function MonitorHostDragGhost({
           tone="memory"
           value={formatPercent(memoryPercent, copy)}
         />
+        <MonitorStorageTile copy={copy} snapshot={snapshot} />
         <MonitorSummaryTile
           copy={copy}
           detail={formatMonitorMetricDetail(copy.monitor.load, formatCpuLoadSummary(snapshot?.cpu, copy), copy)}
@@ -6487,7 +6525,7 @@ function MonitorHostDragGhost({
           label={copy.monitor.gpu}
           meterValue={gpuMemory.percent}
           tone={gpus.length > 0 ? "gpu" : "gray"}
-          value={String(gpus.length)}
+          value={formatPercent(gpuMemory.percent, copy)}
         />
       </div>
     </div>

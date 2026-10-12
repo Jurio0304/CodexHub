@@ -7,7 +7,8 @@ use crate::{
     resource_monitor::{
         CpuSnapshot, GpuMemoryMode, GpuProcessSnapshot, GpuSnapshot, GpuStatus, GpuVendor,
         HostResourceBatchResult, HostResourceProgressEvent, HostResourceSnapshot,
-        HostResourceSshStatus, HostResourceStatus, MemorySnapshot,
+        HostResourceSshStatus, HostResourceStatus, MemorySnapshot, StorageFilesystemSnapshot,
+        StorageSnapshot,
     },
     settings::{
         AppSettings, CloseButtonBehavior, NetworkProxyMode, PlatformAppearance, SettingsSaveResult,
@@ -337,6 +338,8 @@ mod tests {
             HostResourceSshStatus::decl(&config),
             CpuSnapshot::decl(&config),
             MemorySnapshot::decl(&config),
+            StorageFilesystemSnapshot::decl(&config),
+            StorageSnapshot::decl(&config),
             GpuVendor::decl(&config),
             GpuStatus::decl(&config),
             GpuMemoryMode::decl(&config),

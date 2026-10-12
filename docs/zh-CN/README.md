@@ -17,7 +17,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.5.3-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.5.4-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -60,7 +60,7 @@ CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 C
 - 创建、预览、应用 profile 到远端 `~/.codex/config.toml`。
 - Profile 应用确认后，可重载当前 SSH 用户下身份已严格确认的远端 Codex 进程；推荐模式会保留交互式 CLI 和 exec 会话。
 - 导入本地或 GitHub skill，并安装到本机或远端目标。
-- 对已记住主机展示只读、页面活跃时刷新的 CPU、内存和 GPU 资源采样，并支持展开用户级 GPU 进程详情。
+- 对已记住主机展示内存、存储、CPU 和 GPU 两行资源卡片，统一显示占用率；存储汇总已挂载本地磁盘的可用量与总量，并支持展开用户级 GPU 进程详情。
 - 提供本地和 SSH 多标签终端，支持重连、resize、搜索、scrollback、读屏模式和大段粘贴确认。
 - 浏览本地与远端 SFTP 文件，支持分页、搜索、预览、创建、重命名/复制和可恢复的破坏性操作。
 - 传输队列支持上传、下载、暂停、重试、取消、冲突处理、恢复卡片以及重启后的显式重新授权。
@@ -113,11 +113,11 @@ Linux 桌面应用需要：
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- Windows：下载并运行 `CodexHub_0.5.3_x64-setup.exe`。
-- macOS Apple Silicon：下载 `CodexHub_0.5.3_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.5.3 macOS 资产仍为 unsigned/ad-hoc；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- Windows：下载并运行 `CodexHub_0.5.4_x64-setup.exe`。
+- macOS Apple Silicon：下载 `CodexHub_0.5.4_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.5.4 macOS 资产仍为 unsigned/ad-hoc；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
-- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.5.3_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换；已验证的 Linux stable 构建会进入签名自动更新 feed。
-- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.5.3_arm64.deb`。已验证的 Linux stable 构建会进入签名自动更新 feed。
+- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.5.4_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换；已验证的 Linux stable 构建会进入签名自动更新 feed。
+- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.5.4_arm64.deb`。已验证的 Linux stable 构建会进入签名自动更新 feed。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
 ## ⚡ 快速开始

@@ -7,6 +7,7 @@ param(
   [string]$LiveSshAlias = "",
   [switch]$UserTested,
   [switch]$OpenApp,
+  [switch]$KeepStartupData,
   [int]$StartupSeconds = 5
 )
 
@@ -22,6 +23,8 @@ $Pnpm = $null
 $PowerShellExe = $null
 $StableGatePassed = $false
 $StableBuildReady = $false
+$StartupDataArguments = @()
+if ($KeepStartupData) { $StartupDataArguments = @("-KeepTempData") }
 
 function Add-Result {
   param(
@@ -225,13 +228,13 @@ if ($Channel -eq "stable" -and $ToolsReady -and $StableGatePassed) {
     }
 
     Invoke-Step -Name "Release exe startup check" -ScriptBlock {
-      Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\check-release-exe.ps1", "-Seconds", "$StartupSeconds")
+      Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\check-release-exe.ps1", "-Seconds", "$StartupSeconds") + $StartupDataArguments)
     }
   } elseif ($StableBuildReady) {
     Skip-Step -Name "Portable stable package" -Reason "approved Windows public release path is the updater-enabled setup installer."
 
     Invoke-Step -Name "Release exe startup check" -ScriptBlock {
-      Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\check-release-exe.ps1", "-Seconds", "$StartupSeconds")
+      Invoke-ProcessChecked -FilePath $script:PowerShellExe -Arguments (@("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\scripts\check-release-exe.ps1", "-Seconds", "$StartupSeconds") + $StartupDataArguments)
     }
   } else {
     Skip-Step -Name "Portable stable package" -Reason "stable Tauri build did not produce a fresh release executable."

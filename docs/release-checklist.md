@@ -1,7 +1,7 @@
 # CodexHub Release Checklist
 
-Date: 2026-08-23
-Version baseline: v0.5.3
+Date: 2026-10-12
+Version baseline: v0.5.4
 
 Use this checklist before any public `stable` release. The checklist is a gate for local validation and owner acceptance only; it does not upload, tag, push, or create a GitHub Release.
 
@@ -49,7 +49,7 @@ Run live SSH acceptance only when a sanitized test alias is explicitly provided:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\validate-release.ps1 -Channel stable -UserTested -LiveSshAlias <test-alias>
 ```
 
-The stable script must fail if `-SkipTauriBuild` or missing `-UserTested` would allow a publishable build to bypass release gates. `-SkipPortable` may be used only when the approved public Windows release path is the updater-enabled setup installer rather than a portable zip.
+The stable script must fail if `-SkipTauriBuild` or missing `-UserTested` would allow a publishable build to bypass release gates. `-SkipPortable` may be used only when the approved public Windows release path is the updater-enabled setup installer rather than a portable zip. Add `-KeepStartupData` to retain the isolated startup-check data for inspection instead of cleaning it up.
 
 ## Live SSH Acceptance
 
@@ -91,11 +91,11 @@ The updater foundation is stable-only. Windows signed updater assets are built b
 - The Windows, macOS, and Linux workflows upload updater assets to an existing GitHub Release only when manually dispatched with `upload_to_release=true`.
 - The Settings install button is disabled before an `available` result and uses Tauri signature verification before running the installer.
 - Signing private keys and passwords are supplied only through the trusted release environment.
-- Portable packaging remains manual/local for now; v0.5.3 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
+- Portable packaging remains manual/local for now; v0.5.4 Windows public Release keeps the updater-enabled setup installer as the only Windows app package.
 
 ## macOS Release Artifact
 
-The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.5.3 public GitHub Release includes unsigned Apple Silicon macOS assets:
+The macOS workflow can build unsigned `.app`, `.dmg`, and updater `.app.tar.gz` artifacts on a GitHub-hosted macOS runner. The v0.5.4 public GitHub Release includes unsigned Apple Silicon macOS assets:
 
 ```text
 .github/workflows/build-macos-release.yml

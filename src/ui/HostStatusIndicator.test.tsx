@@ -175,6 +175,7 @@ describe("host probe connectivity projection", () => {
       error: "timeout",
       cpu: null,
       memory: null,
+      storage: null,
       gpuTool: "none",
       gpus: []
     };
