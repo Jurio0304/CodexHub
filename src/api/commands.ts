@@ -94,6 +94,7 @@ export const commandPolicies = {
   workspace_create_directory: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
   workspace_copy_file_entry: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
   workspace_copy_file_entries: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
+  workspace_move_file_entries: { effect: "remote-write", liveSsh: true, sensitiveInput: false },
   workspace_save_text_file: { effect: "remote-write", liveSsh: true, sensitiveInput: true },
   workspace_validate_terminal_cwd: { effect: "read", liveSsh: true, sensitiveInput: false },
   workspace_close_files: { effect: "local-write", liveSsh: false, sensitiveInput: false },

@@ -153,6 +153,7 @@ export type WorkspaceFilePreview = {
 };
 
 export type WorkspaceFileClipboard = {
+  mode: "copy" | "cut";
   sourceFileSessionId: string;
   sourceEntryRefs: string[];
   names: string[];
@@ -339,6 +340,12 @@ export type WorkspaceApi = {
   createDirectory: (input: { fileSessionId: string; parentPath: string; name: string }) => Promise<RemoteFileEntry>;
   copyEntry: (input: { fileSessionId: string; sourceEntryRef: string; destinationPath: string }) => Promise<RemoteFileEntry>;
   copyEntries: (input: {
+    sourceFileSessionId: string;
+    destinationFileSessionId: string;
+    sourceEntryRefs: string[];
+    destinationPath: string;
+  }) => Promise<RemoteFileEntry[]>;
+  moveEntries: (input: {
     sourceFileSessionId: string;
     destinationFileSessionId: string;
     sourceEntryRefs: string[];

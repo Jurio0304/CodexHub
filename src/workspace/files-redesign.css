@@ -436,6 +436,7 @@
 }
 
 .workspaceFilesQuickAccess button:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.workspaceFilesQuickAccess button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .workspaceFilesTablePane {
   position: relative;
@@ -481,6 +482,17 @@
 
 .workspaceFilesRedesign .workspaceFileGridBody { min-width: var(--workspace-file-table-width); }
 
+.workspaceFileSelectionRectangle {
+  position: fixed;
+  z-index: 8;
+  border: 1px solid color-mix(in srgb, var(--blue) 82%, transparent);
+  border-radius: 3px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--blue) 15%, transparent);
+}
+
+.workspaceFileGrid[data-selecting="true"] { cursor: crosshair; user-select: none; }
+
 .workspaceFilesRedesign .workspaceFileGridHeader {
   min-height: 42px;
   letter-spacing: 0.025em;
@@ -491,6 +503,8 @@
 .workspaceFilesRedesign .workspaceFileRow { min-height: 42px; }
 .workspaceFilesRedesign .workspaceFileRow:hover { background: color-mix(in srgb, var(--blue) 5%, var(--surface)); }
 .workspaceFilesRedesign .workspaceFileRow[aria-selected="true"] { background: color-mix(in srgb, var(--blue) 9%, var(--surface)); box-shadow: inset 2px 0 0 var(--blue); }
+.workspaceFilesRedesign .workspaceFileRow[data-cut="true"] { opacity: 0.5; }
+.workspaceFilesRedesign .workspaceFileRow[data-cut="true"][aria-selected="true"] { opacity: 0.68; }
 .workspaceFilesRedesign .workspaceFileRow[data-external-drop-target="true"] {
   position: relative;
   z-index: 2;
@@ -587,6 +601,9 @@
 }
 
 .workspaceFilesRedesign .workspaceFileName { gap: 9px; }
+.workspaceFileDragHandle { display: inline-flex; flex: 0 0 auto; cursor: grab; }
+.workspaceFileDragHandle:active { cursor: grabbing; }
+.workspaceFilesRedesign .workspaceFileName > .workspaceFileDragHandle { overflow: visible; }
 .workspaceFilesRedesign .workspaceFileName > span { overflow: hidden; color: var(--text); text-overflow: ellipsis; }
 .workspaceFilesRedesign .workspaceFileRow[data-kind="directory"] .workspaceFileName > span { color: var(--text); }
 .workspaceFilesRedesign .workspaceFileRow code { color: var(--text-muted); font-size: 0.75rem; }

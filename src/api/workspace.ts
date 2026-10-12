@@ -240,6 +240,9 @@ export const desktopWorkspaceApi: WorkspaceApi = {
   copyEntries: ({ sourceFileSessionId, destinationFileSessionId, sourceEntryRefs, destinationPath }) => requiredInvoke<RemoteFileEntryDto[]>("workspace_copy_file_entries", {
     request: { sourceFileSessionId, destinationFileSessionId, sourceEntryRefs, destinationPath }
   }).then((items) => items.map(entry)),
+  moveEntries: ({ sourceFileSessionId, destinationFileSessionId, sourceEntryRefs, destinationPath }) => requiredInvoke<RemoteFileEntryDto[]>("workspace_move_file_entries", {
+    request: { sourceFileSessionId, destinationFileSessionId, sourceEntryRefs, destinationPath }
+  }).then((items) => items.map(entry)),
   saveTextFile: ({ fileSessionId, entryRef, expectedFingerprint, text }) => requiredInvoke<RemoteFileEntryDto>("workspace_save_text_file", {
     request: { fileSessionId, entryRef, expectedFingerprint, text }
   }).then(entry),

@@ -9,6 +9,7 @@ export type FilesIconName =
   | "close"
   | "copy"
   | "current"
+  | "cut"
   | "download"
   | "eye"
   | "eyeOff"
@@ -36,6 +37,7 @@ const iconPaths: Record<FilesIconName, ReactNode> = {
   close: <path d="m4 4 8 8m0-8-8 8" />,
   copy: <><rect x="5" y="5" width="7" height="7" rx="1" /><path d="M3 10V3.8A.8.8 0 0 1 3.8 3H10" /></>,
   current: <><circle cx="8" cy="8" r="4" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2" /></>,
+  cut: <><circle cx="4" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><path d="m5.6 10.8 6.2-7.3M10.4 10.8 4.2 3.5" /></>,
   download: <><path d="M8 2.5v7" /><path d="m5 7 3 3 3-3" /><path d="M3 13.5h10" /></>,
   eye: <><path d="M1.5 8S3.8 4.5 8 4.5 14.5 8 14.5 8 12.2 11.5 8 11.5 1.5 8 1.5 8Z" /><circle cx="8" cy="8" r="1.8" /></>,
   eyeOff: <><path d="M2.1 2.1 13.9 13.9" /><path d="M4.1 4.4C2.6 5.5 1.5 8 1.5 8s2.3 3.5 6.5 3.5c1.2 0 2.2-.3 3.1-.8M6.1 4.7c.6-.2 1.2-.2 1.9-.2 4.2 0 6.5 3.5 6.5 3.5s-.8 1.3-2.1 2.3" /><path d="M6.7 6.7a1.8 1.8 0 0 0 2.6 2.6" /></>,

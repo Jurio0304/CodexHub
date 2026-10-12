@@ -772,6 +772,19 @@ pub(crate) async fn workspace_copy_file_entries(
 }
 
 #[tauri::command]
+pub(crate) async fn workspace_move_file_entries(
+    state: State<'_, AppState>,
+    request: CopyFileEntriesRequest,
+) -> Result<Vec<RemoteFileEntry>, String> {
+    let workspace = manager(&state)?;
+    workspace
+        .operations
+        .move_entries(&workspace.files, request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) async fn workspace_save_text_file(
     state: State<'_, AppState>,
     request: SaveTextFileRequest,

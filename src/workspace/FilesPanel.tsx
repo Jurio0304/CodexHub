@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import type { WorkspaceCopy } from "./copy";
 import type {
   RemoteFileEntry,
@@ -49,6 +50,7 @@ const DEFAULT_TREE_WIDTH = 248;
 export const FILE_TRANSFER_COMPLETED_RETENTION_MS = 10_000;
 export const FILE_DELETE_MODE_STORAGE_KEY = "codexhub.files-delete-mode";
 export const WORKSPACE_FILES_CLIPBOARD_EVENT = "codexhub:workspace-files-clipboard";
+export const WORKSPACE_FILES_REFRESH_EVENT = "codexhub:workspace-files-refresh";
 const FILES_VIEW_STORAGE_PREFIX = "codexhub.workspace.files-view.v1:";
 const ACTIVE_TRANSFER_STATES = new Set<WorkspaceTransfer["state"]>([
   "queued", "running", "pausing", "paused", "waiting-conflict", "verifying", "finalizing"
@@ -56,6 +58,10 @@ const ACTIVE_TRANSFER_STATES = new Set<WorkspaceTransfer["state"]>([
 // Files uploads behave like an explicit overwrite action while the backend
 // still journals the replaced destination for recovery.
 const FILE_UPLOAD_CONFLICT_POLICY = "replace-with-backup" as const;
+
+function offsetContextMenuPoint(point: { x: number; y: number }) {
+  return point;
+}
 
 function loadFileDeleteMode(): FileDeleteMode | null {
   try {
@@ -94,6 +100,7 @@ type FilesHostView = {
   localRoots: string[];
   directoryEntriesByPath: Map<string, RemoteFileEntry[]>;
   expandedTreePaths: Set<string>;
+  quickAccessPaths: string[];
   clientPage: number;
   clientPageSize: number;
 };
@@ -109,6 +116,7 @@ type PersistedFilesView = {
   treeCollapsed: boolean;
   treeWidth: number;
   expandedTreePaths: string[];
+  quickAccessPaths: string[];
   clientPageSize: number;
   followCwd: boolean;
 };
@@ -131,6 +139,9 @@ function loadPersistedFilesView(instanceId: string, hostAlias: string): Persiste
       treeCollapsed: parsed.treeCollapsed === true,
       treeWidth: typeof parsed.treeWidth === "number" ? Math.max(TREE_MIN_WIDTH, Math.min(TREE_MAX_WIDTH, parsed.treeWidth)) : DEFAULT_TREE_WIDTH,
       expandedTreePaths: Array.isArray(parsed.expandedTreePaths) ? parsed.expandedTreePaths.filter((value): value is string => typeof value === "string") : ["/"],
+      quickAccessPaths: Array.isArray(parsed.quickAccessPaths)
+        ? [...new Set(parsed.quickAccessPaths.filter((value): value is string => typeof value === "string" && value.length > 0))].slice(0, 50)
+        : [],
       clientPageSize: parsed.clientPageSize === 25 || parsed.clientPageSize === 100 ? parsed.clientPageSize : 50,
       followCwd: parsed.followCwd !== false
     };
@@ -232,6 +243,7 @@ export function FilesPanel({
   const [localRoots, setLocalRoots] = useState<string[]>([]);
   const [directoryEntriesByPath, setDirectoryEntriesByPath] = useState<Map<string, RemoteFileEntry[]>>(() => new Map());
   const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(() => new Set(["/"]));
+  const [quickAccessPaths, setQuickAccessPaths] = useState<string[]>([]);
   const [loadingTreePaths, setLoadingTreePaths] = useState<Set<string>>(() => new Set());
   const [clientPage, setClientPage] = useState(0);
   const [clientPageSize, setClientPageSize] = useState(50);
@@ -245,6 +257,7 @@ export function FilesPanel({
     entry: RemoteFileEntry | null;
     kind: RemoteFileEntry["kind"];
     path: string;
+    source: "file-list" | "directory-tree" | "quick-access";
     x: number;
     y: number;
   } | null>(null);
@@ -301,6 +314,7 @@ export function FilesPanel({
       setTreeCollapsed(compact ? true : persisted.treeCollapsed);
       setTreeWidth(persisted.treeWidth);
       setExpandedTreePaths(new Set(persisted.expandedTreePaths.length > 0 ? persisted.expandedTreePaths : ["/"]));
+      setQuickAccessPaths(persisted.quickAccessPaths);
       setClientPageSize(persisted.clientPageSize);
     }
     setHydratedPersistenceKey(persistenceKey);
@@ -382,6 +396,7 @@ export function FilesPanel({
     localRoots,
     directoryEntriesByPath,
     expandedTreePaths,
+    quickAccessPaths,
     clientPage,
     clientPageSize
   };
@@ -399,10 +414,11 @@ export function FilesPanel({
       treeCollapsed,
       treeWidth,
       expandedTreePaths: [...expandedTreePaths],
+      quickAccessPaths,
       clientPageSize,
       followCwd
     });
-  }, [clientPageSize, expandedTreePaths, followCwd, hydratedPersistenceKey, history, historyIndex, instanceId, isActive, page?.canonicalPath, pathInput, persistenceEnabled, persistenceKey, selectedHostAlias, showHidden, sortAscending, sortKey, treeCollapsed, treeWidth]);
+  }, [clientPageSize, expandedTreePaths, followCwd, hydratedPersistenceKey, history, historyIndex, instanceId, isActive, page?.canonicalPath, pathInput, persistenceEnabled, persistenceKey, quickAccessPaths, selectedHostAlias, showHidden, sortAscending, sortKey, treeCollapsed, treeWidth]);
 
   const restoreHostView = useCallback((view: FilesHostView | null) => {
     setFileSession(view?.fileSession ?? null);
@@ -424,6 +440,7 @@ export function FilesPanel({
     setLocalRoots(view?.localRoots ?? []);
     setDirectoryEntriesByPath(view?.directoryEntriesByPath ?? new Map());
     setExpandedTreePaths(view?.expandedTreePaths ?? new Set(["/"]));
+    setQuickAccessPaths(view?.quickAccessPaths ?? []);
     setLoadingTreePaths(new Set());
     setClientPage(view?.clientPage ?? 0);
     setClientPageSize(view?.clientPageSize ?? 50);
@@ -431,8 +448,8 @@ export function FilesPanel({
 
   useEffect(() => {
     const receive = (event: Event) => {
-      const detail = (event as CustomEvent<WorkspaceFileClipboard>).detail;
-      if (detail) setClipboard(detail);
+      const detail = (event as CustomEvent<WorkspaceFileClipboard | null>).detail;
+      setClipboard(detail ?? null);
     };
     window.addEventListener(WORKSPACE_FILES_CLIPBOARD_EVENT, receive);
     return () => window.removeEventListener(WORKSPACE_FILES_CLIPBOARD_EVENT, receive);
@@ -556,6 +573,17 @@ export function FilesPanel({
   }, [api, rememberDirectoryPage, reportError]);
 
   useEffect(() => {
+    const refreshMovedSource = (event: Event) => {
+      const sourceFileSessionId = (event as CustomEvent<string>).detail;
+      if (currentViewRef.current?.fileSession?.fileSessionId === sourceFileSessionId) {
+        void refreshCurrentDirectory();
+      }
+    };
+    window.addEventListener(WORKSPACE_FILES_REFRESH_EVENT, refreshMovedSource);
+    return () => window.removeEventListener(WORKSPACE_FILES_REFRESH_EVENT, refreshMovedSource);
+  }, [refreshCurrentDirectory]);
+
+  useEffect(() => {
     const previousHostAlias = activeHostRef.current;
     if (
       previousHostAlias
@@ -608,6 +636,7 @@ export function FilesPanel({
       setTreeCollapsed(compact ? true : persisted.treeCollapsed);
       setTreeWidth(persisted.treeWidth);
       setExpandedTreePaths(new Set(persisted.expandedTreePaths.length > 0 ? persisted.expandedTreePaths : ["/"]));
+      setQuickAccessPaths(persisted.quickAccessPaths);
       setClientPageSize(persisted.clientPageSize);
       if (isActive) onFollowCwdChange(persisted.followCwd);
     }
@@ -1248,27 +1277,42 @@ export function FilesPanel({
     }
   };
 
-  const copyEntriesToClipboard = (targets: RemoteFileEntry[]) => {
+  const storeEntriesInClipboard = (mode: WorkspaceFileClipboard["mode"], targets: RemoteFileEntry[]) => {
     if (!fileSession || targets.length === 0) return;
     const next: WorkspaceFileClipboard = {
+      mode,
       sourceFileSessionId: fileSession.fileSessionId,
       sourceEntryRefs: targets.map((entry) => entry.entryRef),
       names: targets.map((entry) => entry.name)
     };
     setClipboard(next);
     window.dispatchEvent(new CustomEvent<WorkspaceFileClipboard>(WORKSPACE_FILES_CLIPBOARD_EVENT, { detail: next }));
-    setSelectedRefs(new Set());
   };
+
+  const copyEntriesToClipboard = (targets: RemoteFileEntry[]) => storeEntriesInClipboard("copy", targets);
+  const cutEntriesToClipboard = (targets: RemoteFileEntry[]) => storeEntriesInClipboard("cut", targets);
 
   const pasteClipboard = async () => {
     if (!clipboard || !fileSession || !page) return;
     try {
-      await api.copyEntries({
+      const paste = clipboard.mode === "cut" ? api.moveEntries : api.copyEntries;
+      await paste({
         sourceFileSessionId: clipboard.sourceFileSessionId,
         destinationFileSessionId: fileSession.fileSessionId,
         sourceEntryRefs: clipboard.sourceEntryRefs,
         destinationPath: page.canonicalPath
       });
+      if (clipboard.mode === "cut") {
+        if (clipboard.sourceFileSessionId !== fileSession.fileSessionId) {
+          window.dispatchEvent(new CustomEvent<string>(WORKSPACE_FILES_REFRESH_EVENT, {
+            detail: clipboard.sourceFileSessionId
+          }));
+        }
+        setClipboard(null);
+        window.dispatchEvent(new CustomEvent<WorkspaceFileClipboard | null>(WORKSPACE_FILES_CLIPBOARD_EVENT, {
+          detail: null
+        }));
+      }
       await refreshCurrentDirectory();
     } catch (error) {
       reportError(error);
@@ -1285,6 +1329,9 @@ export function FilesPanel({
       if (event.key.toLowerCase() === "c" && selectedEntries.length > 0) {
         event.preventDefault();
         copyEntriesToClipboard(selectedEntries);
+      } else if (event.key.toLowerCase() === "x" && selectedEntries.length > 0) {
+        event.preventDefault();
+        cutEntriesToClipboard(selectedEntries);
       } else if (event.key.toLowerCase() === "v" && clipboard) {
         event.preventDefault();
         void pasteClipboard();
@@ -1322,6 +1369,22 @@ export function FilesPanel({
   };
 
   const canLocate = Boolean(fileSession && activeTerminal && activeTerminal.hostAlias === selectedHostAlias);
+  const addQuickAccess = (path: string) => {
+    setQuickAccessPaths((current) => current.includes(path) ? current : [...current, path].slice(-50));
+    setContextMenu(null);
+  };
+  const removeQuickAccess = (path: string) => {
+    setQuickAccessPaths((current) => current.filter((candidate) => candidate !== path));
+    setContextMenu(null);
+  };
+  const contextTargets = contextMenu?.entry
+    ? selectedRefs.has(contextMenu.entry.entryRef)
+      ? selectedEntries
+      : [contextMenu.entry]
+    : [];
+  const cutRefs = clipboard?.mode === "cut" && clipboard.sourceFileSessionId === fileSession?.fileSessionId
+    ? new Set(clipboard.sourceEntryRefs)
+    : new Set<string>();
   const pauseTransfer = async (transfer: WorkspaceTransfer) => {
     try {
       await api.pauseTransfer({ transferId: transfer.transferId, revision: transfer.revision });
@@ -1452,6 +1515,7 @@ export function FilesPanel({
           <button aria-label={sortAscending ? copy.ascending : copy.descending} title={sortAscending ? copy.ascending : copy.descending} type="button" onClick={() => setSortAscending((value) => !value)}><FilesIcon name={sortAscending ? "sortAscending" : "sortDescending"} /><span>{sortAscending ? copy.ascending : copy.descending}</span></button>
            <button aria-label={copy.download} disabled={selectedEntries.length === 0} title={copy.download} type="button" onClick={() => void download()}><FilesIcon name="download" /><span>{copy.download}</span></button>
            <button aria-label={copy.copyEntry} disabled={selectedEntries.length === 0} title={copy.copyEntry} type="button" onClick={() => copyEntriesToClipboard(selectedEntries)}><FilesIcon name="copy" /><span>{copy.copyEntry}</span></button>
+           <button aria-label={copy.cutEntry} disabled={selectedEntries.length === 0} title={copy.cutEntry} type="button" onClick={() => cutEntriesToClipboard(selectedEntries)}><FilesIcon name="cut" /><span>{copy.cutEntry}</span></button>
            <button aria-label={copy.pasteFiles} disabled={!clipboard || !fileSession || !page} title={!clipboard ? copy.clipboardEmpty : copy.pasteFiles} type="button" onClick={() => void pasteClipboard()}><FilesIcon name="paste" /><span>{copy.pasteFiles}</span></button>
           <button aria-label={copy.openFolderInVscode} disabled={!fileSession || !page} title={!fileSession || !page ? copy.openFolderInVscodeUnavailable : copy.openFolderInVscode} type="button" onClick={() => openFolderInVscode(null, page?.canonicalPath ?? null)}><FilesIcon name="folderPlus" /><span>{copy.openFolderInVscode}</span></button>
           <button aria-label={copy.newFolder} disabled={!fileSession || !page} title={copy.newFolder} type="button" onClick={() => askOperation("create-directory", null, page?.canonicalPath ?? null)}><FilesIcon name="folderPlus" /><span>{copy.newFolder}</span></button>
@@ -1484,11 +1548,15 @@ export function FilesPanel({
               expandedPaths={expandedTreePaths}
               localRoots={localRoots}
               loadingPaths={loadingTreePaths}
+              quickAccessPaths={quickAccessPaths}
               session={fileSession}
               onContextMenu={(path, point) => {
-                setContextMenu({ entry: treeEntryByPath.get(path) ?? null, kind: "directory", path, ...point });
+                setContextMenu({ entry: treeEntryByPath.get(path) ?? null, kind: "directory", path, source: "directory-tree", ...offsetContextMenuPoint(point) });
               }}
               onNavigate={(path) => { if (fileSession) void navigate(fileSession, path, { manual: true }); }}
+              onQuickAccessContextMenu={(path, point) => {
+                setContextMenu({ entry: null, kind: "directory", path, source: "quick-access", ...offsetContextMenuPoint(point) });
+              }}
               onToggle={(path) => void toggleTreePath(path)}
             />
             <button
@@ -1513,18 +1581,20 @@ export function FilesPanel({
             externalDropTargetPath={externalDropTarget?.kind === "directory" ? externalDropTarget.path : null}
             focusedIndex={focusedIndex}
             locale={locale}
+            cutRefs={cutRefs}
             selectedRefs={selectedRefs}
             sortAscending={sortAscending}
             sortKey={sortKey}
             ui={ui}
             onAskOperation={askOperation}
             onContextMenu={(entry, point) => {
-              setContextMenu({ entry, kind: entry.kind, path: entry.canonicalPath, ...point });
+              setContextMenu({ entry, kind: entry.kind, path: entry.canonicalPath, source: "file-list", ...offsetContextMenuPoint(point) });
             }}
             onFocusedIndexChange={setFocusedIndex}
             onMove={(source, destination) => askOperation("move", source, destination.canonicalPath)}
             onOpenEntry={openEntry}
             onSelectEntry={selectEntry}
+            onSelectRefs={(entryRefs) => setSelectedRefs(new Set(entryRefs))}
             onSelectPage={selectPage}
             onSort={changeSort}
             onShowPreview={(entry) => void showPreview(entry)}
@@ -1581,21 +1651,33 @@ export function FilesPanel({
         </main>
       </div>
 
-      {contextMenu ? (
+      {contextMenu ? createPortal(
         <div className="workspaceContextMenu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }} onPointerDown={(event) => event.stopPropagation()}>
+          {contextMenu.source === "quick-access" ? (
+            <button role="menuitem" type="button" onClick={() => removeQuickAccess(contextMenu.path)}>{ui.removeQuickAccess}</button>
+          ) : <>
           <button role="menuitem" type="button" onClick={() => {
             if (contextMenu.entry) openEntry(contextMenu.entry);
             else if (fileSession) void navigate(fileSession, contextMenu.path, { manual: true });
             setContextMenu(null);
           }}>{copy.open}</button>
           {contextMenu.kind === "directory" ? <button role="menuitem" type="button" onClick={() => { openFolderInVscode(contextMenu.entry, contextMenu.path); setContextMenu(null); }}>{copy.openFolderInVscode}</button> : null}
+          {contextMenu.source === "directory-tree" ? (
+            <button
+              disabled={quickAccessPaths.includes(contextMenu.path) || fileSession?.homePath === contextMenu.path}
+              role="menuitem"
+              type="button"
+              onClick={() => addQuickAccess(contextMenu.path)}
+            >{ui.addQuickAccess}</button>
+          ) : null}
           <button role="menuitem" type="button" disabled={!contextMenu.entry} onClick={() => { if (contextMenu.entry) void showPreview(contextMenu.entry); setContextMenu(null); }}>{copy.preview}</button>
           {contextMenu.kind === "file" ? <button role="menuitem" type="button" disabled={!contextMenu.entry} onClick={() => { if (contextMenu.entry) void editEntry(contextMenu.entry); setContextMenu(null); }}>{copy.editFile}</button> : null}
-          <button role="menuitem" type="button" disabled={!contextMenu.entry} onClick={() => { if (contextMenu.entry) copyEntriesToClipboard([contextMenu.entry]); setContextMenu(null); }}>{copy.copyEntry}</button>
-          <button role="menuitem" type="button" disabled={!contextMenu.entry} onClick={() => { if (contextMenu.entry) void download([contextMenu.entry]); setContextMenu(null); }}>{copy.download}</button>
+          <button role="menuitem" type="button" disabled={contextTargets.length === 0} onClick={() => { copyEntriesToClipboard(contextTargets); setContextMenu(null); }}>{copy.copyEntry}</button>
+          <button role="menuitem" type="button" disabled={contextTargets.length === 0} onClick={() => { cutEntriesToClipboard(contextTargets); setContextMenu(null); }}>{copy.cutEntry}</button>
+          <button role="menuitem" type="button" disabled={contextTargets.length === 0} onClick={() => { void download(contextTargets); setContextMenu(null); }}>{copy.download}</button>
           {contextMenu.kind === "directory" ? <button role="menuitem" type="button" onClick={() => { void upload(contextMenu.path); setContextMenu(null); }}>{copy.uploadHere}</button> : null}
           <button role="menuitem" type="button" disabled={!contextMenu.entry?.writable || contextMenu.entry.nameEncoding !== "utf8"} onClick={() => { if (contextMenu.entry) askOperation("rename", contextMenu.entry); setContextMenu(null); }}>{copy.rename}</button>
-          <button className="workspaceDangerButton" role="menuitem" type="button" disabled={!contextMenu.entry?.writable || contextMenu.entry.nameEncoding !== "utf8"} onClick={() => { if (contextMenu.entry) requestDelete([contextMenu.entry]); setContextMenu(null); }}>{copy.delete}</button>
+          <button className="workspaceDangerButton" role="menuitem" type="button" disabled={!contextTargets.some((entry) => entry.writable && entry.nameEncoding === "utf8")} onClick={() => { requestDelete(contextTargets); setContextMenu(null); }}>{copy.delete}</button>
           <button role="menuitem" type="button" onClick={() => { void navigator.clipboard.writeText(contextMenu.path).catch(reportError); setContextMenu(null); }}>{copy.copyPath}</button>
           <button
             disabled={!fileSession || fileSession.targetKind === "local"}
@@ -1613,7 +1695,9 @@ export function FilesPanel({
               setContextMenu(null);
             }}
           >{copy.openTerminalHere}</button>
-        </div>
+          </>}
+        </div>,
+        document.body
       ) : null}
 
       <FilePreviewDialog copy={copy} preview={preview} onClose={() => setPreview(null)} />

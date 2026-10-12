@@ -32,6 +32,14 @@ function pathSegments(path: string) {
   return nodes;
 }
 
+function quickAccessLabel(path: string, copy: FilesUiCopy) {
+  if (path === "/") return copy.rootDirectory;
+  if (/^[A-Za-z]:\/$/.test(path)) return path.slice(0, 2);
+  const normalized = path.replace(/\/+$/, "");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? path;
+}
+
 function buildTreeChildren(
   session: WorkspaceFilesSession,
   currentPath: string | null,
@@ -160,9 +168,11 @@ export function DirectoryTree({
   expandedPaths,
   localRoots,
   loadingPaths,
+  quickAccessPaths,
   session,
   onContextMenu,
   onNavigate,
+  onQuickAccessContextMenu,
   onToggle
 }: {
   copy: FilesUiCopy;
@@ -171,9 +181,11 @@ export function DirectoryTree({
   expandedPaths: ReadonlySet<string>;
   localRoots: readonly string[];
   loadingPaths: ReadonlySet<string>;
+  quickAccessPaths: readonly string[];
   session: WorkspaceFilesSession | null;
   onContextMenu: (path: string, point: { x: number; y: number }) => void;
   onNavigate: (path: string) => void;
+  onQuickAccessContextMenu: (path: string, point: { x: number; y: number }) => void;
   onToggle: (path: string) => void;
 }) {
   const treeChildren = useMemo(
@@ -212,6 +224,20 @@ export function DirectoryTree({
           <h3>{copy.quickAccess}</h3>
           <button type="button" onClick={() => onNavigate(session.homePath)}><FilesIcon name="home" />{copy.homeDirectory}</button>
           {currentPath ? <button type="button" onClick={() => onNavigate(currentPath)}><FilesIcon name="current" />{copy.currentDirectory}</button> : null}
+          {quickAccessPaths.map((path) => (
+            <button
+              data-quick-access-path={path}
+              key={path}
+              title={path}
+              type="button"
+              onClick={() => onNavigate(path)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onQuickAccessContextMenu(path, { x: event.clientX, y: event.clientY });
+              }}
+            ><FileGlyph kind="directory" /><span>{quickAccessLabel(path, copy)}</span></button>
+          ))}
         </section>
       ) : null}
     </aside>

@@ -49,6 +49,105 @@ impl FileOperations {
             .list()
             .map_err(|error| WorkspaceError::new("recovery-storage-unavailable", error))
     }
+
+    /// Moves clipboard capabilities between Files sessions. All destinations
+    /// are copied successfully before any source is removed. Source removal
+    /// uses the same recovery journal as an explicit delete, then purges the
+    /// temporary recovery after the destination is known to exist.
+    pub async fn move_entries(
+        &self,
+        files: &FileSessions,
+        request: CopyFileEntriesRequest,
+    ) -> WorkspaceResult<Vec<RemoteFileEntry>> {
+        if request.source_entry_refs.is_empty() || request.source_entry_refs.len() > 100 {
+            return Err(WorkspaceError::new(
+                "invalid-move-selection",
+                "Move between Files windows requires between 1 and 100 entries.",
+            ));
+        }
+
+        let destination_root = files
+            .canonicalize_cwd(
+                &request.destination_file_session_id,
+                &request.destination_path,
+            )
+            .await?;
+        let same_session = request.source_file_session_id == request.destination_file_session_id;
+        let mut decisions = Vec::with_capacity(request.source_entry_refs.len());
+        let mut movable_refs = Vec::with_capacity(request.source_entry_refs.len());
+        for source_ref in &request.source_entry_refs {
+            let source = files
+                .operation_stat(&request.source_file_session_id, source_ref)
+                .await?;
+            if same_session && remote_path::parent(&source.path)? == destination_root {
+                decisions.push(Some(source));
+            } else {
+                decisions.push(None);
+                movable_refs.push(source_ref.clone());
+            }
+        }
+
+        let copied = if movable_refs.is_empty() {
+            Vec::new()
+        } else {
+            files
+                .copy_entries(CopyFileEntriesRequest {
+                    source_file_session_id: request.source_file_session_id.clone(),
+                    destination_file_session_id: request.destination_file_session_id,
+                    source_entry_refs: movable_refs.clone(),
+                    destination_path: destination_root,
+                })
+                .await?
+        };
+
+        for source_ref in movable_refs {
+            let prepared = self
+                .prepare(
+                    files,
+                    PrepareFileOperationRequest {
+                        file_session_id: request.source_file_session_id.clone(),
+                        kind: FileOperationKind::Delete,
+                        source_entry_ref: source_ref,
+                        destination_path: None,
+                        staging_entry_ref: None,
+                    },
+                )
+                .await?;
+            let deleted = self
+                .confirm(
+                    files,
+                    ConfirmFileOperationRequest {
+                        operation_token: prepared.operation_token,
+                    },
+                    None,
+                )
+                .await?;
+            // The source has already been removed. If permanent cleanup is
+            // unavailable, retain its recovery instead of reporting a failed
+            // move that the user might retry and duplicate at the destination.
+            if let Ok(purge) = self.prepare_purge(RecoveryIdentityRequest {
+                recovery_id: deleted.recovery_id,
+            }) {
+                let _ = self
+                    .purge(
+                        files,
+                        PurgeRecoveryRequest {
+                            purge_token: purge.purge_token,
+                        },
+                        &request.source_file_session_id,
+                        None,
+                    )
+                    .await;
+            }
+        }
+
+        let mut copied = copied.into_iter();
+        Ok(decisions
+            .into_iter()
+            .map(|unchanged| unchanged.unwrap_or_else(|| copied.next().expect("copied entry")))
+            .collect())
+    }
+
     pub async fn prepare(
         &self,
         files: &FileSessions,
@@ -660,7 +759,42 @@ fn ensure_destination_fingerprint(expected: Option<&str>, actual: &str) -> Works
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_destination, protected};
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MemoryRecoveryPersistence {
+        values: Mutex<HashMap<String, RecoveryDto>>,
+    }
+
+    impl RecoveryPersistence for MemoryRecoveryPersistence {
+        fn upsert(&self, recovery: &RecoveryDto) -> Result<(), String> {
+            self.values
+                .lock()
+                .map_err(|_| "recovery lock poisoned".to_string())?
+                .insert(recovery.recovery_id.clone(), recovery.clone());
+            Ok(())
+        }
+
+        fn get(&self, recovery_id: &str) -> Result<Option<RecoveryDto>, String> {
+            Ok(self
+                .values
+                .lock()
+                .map_err(|_| "recovery lock poisoned".to_string())?
+                .get(recovery_id)
+                .cloned())
+        }
+
+        fn list(&self) -> Result<Vec<RecoveryDto>, String> {
+            Ok(self
+                .values
+                .lock()
+                .map_err(|_| "recovery lock poisoned".to_string())?
+                .values()
+                .cloned()
+                .collect())
+        }
+    }
 
     #[test]
     fn protected_paths_cover_ssh_credentials_and_codex_env() {
@@ -697,5 +831,89 @@ mod tests {
         assert!(super::ensure_destination_fingerprint(Some("before"), "after").is_err());
         assert!(super::ensure_destination_fingerprint(None, "after").is_err());
         assert!(super::ensure_destination_fingerprint(Some("same"), "same").is_ok());
+    }
+
+    #[tokio::test]
+    async fn local_clipboard_move_copies_all_entries_before_removing_sources() {
+        let root = std::env::temp_dir().join(format!("codexhub-move-{}", Uuid::new_v4()));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        tokio::fs::create_dir_all(&source).await.unwrap();
+        tokio::fs::create_dir_all(&destination).await.unwrap();
+        tokio::fs::write(source.join("one.txt"), b"one")
+            .await
+            .unwrap();
+        tokio::fs::write(source.join("two.txt"), b"two")
+            .await
+            .unwrap();
+
+        let files = FileSessions::new(None);
+        let local = files
+            .open(OpenFilesRequest {
+                local: true,
+                host_id: "local".into(),
+                host_name: "Local files".into(),
+                host_alias: String::new(),
+            })
+            .await
+            .unwrap();
+        let source_page = files
+            .list_directory(ListDirectoryRequest {
+                file_session_id: local.session.file_session_id.clone(),
+                path: source.to_string_lossy().replace('\\', "/"),
+                snapshot_id: None,
+                page_token: None,
+                sort: Some(FileSortField::Name),
+                direction: Some(SortDirection::Asc),
+            })
+            .await
+            .unwrap();
+        let operations = FileOperations::new(Box::new(MemoryRecoveryPersistence::default()));
+        let moved = operations
+            .move_entries(
+                &files,
+                CopyFileEntriesRequest {
+                    source_file_session_id: local.session.file_session_id.clone(),
+                    destination_file_session_id: local.session.file_session_id.clone(),
+                    source_entry_refs: source_page
+                        .entries
+                        .iter()
+                        .map(|entry| entry.entry_ref.clone())
+                        .collect(),
+                    destination_path: destination.to_string_lossy().replace('\\', "/"),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(moved.len(), 2);
+        assert!(!source.join("one.txt").exists());
+        assert!(!source.join("two.txt").exists());
+        assert_eq!(
+            tokio::fs::read(destination.join("one.txt")).await.unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            tokio::fs::read(destination.join("two.txt")).await.unwrap(),
+            b"two"
+        );
+
+        let no_op = operations
+            .move_entries(
+                &files,
+                CopyFileEntriesRequest {
+                    source_file_session_id: local.session.file_session_id.clone(),
+                    destination_file_session_id: local.session.file_session_id,
+                    source_entry_refs: vec![moved[0].entry_ref.clone()],
+                    destination_path: destination.to_string_lossy().replace('\\', "/"),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(no_op[0].path, moved[0].path);
+        assert!(!destination.join("one copy.txt").exists());
+        assert!(!destination.join("two copy.txt").exists());
+
+        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 }

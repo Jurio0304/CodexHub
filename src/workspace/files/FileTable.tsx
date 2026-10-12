@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import type { WorkspaceCopy } from "../copy";
 import type { RemoteFileEntry, WorkspaceFileOperationKind, WorkspaceFileSortField } from "../types";
 import { displaySize, formatModifiedAt } from "./fileDisplay";
@@ -9,6 +10,7 @@ import type { FilesUiCopy } from "./filesUiCopy";
 import { usePersonalInfoMasking } from "../../ui/PersonalInfoMasking";
 
 type ContextPoint = { x: number; y: number };
+type SelectionRectangle = { left: number; top: number; width: number; height: number };
 type ResizableColumn = "name" | "type" | "size" | "modified";
 type FileColumnWidths = Record<ResizableColumn, number>;
 
@@ -169,6 +171,7 @@ export function FileTable({
   externalDropTargetPath,
   focusedIndex,
   locale,
+  cutRefs,
   selectedRefs,
   sortAscending,
   sortKey,
@@ -179,6 +182,7 @@ export function FileTable({
   onMove,
   onOpenEntry,
   onSelectEntry,
+  onSelectRefs,
   onSelectPage,
   onSort,
   onShowPreview
@@ -189,6 +193,7 @@ export function FileTable({
   externalDropTargetPath: string | null;
   focusedIndex: number;
   locale: "en" | "zh";
+  cutRefs: ReadonlySet<string>;
   selectedRefs: ReadonlySet<string>;
   sortAscending: boolean;
   sortKey: WorkspaceFileSortField;
@@ -199,6 +204,7 @@ export function FileTable({
   onMove: (source: RemoteFileEntry, destination: RemoteFileEntry) => void;
   onOpenEntry: (entry: RemoteFileEntry) => void;
   onSelectEntry: (entry: RemoteFileEntry, toggle: boolean) => void;
+  onSelectRefs: (entryRefs: ReadonlySet<string>) => void;
   onSelectPage: (selected: boolean) => void;
   onSort: (column: WorkspaceFileSortField) => void;
   onShowPreview: (entry: RemoteFileEntry) => void;
@@ -207,14 +213,20 @@ export function FileTable({
   const gridRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const resizeCleanupRef = useRef<(() => void) | null>(null);
+  const selectionCleanupRef = useRef<(() => void) | null>(null);
+  const suppressSelectionClickRef = useRef(false);
   const compactRef = useRef(compact);
   const [columnWidths, setColumnWidths] = useState(DEFAULT_COLUMN_WIDTHS);
   const [containerWidth, setContainerWidth] = useState(0);
   const [manualColumnWidths, setManualColumnWidths] = useState(false);
   const [resizingColumn, setResizingColumn] = useState<ResizableColumn | null>(null);
+  const [selectionRectangle, setSelectionRectangle] = useState<SelectionRectangle | null>(null);
   const allSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.entryRef));
 
-  useEffect(() => () => resizeCleanupRef.current?.(), []);
+  useEffect(() => () => {
+    resizeCleanupRef.current?.();
+    selectionCleanupRef.current?.();
+  }, []);
 
   useEffect(() => {
     if (compactRef.current === compact) return;
@@ -335,18 +347,81 @@ export function FileTable({
   };
 
   const selectRow = (event: ReactMouseEvent, entry: RemoteFileEntry, index: number) => {
+    if (suppressSelectionClickRef.current) {
+      suppressSelectionClickRef.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     onFocusedIndexChange(index);
     onSelectEntry(entry, event.ctrlKey || event.metaKey);
+  };
+
+  const startSelectionRectangle = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (
+      !(target instanceof Element)
+      || target.closest(".workspaceFileGridHeader, .workspaceFileDragHandle, .workspaceFileCheckboxCell, button, input, select, textarea, a")
+    ) return;
+
+    selectionCleanupRef.current?.();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const additive = event.ctrlKey || event.metaKey;
+    const baseSelection = additive ? new Set(selectedRefs) : new Set<string>();
+    let didDrag = false;
+    onSelectRefs(baseSelection);
+
+    const move = (pointerEvent: PointerEvent) => {
+      const left = Math.min(startX, pointerEvent.clientX);
+      const top = Math.min(startY, pointerEvent.clientY);
+      const right = Math.max(startX, pointerEvent.clientX);
+      const bottom = Math.max(startY, pointerEvent.clientY);
+      if (right - left < 3 && bottom - top < 3) return;
+      didDrag = true;
+      pointerEvent.preventDefault();
+
+      const next = new Set(baseSelection);
+      for (const entry of entries) {
+        const row = rowRefs.current.get(entry.entryRef);
+        if (!row) continue;
+        const rect = row.getBoundingClientRect();
+        if (rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom) {
+          next.add(entry.entryRef);
+        }
+      }
+      onSelectRefs(next);
+      setSelectionRectangle({ left, top, width: right - left, height: bottom - top });
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      selectionCleanupRef.current = null;
+      setSelectionRectangle(null);
+      if (didDrag) {
+        suppressSelectionClickRef.current = true;
+        window.setTimeout(() => { suppressSelectionClickRef.current = false; }, 0);
+      }
+    };
+
+    selectionCleanupRef.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
   };
 
   return (
     <div
       className="workspaceFileGrid"
+      data-selecting={selectionRectangle ? "true" : undefined}
       data-resizing-column={resizingColumn ?? undefined}
       ref={gridRef}
       role="grid"
       aria-label={ui.tableView}
       style={gridStyle}
+      onPointerDown={startSelectionRectangle}
     >
       <div className="workspaceFileGridHeader" role="row">
         <span className="workspaceFileCheckboxCell" role="columnheader">
@@ -399,15 +474,23 @@ export function FileTable({
         />
       </div>
       <div className="workspaceFileGridBody" role="rowgroup">
+        {selectionRectangle ? createPortal(
+          <span
+            aria-hidden="true"
+            className="workspaceFileSelectionRectangle"
+            style={selectionRectangle}
+          />,
+          document.body
+        ) : null}
         {entries.map((entry, index) => (
           <div
             aria-selected={selectedRefs.has(entry.entryRef)}
             className="workspaceFileRow"
+            data-cut={cutRefs.has(entry.entryRef) ? "true" : undefined}
             data-external-drop-target={externalDropTargetPath === entry.canonicalPath || undefined}
             data-hidden={isHiddenEntry(entry) ? "true" : undefined}
             data-kind={entry.kind}
             data-workspace-drop-directory={entry.kind === "directory" ? entry.canonicalPath : undefined}
-            draggable={entry.writable && entry.nameEncoding === "utf8"}
             key={entry.entryRef}
             ref={(node) => { if (node) rowRefs.current.set(entry.entryRef, node); else rowRefs.current.delete(entry.entryRef); }}
             role="row"
@@ -415,14 +498,10 @@ export function FileTable({
             onClick={(event) => selectRow(event, entry, index)}
             onContextMenu={(event) => {
               event.preventDefault();
-              onSelectEntry(entry, false);
+              if (!selectedRefs.has(entry.entryRef)) onSelectEntry(entry, false);
               onContextMenu(entry, { x: event.clientX, y: event.clientY });
             }}
             onDoubleClick={() => onOpenEntry(entry)}
-            onDragStart={(event) => {
-              event.dataTransfer.effectAllowed = "move";
-              event.dataTransfer.setData("application/x-codexhub-remote-entry-ref", entry.entryRef);
-            }}
             onDragOver={(event) => { if (entry.kind === "directory") event.preventDefault(); }}
             onDrop={(event) => {
               if (entry.kind !== "directory") return;
@@ -444,7 +523,22 @@ export function FileTable({
                 onChange={() => onSelectEntry(entry, true)}
               />
             </span>
-            <span className="workspaceFileName" role="gridcell" title={personalInfo.maskText(entry.canonicalPath)}><FileGlyph kind={entry.kind} /><span>{personalInfo.maskText(entry.name)}</span></span>
+            <span
+              className="workspaceFileName"
+              role="gridcell"
+              title={personalInfo.maskText(entry.canonicalPath)}
+            >
+              <span
+                className="workspaceFileDragHandle"
+                draggable={entry.writable && entry.nameEncoding === "utf8"}
+                title={ui.dragToMove}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("application/x-codexhub-remote-entry-ref", entry.entryRef);
+                }}
+              ><FileGlyph kind={entry.kind} /></span>
+              <span>{personalInfo.maskText(entry.name)}</span>
+            </span>
             <span className="workspaceFileType" role="gridcell">{fileTypeLabel(entry, copy)}</span>
             <span role="gridcell">{entry.kind === "directory" ? "—" : displaySize(entry.size)}</span>
             <span role="gridcell">{formatModifiedAt(entry.modifiedAt, locale === "zh" ? "zh-CN" : "en")}</span>

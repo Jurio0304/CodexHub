@@ -137,6 +137,7 @@ pub fn run() {
             workspace_create_directory,
             workspace_copy_file_entry,
             workspace_copy_file_entries,
+            workspace_move_file_entries,
             workspace_save_text_file,
             workspace_validate_terminal_cwd,
             workspace_close_files,
