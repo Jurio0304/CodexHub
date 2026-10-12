@@ -1,10 +1,10 @@
 # CodexHub Known Limitations
 
-Date: 2026-08-04
+Date: 2026-10-12
 
 ## macOS
 
-macOS release-build support is merged, and its real-device validation baseline was completed. The v0.5.3 artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
+macOS release-build support is merged, and its real-device validation baseline was completed. The v0.5.4 artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
 
 The following macOS limitations remain:
 
@@ -18,7 +18,7 @@ Linux desktop support targets Ubuntu/Debian x86_64 and arm64 `.deb` packages fir
 
 The following Linux desktop limitations remain:
 
-- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.5.3.
+- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.5.4.
 - Linux packages require real Ubuntu/Debian desktop validation before broad distribution.
 - Package-repository, Snap, Flatpak, and rpm upgrade paths remain later work.
 
@@ -36,6 +36,10 @@ If no replacement App service is observed within 15 seconds, the saved configura
 CodexHub never reads or writes local ChatGPT/Codex App private files, databases, sockets, caches, or IPC. The normal host-registration fallback still uses verified SSH aliases, copyable commands, and manual App settings steps.
 
 If Codex App supports a public documented SSH deep link on the tester's machine, CodexHub may present it as a convenience only after writing `~/.ssh/config`. It must not depend on undocumented Codex App files, databases, sockets, or private IPC.
+
+## Resource Monitoring
+
+Storage monitoring requires GNU `df` with `--output`, GNU-compatible `stat`, and a compatible `timeout` command on the Linux remote. It aggregates available / total capacity across mounted local block-device filesystems, deduplicating their kernel device identities. The tooltip lists included filesystems. Memory, firmware, overlay, loop images, virtual/network FUSE mounts, and storage pools without a local block-device source are excluded. Unmounted devices have no mounted-filesystem availability and remain outside this capacity sum; directory sizes, user quotas, and inode exhaustion are also outside it. Unavailable capacity includes filesystem-reserved blocks. The complete storage probe has a two-second deadline plus a one-second forced-stop grace; failed or incomplete data remains partial while other metrics continue. Cached readings retain their original sample time in the tooltip.
 
 ## Workspace Terminal And Files
 

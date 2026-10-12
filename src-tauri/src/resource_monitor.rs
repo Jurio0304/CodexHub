@@ -3,6 +3,7 @@ use chrono::{DateTime, Local};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::{
+    collections::HashMap,
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{mpsc, Arc},
     thread,
@@ -61,6 +62,7 @@ pub(crate) struct HostResourceSnapshot {
     error: Option<String>,
     cpu: Option<CpuSnapshot>,
     memory: Option<MemorySnapshot>,
+    storage: Option<StorageSnapshot>,
     gpu_tool: String,
     gpus: Vec<GpuSnapshot>,
 }
@@ -150,6 +152,32 @@ pub(crate) struct MemorySnapshot {
     #[ts(type = "number | null")]
     available_bytes: Option<u64>,
     used_percent: Option<f64>,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "StorageSnapshotDto")]
+pub(crate) struct StorageSnapshot {
+    #[ts(type = "number")]
+    total_bytes: u64,
+    #[ts(type = "number")]
+    available_bytes: u64,
+    used_percent: f64,
+    filesystems: Vec<StorageFilesystemSnapshot>,
+    sampled_at: String,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "StorageFilesystemSnapshotDto")]
+pub(crate) struct StorageFilesystemSnapshot {
+    #[ts(type = "number")]
+    total_bytes: u64,
+    #[ts(type = "number")]
+    available_bytes: u64,
+    source: String,
+    filesystem_type: String,
+    mount_points: Vec<String>,
 }
 
 #[derive(Clone, Serialize, TS)]
@@ -306,7 +334,7 @@ fn sample_one_host(host_alias: String, timeout_ms: u64) -> HostResourceSnapshot 
         Err(error) => return failed_snapshot(host_alias, error, None),
     };
 
-    let output = match ssh::run_ssh_script(&alias, resource_probe_script(), timeout_ms) {
+    let output = match ssh::run_ssh_script(&alias, &resource_probe_script(), timeout_ms) {
         Ok(output) => output,
         Err(error) => return failed_snapshot(alias, error, None),
     };
@@ -373,16 +401,19 @@ fn failed_snapshot_with_connectivity(
         error: Some(error),
         cpu: None,
         memory: None,
+        storage: None,
         gpu_tool: "none".into(),
         gpus: Vec::new(),
     }
 }
 
 fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> HostResourceSnapshot {
+    let sampled_at = timestamp_now();
     let mut cpu_first = None;
     let mut cpu_second = None;
     let mut load = None;
     let mut mem = None;
+    let mut storage_rows = Vec::new();
     let mut cores = None;
     let mut model = None;
     let mut system_product = None;
@@ -415,6 +446,8 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
             load = Some(value.to_string());
         } else if let Some(value) = line.strip_prefix("CH_MEM=") {
             mem = Some(value.to_string());
+        } else if let Some(value) = line.strip_prefix("CH_STORAGE_FS=") {
+            storage_rows.push(value.to_string());
         } else if let Some(value) = line.strip_prefix("CH_CPU_CORES=") {
             cores = parse_u16(value);
         } else if let Some(value) = line.strip_prefix("CH_CPU_MODEL=") {
@@ -450,6 +483,7 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
         None
     };
     let memory = parse_memory(mem.as_deref());
+    let storage = aggregate_storage_rows(&storage_rows, &sampled_at);
 
     // Prefer active vendor tools; PCI rows are a lightweight fallback for
     // hosts where GPU hardware exists but realtime tooling is unavailable.
@@ -470,7 +504,7 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
         pci_rows.iter().map(|row| gpu_from_pci(row)).collect()
     };
 
-    let status = if cpu.is_some() && memory.is_some() {
+    let status = if cpu.is_some() && memory.is_some() && storage.is_some() {
         HostResourceStatus::Ok
     } else {
         HostResourceStatus::Partial
@@ -501,17 +535,18 @@ fn parse_resource_stdout(host_alias: &str, stdout: &str, latency_ms: u64) -> Hos
         status,
         ssh_status: HostResourceSshStatus::Online,
         timed_out: false,
-        sampled_at: timestamp_now(),
+        sampled_at,
         latency_ms: Some(latency_ms),
         error: None,
         cpu,
         memory,
+        storage,
         gpu_tool,
         gpus,
     }
 }
 
-fn resource_probe_script() -> &'static str {
+fn resource_probe_script() -> String {
     r#"printf 'CH_SSH_CONNECTED=1\n'
 sanitize_monitor_field() {
   printf '%s' "$1" | tr '\r\n|' '   ' | cut -c 1-180
@@ -605,6 +640,7 @@ printf 'CH_CPU_FIRST=%s\n' "$first_cpu"
 printf 'CH_CPU_SECOND=%s\n' "$second_cpu"
 awk '{ printf "CH_LOAD=%s|%s|%s\n", $1, $2, $3; exit }' /proc/loadavg 2>/dev/null
 awk '/^MemTotal:/ { total=$2 } /^MemAvailable:/ { available=$2 } END { printf "CH_MEM=%s|%s\n", total+0, available+0 }' /proc/meminfo 2>/dev/null
+__CH_STORAGE_PROBE__
 printf 'CH_CPU_CORES=%s\n' "$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || printf '')"
 awk -F: '/model name|Hardware|Processor/ { gsub(/^[ \t]+/, "", $2); print "CH_CPU_MODEL="$2; exit }' /proc/cpuinfo 2>/dev/null
 system_product=''
@@ -647,6 +683,34 @@ else
   printf 'CH_GPU_TOOL=none\n'
 fi
 "#
+    .replace("__CH_STORAGE_PROBE__", storage_probe_script())
+}
+
+fn storage_probe_script() -> &'static str {
+    // The deadline covers df and each identity lookup, keeping directory scans out of polling.
+    r#"if command -v df >/dev/null 2>&1 && command -v stat >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  storage_rows=$(LC_ALL=C timeout -k 1 2 sh -s 2>/dev/null <<'CH_STORAGE_PROBE'
+df_rows=$(df -l -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x ramfs -x rootfs -x autofs \
+  --output=source,fstype,size,avail,target 2>/dev/null) || exit 1
+printf '%s\n' "$df_rows" | awk '
+  NR > 1 && $1 ~ /^\/dev\// && $1 !~ /^\/dev\/(loop|ram|zram)[0-9]/ &&
+  ($2 !~ /^fuse/ || $2 == "fuseblk") && $3 ~ /^[0-9]+$/ && $4 ~ /^-?[0-9]+$/ {
+    source=$1; filesystem=$2; total=$3; available=$4; mount=$0
+    sub(/^[ \t]*[^ \t]+[ \t]+[^ \t]+[ \t]+[0-9]+[ \t]+-?[0-9]+[ \t]+/, "", mount)
+    gsub(/[|\r\n]/, " ", source)
+    printf "%s|%s|%s|%s|%s\n", total, available, source, filesystem, mount
+  }' | while IFS='|' read -r total available source filesystem mount; do
+  identity=$(stat -L -c '%d' -- "$mount" 2>/dev/null) || exit 1
+  mount=$(printf '%s' "$mount" | tr '\r\n' '  ' | cut -c 1-180)
+  printf 'CH_STORAGE_FS=%s|%s|%s|%s|%s|%s\n' "$identity" "$total" "$available" "$source" "$filesystem" "$mount"
+done
+CH_STORAGE_PROBE
+  )
+  if [ "$?" -eq 0 ] && [ -n "$storage_rows" ]; then
+    printf '%s\n' "$storage_rows"
+  fi
+fi
+"#
 }
 
 fn cpu_usage(first: Option<&str>, second: Option<&str>) -> Option<f64> {
@@ -684,6 +748,82 @@ fn parse_memory(value: Option<&str>) -> Option<MemorySnapshot> {
         total_bytes: Some(total_bytes),
         available_bytes: Some(available_bytes),
         used_percent,
+    })
+}
+
+fn parse_storage_row(value: &str) -> Option<(u64, StorageFilesystemSnapshot)> {
+    let mut parts = value.splitn(6, '|');
+    let identity = parts.next()?.trim().parse::<u64>().ok()?;
+    let total_bytes = parts
+        .next()?
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(1024)?;
+    // df can report negative availability after reserved space is consumed.
+    let available_kib = parts.next()?.trim().parse::<i128>().ok()?.max(0);
+    let available_bytes = u64::try_from(available_kib).ok()?.checked_mul(1024)?;
+    let source = parts.next()?.trim();
+    let filesystem_type = parts.next()?.trim();
+    let mount_point = parts.next()?.trim();
+    if total_bytes == 0
+        || available_bytes > total_bytes
+        || !source.starts_with("/dev/")
+        || filesystem_type.is_empty()
+        || !mount_point.starts_with('/')
+    {
+        return None;
+    }
+    Some((
+        identity,
+        StorageFilesystemSnapshot {
+            total_bytes,
+            available_bytes,
+            source: source.into(),
+            filesystem_type: filesystem_type.into(),
+            mount_points: vec![mount_point.into()],
+        },
+    ))
+}
+
+fn aggregate_storage_rows(rows: &[String], sampled_at: &str) -> Option<StorageSnapshot> {
+    let mut filesystems: Vec<StorageFilesystemSnapshot> = Vec::new();
+    let mut by_identity = HashMap::<u64, usize>::new();
+    for row in rows {
+        let (identity, candidate) = parse_storage_row(row)?;
+        if let Some(&index) = by_identity.get(&identity) {
+            // Bind mounts and aliases share capacity; count their kernel device identity once.
+            let current = &mut filesystems[index];
+            if current.total_bytes != candidate.total_bytes {
+                return None;
+            }
+            current.available_bytes = current.available_bytes.min(candidate.available_bytes);
+            for mount in candidate.mount_points {
+                if !current.mount_points.contains(&mount) {
+                    current.mount_points.push(mount);
+                }
+            }
+        } else {
+            by_identity.insert(identity, filesystems.len());
+            filesystems.push(candidate);
+        }
+    }
+    let total_bytes = filesystems.iter().try_fold(0u64, |sum, filesystem| {
+        sum.checked_add(filesystem.total_bytes)
+    })?;
+    let available_bytes = filesystems.iter().try_fold(0u64, |sum, filesystem| {
+        sum.checked_add(filesystem.available_bytes)
+    })?;
+    if total_bytes == 0 {
+        return None;
+    }
+    Some(StorageSnapshot {
+        total_bytes,
+        available_bytes,
+        // Reserved capacity is unavailable, so the meter agrees with available / total.
+        used_percent: round1((total_bytes - available_bytes) as f64 / total_bytes as f64 * 100.0),
+        filesystems,
+        sampled_at: sampled_at.into(),
     })
 }
 
@@ -997,6 +1137,7 @@ CH_CPU_FIRST=100|40
 CH_CPU_SECOND=200|70
 CH_LOAD=1.00|0.50|0.25
 CH_MEM=1000|250
+CH_STORAGE_FS=2049|1000|250|/dev/sda3|ext4|/
 CH_CPU_CORES=8
 CH_CPU_MODEL=AMD EPYC
 CH_GPU_TOOL=nvidia-smi
@@ -1011,6 +1152,7 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|412.7|python train.py
         );
         assert_eq!(snapshot.cpu.unwrap().usage_percent, Some(70.0));
         assert_eq!(snapshot.memory.unwrap().used_percent, Some(75.0));
+        assert_eq!(snapshot.storage.unwrap().available_bytes, 256_000);
         assert_eq!(snapshot.gpus.len(), 1);
         assert_eq!(snapshot.gpus[0].uuid.as_deref(), Some("GPU-aaaa"));
         assert_eq!(snapshot.gpus[0].utilization_percent, Some(73.0));
@@ -1025,6 +1167,71 @@ CH_GPU_PROCESS|GPU-aaaa, 4242, python, 2048|amax|3661|412.7|python train.py
         assert_eq!(snapshot.gpus[0].processes[0].user.as_deref(), Some("amax"));
         assert_eq!(snapshot.gpus[0].processes[0].elapsed_seconds, Some(3661));
         assert_eq!(snapshot.gpus[0].processes[0].cpu_usage_percent, Some(412.7));
+    }
+
+    #[test]
+    fn aggregates_all_filesystems_and_counts_bind_mounts_once() {
+        let output = "CH_STORAGE_FS=2049|1000|600|/dev/sda3|ext4|/\nCH_STORAGE_FS=64768|8000|800|/dev/mapper/home|xfs|/training data\nCH_STORAGE_FS=64768|8000|800|/dev/dm-0|xfs|/mirror\nCH_STORAGE_FS=2050|100|99|/dev/sda1|ext4|/boot\n";
+        let snapshot = parse_resource_stdout("lab", output, 12);
+        let storage = snapshot.storage.expect("aggregate storage");
+        assert_eq!(storage.filesystems.len(), 3);
+        assert_eq!(
+            storage.filesystems[1].mount_points,
+            ["/training data", "/mirror"]
+        );
+        assert_eq!(storage.total_bytes, 9_318_400);
+        assert_eq!(storage.available_bytes, 1_534_976);
+        assert_eq!(storage.used_percent, 83.5);
+        assert_eq!(storage.sampled_at, snapshot.sampled_at);
+    }
+
+    #[test]
+    fn rejects_invalid_storage_and_handles_exhausted_capacity() {
+        for row in [
+            "0|0|/dev/sda3|ext4|/",
+            "100|101|/dev/sda3|ext4|/",
+            "NaN|20|/dev/sda3|ext4|/",
+            "100|NaN|/dev/sda3|ext4|/",
+            "100|20",
+            "100|20|/dev/sda3|ext4|relative",
+            "18446744073709551615|1|/dev/sda3|ext4|/",
+        ] {
+            let full_row = format!("2049|{row}");
+            assert!(parse_storage_row(&full_row).is_none(), "{row}");
+        }
+        for available in ["0", "-50"] {
+            let row = format!("2049|100|{available}|/dev/sda3|ext4|/");
+            let storage = aggregate_storage_rows(&[row], "sample-time").unwrap();
+            assert_eq!(storage.available_bytes, 0);
+            assert_eq!(storage.used_percent, 100.0);
+        }
+    }
+
+    #[test]
+    fn incomplete_or_overflowing_storage_never_claims_a_complete_total() {
+        let valid = "2049|1000|250|/dev/sda3|ext4|/".to_string();
+        assert!(aggregate_storage_rows(&[valid.clone(), "invalid".into()], "time").is_none());
+        let changed = "2049|2000|500|/dev/sda3|ext4|/mirror".to_string();
+        assert!(aggregate_storage_rows(&[valid, changed], "time").is_none());
+        let huge = u64::MAX / 1024;
+        let rows = [
+            format!("2049|{huge}|0|/dev/sda3|ext4|/"),
+            format!("2050|{huge}|0|/dev/sdb1|ext4|/home"),
+        ];
+        assert!(aggregate_storage_rows(&rows, "time").is_none());
+    }
+
+    #[test]
+    fn missing_storage_keeps_other_metrics_and_ssh_online() {
+        let output = "CH_CPU_FIRST=100|40\nCH_CPU_SECOND=200|70\nCH_MEM=1000|250\nCH_GPU_TOOL=nvidia-smi\nCH_GPU_NVIDIA|0, GPU-a, RTX 4090, 10, 100, 200, 40, 90, 550.54\n";
+        let snapshot = parse_resource_stdout("lab", output, 12);
+        assert!(matches!(snapshot.status, HostResourceStatus::Partial));
+        assert!(matches!(snapshot.ssh_status, HostResourceSshStatus::Online));
+        assert!(!snapshot.timed_out);
+        assert!(snapshot.storage.is_none());
+        assert_eq!(snapshot.cpu.unwrap().usage_percent, Some(70.0));
+        assert_eq!(snapshot.memory.unwrap().used_percent, Some(75.0));
+        assert_eq!(snapshot.gpus.len(), 1);
     }
 
     #[test]

@@ -1785,6 +1785,7 @@ tr:last-child td {
 .monitorMeter[data-tone="red"] span { background: var(--red); }
 .monitorMeter[data-tone="blue"] span { background: var(--blue); }
 .monitorMeter[data-tone="memory"] span { background: #d97706; }
+.monitorMeter[data-tone="storage"] span { background: #8b5cf6; }
 .monitorMeter[data-tone="cpu"] span { background: var(--blue); }
 .monitorMeter[data-tone="gpu"] span { background: var(--green); }
 
@@ -1950,7 +1951,7 @@ tr:last-child td {
 
 .monitorSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -1973,6 +1974,10 @@ tr:last-child td {
   justify-content: space-between;
   gap: 6px;
   min-width: 0;
+}
+
+.monitorSummaryTile[data-stale="true"] {
+  opacity: 0.65;
 }
 
 .monitorSummaryTile span {
@@ -2226,10 +2231,6 @@ tr:last-child td {
 }
 
 @media (max-width: 520px) {
-  .monitorSummaryGrid {
-    grid-template-columns: 1fr;
-  }
-
   .monitorGpuLineHeader,
   .monitorProcessRow {
     grid-template-columns: 1fr;

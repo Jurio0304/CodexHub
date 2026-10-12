@@ -1,6 +1,7 @@
 param(
   [string]$ExePath = "src-tauri\target\release\codexhub.exe",
-  [int]$Seconds = 5
+  [int]$Seconds = 5,
+  [switch]$KeepTempData
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,7 +51,9 @@ try {
     }
     $process.WaitForExit(5000) | Out-Null
   }
-  if (Test-Path -LiteralPath $TempRoot) {
+  if ($KeepTempData) {
+    Write-Host "Startup check data retained: $TempRoot"
+  } elseif (Test-Path -LiteralPath $TempRoot) {
     for ($attempt = 1; $attempt -le 10; $attempt++) {
       try {
         Remove-Item -LiteralPath $TempRoot -Recurse -Force
