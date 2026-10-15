@@ -4,7 +4,7 @@ Date: 2026-10-12
 
 ## macOS
 
-macOS release-build support is merged, and its real-device validation baseline was completed. The v0.5.4 artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
+macOS release-build support is merged, and its real-device validation baseline was completed. The v0.5.5 artifact remains unsigned/ad-hoc until Apple Developer ID signing and notarization are configured. First launch may require Control-click > Open or Privacy & Security approval after the user confirms the file came from the project GitHub Release.
 
 The following macOS limitations remain:
 
@@ -18,7 +18,7 @@ Linux desktop support targets Ubuntu/Debian x86_64 and arm64 `.deb` packages fir
 
 The following Linux desktop limitations remain:
 
-- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.5.4.
+- rpm, AppImage, Snap, and Flatpak packages are not in scope for v0.5.5.
 - Linux packages require real Ubuntu/Debian desktop validation before broad distribution.
 - Package-repository, Snap, Flatpak, and rpm upgrade paths remain later work.
 
@@ -51,11 +51,13 @@ The first terminal renderer is UTF-8. Terminal bytes remain opaque until xterm, 
 
 Files transfer queues support regular-file uploads and downloads for local and remote targets. Directory and symbolic-link picker sources are explicitly rejected before any queue item is created, so no partial directory tree is sent. Recursive search is bounded and does not follow symlinks. HTML and SVG previews remain inert text/metadata; Workspace never executes file content.
 
+Remote transfer verification requires SSH command execution with a POSIX `sh` and at least one of `sha256sum`, `shasum`, or `openssl`; resume-prefix verification also requires `head` and `wc`. Restricted SFTP-only accounts or missing tools cause an explicit verification failure, retaining the partial file for retry. Verification never falls back to downloading the file or comparing only its size. The server still reads its own file to compute the digest; Transfers shows this as the existing task's verification stage.
+
 The SFTP protocol does not provide a portable cross-server atomic no-replace rename primitive. When the server advertises OpenSSH `hardlink@openssh.com`, CodexHub uses its create-if-absent hard-link operation followed by source unlink for regular-file recovery moves; this closes the overwrite race for that supported case. Without the extension, or for directory/symlink and other non-regular move boundaries, delete, overwrite, rename, and restore are refused rather than silently downgraded to an unsafe rename. A separately prepared permanent purge is limited to a managed recovery directory and unlinks symlinks without traversing them. Recovery commands reopen an alias-bound Files session from the persisted host ID and alias, and block if that identity no longer matches.
 
 Transfer rows survive an app restart, while local-picker grants and live SFTP handles do not. Resuming or retrying an unbound interrupted transfer requires the user to select the original local source or destination again, provide a matching active Files session, and pass durable fingerprint and parent-boundary checks. CodexHub does not resume from a stored browser path or silently reuse a prior local authorization.
 
-No dedicated Workspace test alias has been supplied yet. Current verification is local Rust/TypeScript/desktop-contract coverage only; real PTY allocation, SSH config edge cases, host-key behavior, disconnect/reconnect, large-file transfer, and assistive-technology checks still require the user-provided alias and real Windows/macOS/Linux devices.
+The explicit opt-in `live_100mib_upload_download_with_resume` backend test has passed against a user-authorized Linux host: a 100 MiB file was uploaded and downloaded through the real `FileSessions` and `TransferIo` workers, both directions paused at 40 MiB and resumed, and the full SHA-256 matched. A separate connection running the same remote verification script returned a 65-byte digest line and received less than 3 KiB according to OpenSSH counters. This covers backend SFTP transfer and verification; real PTY allocation, SSH config edge cases, host-key behavior, disconnect/reconnect, GUI progress, and assistive-technology checks still require explicit live acceptance and real Windows/macOS/Linux devices.
 
 ## Managed Runtime Versions And Disk Cleanup
 

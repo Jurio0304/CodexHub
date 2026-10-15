@@ -7,6 +7,7 @@ pub mod events;
 pub mod files;
 pub mod local_files;
 pub mod operations;
+mod remote_hash;
 pub(crate) mod remote_path;
 pub mod terminal;
 pub mod transfer_io;
