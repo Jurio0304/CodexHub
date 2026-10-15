@@ -17,7 +17,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.5.4-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.5.5-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -51,6 +51,7 @@ CodexHub 聚焦一个清晰场景：让 Windows、macOS 或 Linux 桌面上的 C
 ## ✨ 核心能力
 
 - 检测 Windows、macOS 和 Linux 的本地 OpenSSH、本地公钥和 SSH config 状态。
+- 上传、下载及断点续传均由服务器计算 SHA-256，只返回摘要，在保留完整性校验的同时避免整份文件回传。
 - 在没有合适密钥时生成不覆盖旧文件的 Ed25519 key。
 - 只读导入本地 SSH config 中安全的 Host alias（Windows 为 `%USERPROFILE%\.ssh\config`，macOS/Linux 为 `~/.ssh/config`）。
 - 只写入 CodexHub 托管的 SSH config block，并在写入前备份。
@@ -113,11 +114,11 @@ Linux 桌面应用需要：
 
 日常使用建议从本仓库的 Releases 页面下载最新 stable 构建。
 
-- Windows：下载并运行 `CodexHub_0.5.4_x64-setup.exe`。
-- macOS Apple Silicon：下载 `CodexHub_0.5.4_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.5.4 macOS 资产仍为 unsigned/ad-hoc；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
+- Windows：下载并运行 `CodexHub_0.5.5_x64-setup.exe`。
+- macOS Apple Silicon：下载 `CodexHub_0.5.5_aarch64.dmg`，打开后将 `CodexHub.app` 移入 Applications。v0.5.5 macOS 资产仍为 unsigned/ad-hoc；首次打开时可能需要通过 Control-click > Open 或 Privacy & Security 手动允许。只信任从本仓库 Release 页面下载的文件。
 - `.app.tar.gz` 资产用于应用内更新；macOS 用户日常安装请使用 `.dmg`，不要手动解压 updater archive。
-- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.5.4_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换；已验证的 Linux stable 构建会进入签名自动更新 feed。
-- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.5.4_arm64.deb`。已验证的 Linux stable 构建会进入签名自动更新 feed。
+- Linux Ubuntu/Debian x86_64：安装 `CodexHub_0.5.5_amd64.deb`。Linux 默认使用 macOS 风格界面，可在 Settings 切换；已验证的 Linux stable 构建会进入签名自动更新 feed。
+- Linux Ubuntu/Debian arm64：安装 `CodexHub_0.5.5_arm64.deb`。已验证的 Linux stable 构建会进入签名自动更新 feed。
 - 如果 Settings 中检查更新失败，CodexHub 会弹出日志窗口，并把本次运行记录到 Tasks，方便后续回看。
 
 ## ⚡ 快速开始

@@ -4,13 +4,13 @@
 use super::error::{WorkspaceError, WorkspaceResult};
 use super::files::{FileSessions, TransferFingerprint, TransferStreamStop};
 use super::operations::FileOperations;
-use super::remote_path;
 use super::transfers::TransferQueue;
 use super::types::{
     ConfirmFileOperationRequest, ConflictStrategy, FileOperationKind, LocalPathGrantDto,
     LocalTransferRecoveryDto, LocalTransferRecoveryState, PrepareFileOperationRequest, TransferDto,
     TransferState,
 };
+use super::{remote_hash, remote_path};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -788,28 +788,22 @@ impl TransferIo {
                     .into_iter()
                     .find(|item| item.transfer_id == transfer.transfer_id)
             });
-            match current.map(|item| item.state) {
-                Some(TransferState::Pausing) => {
-                    let offset = queue
-                        .list()
-                        .ok()
-                        .and_then(|items| {
-                            items
-                                .into_iter()
-                                .find(|item| item.transfer_id == transfer.transfer_id)
-                        })
-                        .map(|item| item.bytes)
-                        .unwrap_or_default();
-                    let _ = queue.mark_paused(&transfer.transfer_id, offset);
+            match current {
+                Some(item) if item.state == TransferState::Pausing => {
+                    let _ = queue.mark_paused(&transfer.transfer_id, item.bytes);
                 }
-                Some(TransferState::Cancelled) => {}
-                Some(TransferState::Completed | TransferState::Failed) | None => {}
-                _ => {
+                Some(item)
+                    if matches!(
+                        item.state,
+                        TransferState::Cancelled | TransferState::Completed | TransferState::Failed
+                    ) => {}
+                None => {}
+                Some(item) => {
                     let _ = queue.mark_failed(
                         &transfer.transfer_id,
                         error.code.as_str(),
-                        error.retryable,
-                        None,
+                        item.bytes > 0,
+                        (item.bytes > 0).then_some(item.bytes),
                     );
                 }
             }
@@ -888,6 +882,7 @@ impl TransferIo {
             &staging,
             expected,
             transfer.resume_offset,
+            token,
         )
         .await?;
         queue.set_stream_position(&transfer.transfer_id, offset)?;
@@ -975,27 +970,30 @@ impl TransferIo {
             TransferAuditStage::Verify,
             TransferAuditStatus::Running,
         );
-        let local_hash = sha256_local(local_source).await?;
-        let remote_hash = files.transfer_sha256(file_session_id, &staging).await?;
-        if local_hash != remote_hash {
-            self.audit(
-                transfer,
-                TransferAuditStage::Verify,
-                TransferAuditStatus::Failed,
-            );
-            return fail(
-                queue,
-                transfer,
-                "checksum-mismatch",
-                last > 0,
-                (last > 0).then_some(last),
-            );
+        // Transport retries replace the worker token; verification must use
+        // the current token so pause/cancel still reaches the SSH hash process.
+        let verify_token = queue.worker_token(&transfer.transfer_id)?;
+        let verification = async {
+            let local_hash = sha256_local(local_source).await?;
+            let remote_hash = files
+                .transfer_sha256(file_session_id, &staging, &verify_token)
+                .await?;
+            if local_fingerprint(local_source).await? != current {
+                return Err(WorkspaceError::new(
+                    "source-fingerprint-changed",
+                    "The upload source changed during transfer verification.",
+                ));
+            }
+            Ok(local_hash == remote_hash)
+        };
+        let verification = tokio::select! {
+            biased;
+            _ = verify_token.cancelled() => Err(remote_hash::cancelled()),
+            result = verification => result,
+        };
+        if !self.finish_verification(queue, transfer, verification, last)? {
+            return Ok(());
         }
-        self.audit(
-            transfer,
-            TransferAuditStage::Verify,
-            TransferAuditStatus::Success,
-        );
         queue.mark_finalizing(&transfer.transfer_id)?;
         self.audit(
             transfer,
@@ -1094,6 +1092,7 @@ impl TransferIo {
             &partial,
             expected,
             transfer.resume_offset,
+            token,
         )
         .await?;
         queue.set_stream_position(&transfer.transfer_id, offset)?;
@@ -1181,40 +1180,41 @@ impl TransferIo {
             TransferAuditStage::Verify,
             TransferAuditStatus::Running,
         );
-        let after = files
-            .transfer_fingerprint(file_session_id, remote_source)
-            .await?;
-        if after != current {
-            self.audit(
-                transfer,
-                TransferAuditStage::Verify,
-                TransferAuditStatus::Failed,
-            );
-            return fail(
-                queue,
-                transfer,
-                "source-fingerprint-changed",
-                true,
-                Some(last),
-            );
-        }
-        if sha256_local(&partial).await?
-            != files
-                .transfer_sha256(file_session_id, remote_source)
+        let verify_token = queue.worker_token(&transfer.transfer_id)?;
+        let verification = async {
+            let after = files
+                .transfer_fingerprint(file_session_id, remote_source)
+                .await?;
+            if after != current {
+                return Err(WorkspaceError::new(
+                    "source-fingerprint-changed",
+                    "The download source changed before transfer verification.",
+                ));
+            }
+            let local_hash = sha256_local(&partial).await?;
+            let remote_hash = files
+                .transfer_sha256(file_session_id, remote_source, &verify_token)
+                .await?;
+            if files
+                .transfer_fingerprint(file_session_id, remote_source)
                 .await?
-        {
-            self.audit(
-                transfer,
-                TransferAuditStage::Verify,
-                TransferAuditStatus::Failed,
-            );
-            return fail(queue, transfer, "checksum-mismatch", true, Some(last));
+                != current
+            {
+                return Err(WorkspaceError::new(
+                    "source-fingerprint-changed",
+                    "The download source changed during transfer verification.",
+                ));
+            }
+            Ok(local_hash == remote_hash)
+        };
+        let verification = tokio::select! {
+            biased;
+            _ = verify_token.cancelled() => Err(remote_hash::cancelled()),
+            result = verification => result,
+        };
+        if !self.finish_verification(queue, transfer, verification, last)? {
+            return Ok(());
         }
-        self.audit(
-            transfer,
-            TransferAuditStage::Verify,
-            TransferAuditStatus::Success,
-        );
         queue.mark_finalizing(&transfer.transfer_id)?;
         self.audit(
             transfer,
@@ -1239,6 +1239,78 @@ impl TransferIo {
             TransferAuditStatus::Success,
         );
         Ok(())
+    }
+
+    /// Settle verification before commit, retaining partial bytes on failure
+    /// and keeping paused/cancelled work out of the finalization path.
+    fn finish_verification(
+        &self,
+        queue: &TransferQueue,
+        transfer: &TransferDto,
+        result: WorkspaceResult<bool>,
+        offset: u64,
+    ) -> WorkspaceResult<bool> {
+        let state = queue
+            .list()?
+            .into_iter()
+            .find(|item| item.transfer_id == transfer.transfer_id)
+            .map(|item| item.state);
+        if matches!(
+            state,
+            Some(TransferState::Pausing | TransferState::Cancelled)
+        ) {
+            self.audit(
+                transfer,
+                TransferAuditStage::Verify,
+                if state == Some(TransferState::Cancelled) {
+                    TransferAuditStatus::Cancelled
+                } else {
+                    TransferAuditStatus::Skipped
+                },
+            );
+            settle_cancel(queue, transfer, offset)?;
+            return Ok(false);
+        }
+        match result {
+            Ok(true) => {
+                self.audit(
+                    transfer,
+                    TransferAuditStage::Verify,
+                    TransferAuditStatus::Success,
+                );
+                Ok(true)
+            }
+            Ok(false) => {
+                self.audit(
+                    transfer,
+                    TransferAuditStage::Verify,
+                    TransferAuditStatus::Failed,
+                );
+                fail(
+                    queue,
+                    transfer,
+                    "checksum-mismatch",
+                    offset > 0,
+                    (offset > 0).then_some(offset),
+                )?;
+                Ok(false)
+            }
+            Err(error) => {
+                self.audit(
+                    transfer,
+                    TransferAuditStage::Verify,
+                    TransferAuditStatus::Failed,
+                );
+                fail(
+                    queue,
+                    transfer,
+                    &error.code,
+                    offset > 0,
+                    (offset > 0).then_some(offset),
+                )?;
+                Err(error)
+            }
+        }
     }
 
     /// Retries only classified transport failures. Every retry reconnects the
@@ -1284,6 +1356,7 @@ impl TransferIo {
                     let saved = queue_offset(queue, &transfer.transfer_id);
                     files.reconnect(file_session_id).await?;
                     queue.restart_attempt_preserving_resume(&transfer.transfer_id)?;
+                    token = queue.worker_token(&transfer.transfer_id)?;
                     offset = upload_resume_offset(
                         files,
                         file_session_id,
@@ -1291,10 +1364,10 @@ impl TransferIo {
                         staging,
                         expected,
                         (saved > 0).then_some(saved),
+                        &token,
                     )
                     .await?;
                     queue.set_stream_position(&transfer.transfer_id, offset)?;
-                    token = queue.worker_token(&transfer.transfer_id)?;
                 }
                 Err(error) => return Err(error),
             }
@@ -1336,6 +1409,7 @@ impl TransferIo {
                     let saved = queue_offset(queue, &transfer.transfer_id);
                     files.reconnect(file_session_id).await?;
                     queue.restart_attempt_preserving_resume(&transfer.transfer_id)?;
+                    token = queue.worker_token(&transfer.transfer_id)?;
                     let current = files
                         .transfer_fingerprint(file_session_id, remote_source)
                         .await?;
@@ -1352,10 +1426,10 @@ impl TransferIo {
                         partial,
                         expected,
                         (saved > 0).then_some(saved),
+                        &token,
                     )
                     .await?;
                     queue.set_stream_position(&transfer.transfer_id, offset)?;
-                    token = queue.worker_token(&transfer.transfer_id)?;
                 }
                 Err(error) => return Err(error),
             }
@@ -1706,6 +1780,7 @@ async fn upload_resume_offset(
     staging: &str,
     expected: &LocalFingerprint,
     saved_offset: Option<u64>,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> WorkspaceResult<u64> {
     let Some(offset) = saved_offset.filter(|offset| *offset > 0 && *offset <= expected.size) else {
         return Ok(0);
@@ -1717,9 +1792,13 @@ async fn upload_resume_offset(
     if remote.size != offset {
         return Ok(0);
     }
-    let local_hash = sha256_local_prefix(local_source, offset).await?;
+    let local_hash = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(remote_hash::cancelled()),
+        result = sha256_local_prefix(local_source, offset) => result?,
+    };
     let remote_hash = files
-        .transfer_prefix_sha256(file_session_id, staging, offset)
+        .transfer_prefix_sha256(file_session_id, staging, offset, cancel)
         .await?;
     Ok((local_hash == remote_hash)
         .then_some(offset)
@@ -1733,6 +1812,7 @@ async fn download_resume_offset(
     partial: &Path,
     expected: &TransferFingerprint,
     saved_offset: Option<u64>,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> WorkspaceResult<u64> {
     let Some(offset) = saved_offset.filter(|offset| *offset > 0 && *offset <= expected.size) else {
         return Ok(0);
@@ -1750,9 +1830,13 @@ async fn download_resume_offset(
     if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() != offset {
         return Ok(0);
     }
-    let local_hash = sha256_local_prefix(partial, offset).await?;
+    let local_hash = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(remote_hash::cancelled()),
+        result = sha256_local_prefix(partial, offset) => result?,
+    };
     let remote_hash = files
-        .transfer_prefix_sha256(file_session_id, remote_source, offset)
+        .transfer_prefix_sha256(file_session_id, remote_source, offset, cancel)
         .await?;
     Ok((local_hash == remote_hash)
         .then_some(offset)
@@ -2029,6 +2113,98 @@ fn lock_error<T>(_: std::sync::PoisonError<T>) -> WorkspaceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn verifying_transfer() -> (TransferQueue, TransferDto) {
+        let queue = TransferQueue::in_memory(None);
+        let transfer = queue
+            .enqueue(super::super::types::EnqueueTransfersRequest {
+                file_session_id: "files-test".into(),
+                items: vec![super::super::types::TransferDraft {
+                    direction: super::super::types::TransferDirection::Upload,
+                    host_id: "host-test".into(),
+                    host_name: "host-test".into(),
+                    host_alias: "host-test".into(),
+                    source_ref: "grant-test".into(),
+                    local_grant_id: None,
+                    destination_path: "/tmp/file".into(),
+                    total_bytes: Some(10),
+                    conflict_strategy: None,
+                }],
+            })
+            .unwrap()
+            .remove(0);
+        queue.mark_running(&transfer.transfer_id).unwrap();
+        queue
+            .update_progress(&transfer.transfer_id, 10, None, None)
+            .unwrap();
+        queue.mark_verifying(&transfer.transfer_id).unwrap();
+        (queue, transfer)
+    }
+
+    fn transfer_identity(transfer: &TransferDto) -> super::super::types::TransferIdentityRequest {
+        super::super::types::TransferIdentityRequest {
+            transfer_id: transfer.transfer_id.clone(),
+            revision: None,
+            file_session_id: None,
+            local_grant_id: None,
+            restart: false,
+        }
+    }
+
+    #[test]
+    fn verification_failures_retain_the_partial_offset_and_block_commit() {
+        for code in [
+            "transfer-verify-unavailable",
+            "transfer-verify-timeout",
+            "transfer-verify-invalid-digest",
+        ] {
+            let (queue, transfer) = verifying_transfer();
+            let result = TransferIo::default().finish_verification(
+                &queue,
+                &transfer,
+                Err(WorkspaceError::new(code, "Verification failed.")),
+                10,
+            );
+            assert_eq!(result.unwrap_err().code, code);
+            let failed = queue.list().unwrap().remove(0);
+            assert_eq!(failed.state, TransferState::Failed);
+            assert_eq!(failed.error_code.as_deref(), Some(code));
+            assert!(failed.resumable);
+            assert_eq!(failed.resume_offset, Some(10));
+            assert!(queue.mark_finalizing(&transfer.transfer_id).is_err());
+        }
+        let (queue, transfer) = verifying_transfer();
+        assert!(!TransferIo::default()
+            .finish_verification(&queue, &transfer, Ok(false), 10)
+            .unwrap());
+        assert_eq!(
+            queue.list().unwrap()[0].error_code.as_deref(),
+            Some("checksum-mismatch")
+        );
+        assert!(queue.mark_finalizing(&transfer.transfer_id).is_err());
+    }
+
+    #[test]
+    fn pause_and_cancel_during_verification_never_advance_to_commit() {
+        let io = TransferIo::default();
+        let (queue, transfer) = verifying_transfer();
+        queue.pause(transfer_identity(&transfer)).unwrap();
+        assert!(!io
+            .finish_verification(&queue, &transfer, Ok(true), 10)
+            .unwrap());
+        let paused = queue.list().unwrap().remove(0);
+        assert_eq!(paused.state, TransferState::Paused);
+        assert_eq!(paused.resume_offset, Some(10));
+        assert!(queue.mark_finalizing(&transfer.transfer_id).is_err());
+
+        let (queue, transfer) = verifying_transfer();
+        queue.cancel(transfer_identity(&transfer)).unwrap();
+        assert!(!io
+            .finish_verification(&queue, &transfer, Err(remote_hash::cancelled()), 10)
+            .unwrap());
+        assert_eq!(queue.list().unwrap()[0].state, TransferState::Cancelled);
+        assert!(queue.mark_finalizing(&transfer.transfer_id).is_err());
+    }
 
     #[test]
     fn download_destination_uses_remote_basename_only() {

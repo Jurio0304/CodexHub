@@ -4,9 +4,9 @@ use super::events::{
     emit, FileSearchState, FileSearchUpdatedEvent, WorkspaceEventSink, FILE_SEARCH_UPDATED_EVENT,
 };
 use super::local_files::LocalFileSessions;
-use super::remote_path;
 use super::types::*;
 use super::vscode::{self, VscodeFolder};
+use super::{remote_hash, remote_path};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, SecondsFormat, Utc};
 use futures_util::StreamExt;
@@ -15,7 +15,6 @@ use openssh_sftp_client::{
     Sftp, SftpOptions,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsStr;
 use std::io::SeekFrom;
@@ -1592,26 +1591,17 @@ impl FileSessions {
         &self,
         file_session_id: &str,
         path: &str,
+        cancel: &CancellationToken,
     ) -> WorkspaceResult<String> {
         if LocalFileSessions::owns(file_session_id) {
-            return self.local.transfer_sha256(path).await;
+            return tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(remote_hash::cancelled()),
+                result = self.local.transfer_sha256(path) => result,
+            };
         }
-        let session = self.get(file_session_id)?;
-        let connection = session.connection.lock().await;
-        let mut remote = connection
-            .sftp
-            .open(Path::new(path))
+        self.transfer_remote_hash(file_session_id, path, None, cancel)
             .await
-            .map_err(sftp_error("transfer-verify-open-failed"))?;
-        let mut hash = Sha256::new();
-        while let Some(bytes) = remote
-            .read(TRANSFER_CHUNK_BYTES as u32, Default::default())
-            .await
-            .map_err(sftp_error("transfer-verify-read-failed"))?
-        {
-            hash.update(&bytes);
-        }
-        Ok(format!("{:x}", hash.finalize()))
     }
     /// Hashes exactly one remote prefix for resume validation. The caller
     /// compares it with a local prefix before allowing an offset seek.
@@ -1620,41 +1610,45 @@ impl FileSessions {
         file_session_id: &str,
         path: &str,
         length: u64,
+        cancel: &CancellationToken,
     ) -> WorkspaceResult<String> {
         if LocalFileSessions::owns(file_session_id) {
-            return self.local.transfer_prefix_sha256(path, length).await;
-        }
-        let session = self.get(file_session_id)?;
-        let connection = session.connection.lock().await;
-        let mut remote = connection
-            .sftp
-            .open(Path::new(path))
-            .await
-            .map_err(sftp_error("transfer-prefix-open-failed"))?;
-        let mut remaining = length;
-        let mut hash = Sha256::new();
-        while remaining > 0 {
-            let request = remaining.min(TRANSFER_CHUNK_BYTES as u64) as u32;
-            let Some(bytes) = remote
-                .read(request, Default::default())
-                .await
-                .map_err(sftp_error("transfer-prefix-read-failed"))?
-            else {
-                return Err(WorkspaceError::new(
-                    "transfer-prefix-short",
-                    "The transfer partial is shorter than its saved offset.",
-                ));
+            return tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(remote_hash::cancelled()),
+                result = self.local.transfer_prefix_sha256(path, length) => result,
             };
-            if bytes.is_empty() || bytes.len() as u64 > remaining {
-                return Err(WorkspaceError::new(
-                    "transfer-prefix-short",
-                    "The transfer partial could not be verified at its saved offset.",
-                ));
-            }
-            remaining = remaining.saturating_sub(bytes.len() as u64);
-            hash.update(&bytes);
         }
-        Ok(format!("{:x}", hash.finalize()))
+        self.transfer_remote_hash(file_session_id, path, Some(length), cancel)
+            .await
+    }
+
+    async fn transfer_remote_hash(
+        &self,
+        file_session_id: &str,
+        path: &str,
+        length: Option<u64>,
+        cancel: &CancellationToken,
+    ) -> WorkspaceResult<String> {
+        let session = self.get(file_session_id)?;
+        let before = self.transfer_fingerprint(file_session_id, path).await?;
+        if length.is_some_and(|length| length > before.size) {
+            return Err(WorkspaceError::new(
+                "transfer-prefix-short",
+                "The remote file is shorter than the saved transfer offset.",
+            ));
+        }
+        // SSH returns only the digest. SFTP is used solely for metadata checks.
+        let hash =
+            remote_hash::sha256(&session.dto.host_alias, path, length, before.size, cancel).await?;
+        let after = self.transfer_fingerprint(file_session_id, path).await?;
+        if before != after {
+            return Err(WorkspaceError::new(
+                "source-fingerprint-changed",
+                "The remote file changed during transfer verification.",
+            ));
+        }
+        Ok(hash)
     }
     /// Returns the stable saved-host identity for a live SFTP handle. Recovery
     /// records persist this identity rather than this ephemeral session id.
