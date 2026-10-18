@@ -21,7 +21,7 @@
   </p>
 
   <p>
-    <img alt="Release" src="https://img.shields.io/badge/release-v0.5.5-2563eb" />
+    <img alt="Release" src="https://img.shields.io/badge/release-v0.5.6-2563eb" />
     <img alt="License" src="https://img.shields.io/badge/license-MIT-16a34a" />
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%2B%20macOS%20%2B%20Linux-0078D4" />
     <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -66,6 +66,7 @@ CodexHub is a desktop control console for one practical workflow: prepare a Wind
 * After a confirmed profile apply, can gracefully reload strictly matched Codex processes owned by the current remote SSH user; the recommended mode preserves interactive CLI and exec sessions.
 * Imports local or GitHub skill directories containing `SKILL.md`.
 * Shows read-only, page-active memory, storage, CPU, and GPU resource snapshots for remembered hosts. Storage aggregates mounted local disk filesystems into available / total capacity with a distinct usage bar; GPU users expand into process details.
+* Edit the Monitor refresh interval directly and set a per-host sample timeout from 1 to 60 seconds, defaulting to 30 seconds. Both settings are saved after editing and the toolbar adapts to narrow windows.
 * Runs local and SSH terminal tabs with reconnect, resize, search, configurable scrollback, screen-reader mode, and large-paste confirmation.
 * Browses local and remote SFTP files with pagination, search, preview, creation, rename/copy, and recoverable destructive operations.
 * Tracks uploads and downloads with pause, retry, cancel, conflict handling, retained recovery cards, and explicit reauthorization after restart.
@@ -121,11 +122,11 @@ For the Linux desktop app:
 
 For everyday use, download the latest stable build from this repository's Releases page.
 
-* Windows: download and run `CodexHub_0.5.5_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
-* macOS Apple Silicon: download `CodexHub_0.5.5_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.5.5 macOS artifact is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
+* Windows: download and run `CodexHub_0.5.6_x64-setup.exe`; signed stable installers can check and install future Windows updates from Settings.
+* macOS Apple Silicon: download `CodexHub_0.5.6_aarch64.dmg`, open it, and move `CodexHub.app` to Applications. The v0.5.6 macOS artifact is unsigned/ad-hoc, so macOS may require Control-click > Open or Privacy & Security approval the first time. Only trust files downloaded from this repository's Release page.
 * The `.app.tar.gz` asset is for the in-app updater. macOS users should install from the `.dmg`, not by manually extracting the updater archive.
-* Linux Ubuntu/Debian x86_64: install `CodexHub_0.5.5_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
-* Linux Ubuntu/Debian arm64: install `CodexHub_0.5.5_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian x86_64: install `CodexHub_0.5.6_amd64.deb`. Linux uses the macOS-style appearance by default and can be switched in Settings. Validated Linux stable builds participate in the signed updater feed.
+* Linux Ubuntu/Debian arm64: install `CodexHub_0.5.6_arm64.deb`. Validated Linux stable builds participate in the signed updater feed.
 * If Settings update checks fail, CodexHub opens a log dialog and records the run in Tasks for later review.
 
 ## ⚡ Quick Start
@@ -192,8 +193,8 @@ For everyday use, download the latest stable build from this repository's Releas
 
 ## ⚠️ Known Limitations
 
-* The v0.5.5 macOS artifact remains unsigned/ad-hoc; Developer ID signing and notarization are not configured yet.
-* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.5.5.
+* The v0.5.6 macOS artifact remains unsigned/ad-hoc; Developer ID signing and notarization are not configured yet.
+* Linux desktop packages target Ubuntu/Debian x86_64 and arm64 `.deb` first; rpm, AppImage, Snap, and Flatpak are not in scope for v0.5.6.
 * CodexHub does not automatically register SSH hosts inside Codex App.
 * CodexHub can reload the current SSH user's remote Codex processes after profile apply, but it cannot force the local ChatGPT/Codex App to reconnect or use private app IPC.
 * Remote reload is available only inside profile apply; there is no standalone Host reload button.

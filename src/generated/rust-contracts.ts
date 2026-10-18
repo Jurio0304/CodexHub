@@ -32,7 +32,7 @@ export type WorkspaceTerminalPreferencesDto = { fontFamily: WorkspaceTerminalFon
  */
 lineHeight: string, colorScheme: WorkspaceTerminalColorSchemeDto, scrollback: number, cursorStyle: WorkspaceTerminalCursorStyleDto, screenReaderMode: boolean, confirmLargePaste: boolean, };
 
-export type AppSettingsDto = { theme: ThemeChoiceDto, fontPreset: "english" | "zh-cn", platformAppearance: PlatformAppearanceDto, closeButtonBehavior: CloseButtonBehaviorDto, networkProxyMode: NetworkProxyModeDto, networkProxyUrl: string, resourceMonitorAutoRefresh: boolean, resourceMonitorHostOrder: Array<string>, resourceMonitorRefreshSeconds: number, sidebarCompletionIndicators: boolean, hostOperationLogPopups: boolean, personalInfoMasking: boolean, launchAtLogin: boolean, setupGuideDismissed: boolean, workspaceTerminalPreferences: WorkspaceTerminalPreferencesDto, };
+export type AppSettingsDto = { theme: ThemeChoiceDto, fontPreset: "english" | "zh-cn", platformAppearance: PlatformAppearanceDto, closeButtonBehavior: CloseButtonBehaviorDto, networkProxyMode: NetworkProxyModeDto, networkProxyUrl: string, resourceMonitorAutoRefresh: boolean, resourceMonitorHostOrder: Array<string>, resourceMonitorRefreshSeconds: number, resourceMonitorSampleTimeoutSeconds: number, sidebarCompletionIndicators: boolean, hostOperationLogPopups: boolean, personalInfoMasking: boolean, launchAtLogin: boolean, setupGuideDismissed: boolean, workspaceTerminalPreferences: WorkspaceTerminalPreferencesDto, };
 
 export type SettingsSaveResultDto = { settings: AppSettingsDto, changed: boolean, backupPath: string | null, };
 

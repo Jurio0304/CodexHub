@@ -278,7 +278,7 @@ export const desktopApi: CodexHubApi = {
   ),
   sampleHostResources: (
     hostAliases: string[],
-    timeoutMs = 10000,
+    timeoutMs = 30000,
     recordTask = true,
     requestId?: string,
     onProgress?: (event: HostResourceProgressEvent) => void

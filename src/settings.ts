@@ -38,6 +38,7 @@ export const defaultSettings: AppSettings = {
   resourceMonitorAutoRefresh: true,
   resourceMonitorHostOrder: [],
   resourceMonitorRefreshSeconds: 60,
+  resourceMonitorSampleTimeoutSeconds: 30,
   sidebarCompletionIndicators: true,
   hostOperationLogPopups: true,
   personalInfoMasking: true,
@@ -88,6 +89,12 @@ export function normalizeResourceMonitorRefreshSeconds(value: unknown): number {
     : defaultSettings.resourceMonitorRefreshSeconds;
 }
 
+export function normalizeResourceMonitorSampleTimeoutSeconds(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(Math.min(60, Math.max(1, value)))
+    : defaultSettings.resourceMonitorSampleTimeoutSeconds;
+}
+
 function normalizeStringList(value: unknown): string[] {
   return Array.isArray(value)
     ? value
@@ -117,6 +124,7 @@ export function normalizeSettings(value: unknown): AppSettings {
     resourceMonitorAutoRefresh: candidate.resourceMonitorAutoRefresh !== false,
     resourceMonitorHostOrder: normalizeStringList(candidate.resourceMonitorHostOrder),
     resourceMonitorRefreshSeconds: normalizeResourceMonitorRefreshSeconds(candidate.resourceMonitorRefreshSeconds),
+    resourceMonitorSampleTimeoutSeconds: normalizeResourceMonitorSampleTimeoutSeconds(candidate.resourceMonitorSampleTimeoutSeconds),
     sidebarCompletionIndicators: candidate.sidebarCompletionIndicators !== false,
     hostOperationLogPopups: candidate.hostOperationLogPopups !== false,
     personalInfoMasking: candidate.personalInfoMasking !== false,

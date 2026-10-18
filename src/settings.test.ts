@@ -1,6 +1,24 @@
 import { describe, expect, it, test } from "vitest";
 import { defaultSettings, normalizeSettings, workspaceTerminalPreferences } from "./settings";
 
+describe("resource monitor timing settings", () => {
+  test("migrates existing settings to a thirty-second sample timeout", () => {
+    expect(normalizeSettings({ resourceMonitorRefreshSeconds: 120 })).toMatchObject({
+      resourceMonitorRefreshSeconds: 120,
+      resourceMonitorSampleTimeoutSeconds: 30
+    });
+  });
+
+  test("keeps sampling and refresh budgets independent within their ranges", () => {
+    expect(normalizeSettings({ resourceMonitorRefreshSeconds: 120, resourceMonitorSampleTimeoutSeconds: 45 })).toMatchObject({
+      resourceMonitorRefreshSeconds: 120,
+      resourceMonitorSampleTimeoutSeconds: 45
+    });
+    expect(normalizeSettings({ resourceMonitorSampleTimeoutSeconds: 90 }).resourceMonitorSampleTimeoutSeconds).toBe(60);
+    expect(normalizeSettings({ resourceMonitorSampleTimeoutSeconds: 0 }).resourceMonitorSampleTimeoutSeconds).toBe(1);
+  });
+});
+
 test("Workspace terminal preferences are persisted safely and clamped", () => {
   const settings = normalizeSettings({
     ...defaultSettings,

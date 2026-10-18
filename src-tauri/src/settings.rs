@@ -159,6 +159,8 @@ pub(crate) struct AppSettings {
     pub(crate) resource_monitor_host_order: Vec<String>,
     #[serde(default = "default_resource_monitor_refresh_seconds")]
     pub(crate) resource_monitor_refresh_seconds: u16,
+    #[serde(default = "default_resource_monitor_sample_timeout_seconds")]
+    pub(crate) resource_monitor_sample_timeout_seconds: u16,
     #[serde(default = "default_true")]
     pub(crate) sidebar_completion_indicators: bool,
     #[serde(default = "default_true")]
@@ -194,6 +196,7 @@ impl Default for AppSettings {
             resource_monitor_auto_refresh: true,
             resource_monitor_host_order: Vec::new(),
             resource_monitor_refresh_seconds: 60,
+            resource_monitor_sample_timeout_seconds: default_resource_monitor_sample_timeout_seconds(),
             sidebar_completion_indicators: true,
             host_operation_log_popups: true,
             personal_info_masking: true,
@@ -209,6 +212,8 @@ impl AppSettings {
         self.network_proxy_url = self.network_proxy_url.trim().to_string();
         self.resource_monitor_refresh_seconds =
             self.resource_monitor_refresh_seconds.clamp(15, 300);
+        self.resource_monitor_sample_timeout_seconds =
+            self.resource_monitor_sample_timeout_seconds.clamp(1, 60);
         let mut seen = HashSet::new();
         self.resource_monitor_host_order = self
             .resource_monitor_host_order
@@ -346,6 +351,10 @@ fn default_resource_monitor_refresh_seconds() -> u16 {
     60
 }
 
+fn default_resource_monitor_sample_timeout_seconds() -> u16 {
+    30
+}
+
 fn default_true() -> bool {
     true
 }
@@ -400,6 +409,7 @@ mod tests {
         assert!(settings.personal_info_masking);
         assert!(!settings.launch_at_login);
         assert!(!settings.host_operation_log_popups);
+        assert_eq!(settings.resource_monitor_sample_timeout_seconds, 30);
         fs::remove_dir_all(dir).expect("test directory should be removed");
     }
 
@@ -418,6 +428,7 @@ mod tests {
 
         let mut changed = initial;
         changed.resource_monitor_refresh_seconds = 120;
+        changed.resource_monitor_sample_timeout_seconds = 45;
         changed.host_operation_log_popups = false;
         let saved = write_settings_at(&path, &changed).expect("changed settings should save");
         assert!(saved.changed);

@@ -11,6 +11,8 @@ use std::{
 use ts_rs::TS;
 
 const RESOURCE_SAMPLE_CONCURRENCY: usize = 3;
+const DEFAULT_RESOURCE_SAMPLE_TIMEOUT_MS: u64 = 30_000;
+const MAX_RESOURCE_SAMPLE_TIMEOUT_MS: u64 = 60_000;
 
 #[derive(Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -253,7 +255,7 @@ pub(crate) fn sample_host_resources_with_progress<F>(
 where
     F: FnMut(&HostResourceSnapshot),
 {
-    let timeout = ssh::normalize_health_check_timeout_ms(timeout_ms);
+    let timeout = normalize_resource_sample_timeout_ms(timeout_ms);
     let checked_at = timestamp_now();
     let snapshots = sample_hosts_with_progress(host_aliases, timeout, sample_one_host, on_snapshot);
 
@@ -261,6 +263,12 @@ where
         checked_at,
         snapshots,
     }
+}
+
+// 采样默认等待 30 秒，用户可调至 60 秒；继续复用 SSH 的最小超时校验。
+fn normalize_resource_sample_timeout_ms(timeout_ms: Option<u64>) -> u64 {
+    let timeout = timeout_ms.unwrap_or(DEFAULT_RESOURCE_SAMPLE_TIMEOUT_MS);
+    ssh::normalize_timeout_ms(Some(timeout)).min(MAX_RESOURCE_SAMPLE_TIMEOUT_MS)
 }
 
 fn sample_hosts_with_progress<S, F>(
@@ -1129,6 +1137,16 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
         time::Duration,
     };
+
+    #[test]
+    fn sample_timeout_defaults_to_thirty_seconds_and_allows_sixty() {
+        assert_eq!(normalize_resource_sample_timeout_ms(None), 30_000);
+        assert_eq!(normalize_resource_sample_timeout_ms(Some(45_000)), 45_000);
+        assert_eq!(normalize_resource_sample_timeout_ms(Some(60_000)), 60_000);
+        assert_eq!(normalize_resource_sample_timeout_ms(Some(120_000)), 60_000);
+        assert_eq!(normalize_resource_sample_timeout_ms(Some(0)), 1_000);
+        assert_eq!(ssh::normalize_health_check_timeout_ms(Some(60_000)), 10_000);
+    }
 
     #[test]
     fn parses_cpu_memory_and_nvidia_rows() {

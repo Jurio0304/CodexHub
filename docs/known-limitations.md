@@ -39,6 +39,8 @@ If Codex App supports a public documented SSH deep link on the tester's machine,
 
 ## Resource Monitoring
 
+Each host resource sample defaults to a 30-second timeout, including SSH connection setup and the remote probe. The Monitor toolbar lets users persist a timeout from 1 to 60 seconds, independently of the 15–300 second automatic refresh interval. Both numeric fields save on blur or Enter, allowing users to clear and type a complete value before it is normalized; Escape restores the saved value. The sample timeout remains editable when automatic refresh is off and also applies to manual refreshes.
+
 Storage monitoring requires GNU `df` with `--output`, GNU-compatible `stat`, and a compatible `timeout` command on the Linux remote. It aggregates available / total capacity across mounted local block-device filesystems, deduplicating their kernel device identities. The tooltip lists included filesystems. Memory, firmware, overlay, loop images, virtual/network FUSE mounts, and storage pools without a local block-device source are excluded. Unmounted devices have no mounted-filesystem availability and remain outside this capacity sum; directory sizes, user quotas, and inode exhaustion are also outside it. Unavailable capacity includes filesystem-reserved blocks. The complete storage probe has a two-second deadline plus a one-second forced-stop grace; failed or incomplete data remains partial while other metrics continue. Cached readings retain their original sample time in the tooltip.
 
 ## Workspace Terminal And Files

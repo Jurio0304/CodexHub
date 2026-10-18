@@ -1669,6 +1669,8 @@ tr:last-child td {
 .monitorHeroHeader {
   min-height: 60px;
   margin-bottom: 0;
+  flex-wrap: wrap;
+  gap: 12px 18px;
 }
 
 .monitorHeroHeader .titleWithIcon {
@@ -1693,6 +1695,15 @@ tr:last-child td {
 
 .monitorRefreshButton {
   border-radius: var(--monitor-control-radius);
+  flex-shrink: 0;
+}
+
+.monitorTimingControls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 100%;
 }
 
 .monitorAutoRefreshControl {
@@ -1726,20 +1737,49 @@ tr:last-child td {
 .monitorIntervalCompact {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--monitor-control-radius);
+  padding: 1px 10px;
+  color: var(--text-muted);
+  background: var(--surface-solid);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.monitorTimingLabel {
+  white-space: nowrap;
+}
+
+.monitorTimingValue {
+  display: inline-flex;
+  align-items: center;
   gap: 5px;
-  border-left: 1px solid var(--border);
-  padding-left: 8px;
 }
 
 .monitorIntervalCompact input {
-  width: 58px;
+  width: 64px;
+  min-width: 0;
   height: 28px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 4px;
   padding: 0 7px;
   color: var(--text);
   background: var(--surface-muted);
   font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.monitorIntervalCompact input:focus-visible {
+  border-color: var(--blue);
+  outline: 2px solid color-mix(in srgb, var(--blue) 25%, transparent);
+  outline-offset: 2px;
+}
+
+.monitorIntervalCompact:has(input:disabled) {
+  opacity: 0.55;
 }
 
 .monitorError {
@@ -2231,6 +2271,29 @@ tr:last-child td {
 }
 
 @media (max-width: 520px) {
+  .monitorTimingControls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .monitorTimingControls .monitorAutoRefreshControl {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+
+  .monitorIntervalCompact {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+  }
+
+  .monitorTimingValue input {
+    flex: 1;
+    width: 100%;
+  }
+
   .monitorGpuLineHeader,
   .monitorProcessRow {
     grid-template-columns: 1fr;

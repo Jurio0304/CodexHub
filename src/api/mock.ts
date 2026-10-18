@@ -772,7 +772,7 @@ async function mockRemoteProbeWithProgress(
   return clone(result);
 }
 
-function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourceBatchResult["snapshots"][number] {
+function mockHostResourceSnapshot(hostAlias: string, index: number, timeoutMs: number): HostResourceBatchResult["snapshots"][number] {
   const host = fallbackHostForAlias(hostAlias);
   const sampledAt = new Date().toISOString();
   if (hostAlias.toLowerCase().includes("timeout")) {
@@ -783,7 +783,7 @@ function mockHostResourceSnapshot(hostAlias: string, index: number): HostResourc
       timedOut: true,
       sampledAt,
       latencyMs: null,
-      error: "Resource sampling timed out after 10000 ms.",
+      error: `Resource sampling timed out after ${timeoutMs} ms.`,
       cpu: null,
       memory: null,
       storage: null,
@@ -907,7 +907,7 @@ function mockResourceSnapshotLogMessage(snapshot: HostResourceBatchResult["snaps
   return `Host ${snapshot.hostAlias}: resource sampling failed: ${detail}`;
 }
 
-function mockResourceSampleTask(result: HostResourceBatchResult) {
+function mockResourceSampleTask(result: HostResourceBatchResult, timeoutMs: number) {
   const partial = result.snapshots.filter((snapshot) => snapshot.status === "partial").length;
   const failed = result.snapshots.filter((snapshot) => snapshot.status === "failed").length;
   const total = result.snapshots.length;
@@ -925,7 +925,7 @@ function mockResourceSampleTask(result: HostResourceBatchResult) {
     level: snapshot.status === "ok" ? "info" : snapshot.status === "partial" ? "warn" : "error",
     timestamp: task.startedAt,
     message: mockResourceSnapshotLogMessage(snapshot),
-    durationMs: snapshot.latencyMs ?? (snapshot.timedOut ? 10000 : undefined),
+    durationMs: snapshot.latencyMs ?? (snapshot.timedOut ? timeoutMs : undefined),
     timedOut: snapshot.timedOut
   }));
   task.logs.push({
@@ -938,25 +938,27 @@ function mockResourceSampleTask(result: HostResourceBatchResult) {
   return task;
 }
 
-function mockSampleHostResources(hostAliases: string[], recordTask = true): HostResourceBatchResult {
+function mockSampleHostResources(hostAliases: string[], timeoutMs: number, recordTask = true): HostResourceBatchResult {
+  const timeout = Math.min(60000, Math.max(1000, timeoutMs));
   const aliases = hostAliases.length > 0 ? hostAliases : ["mock-gpu-01", "mock-cpu-01", "mock-gpu-02"];
   const result: HostResourceBatchResult = {
     checkedAt: new Date().toISOString(),
-    snapshots: aliases.map(mockHostResourceSnapshot)
+    snapshots: aliases.map((alias, index) => mockHostResourceSnapshot(alias, index, timeout))
   };
   if (recordTask) {
-    recordMockTask(mockResourceSampleTask(result));
+    recordMockTask(mockResourceSampleTask(result, timeout));
   }
   return result;
 }
 
 async function mockSampleHostResourcesWithProgress(
   hostAliases: string[],
+  timeoutMs: number,
   recordTask: boolean,
   requestId?: string,
   onProgress?: (event: HostResourceProgressEvent) => void
 ) {
-  const result = mockSampleHostResources(hostAliases, recordTask);
+  const result = mockSampleHostResources(hostAliases, timeoutMs, recordTask);
   if (requestId && onProgress) {
     for (const snapshot of result.snapshots) {
       await delay(15);
@@ -1643,11 +1645,11 @@ export const mockApi: CodexHubApi = {
     mockBatchRemoteProbeCodex(hostAliases, requestId, onProgress, onItemCompleted),
   sampleHostResources: async (
     hostAliases: string[],
-    _timeoutMs = 10000,
+    timeoutMs = 30000,
     recordTask = true,
     requestId?: string,
     onProgress?: (event: HostResourceProgressEvent) => void
-  ) => mockSampleHostResourcesWithProgress(hostAliases, recordTask, requestId, onProgress),
+  ) => mockSampleHostResourcesWithProgress(hostAliases, timeoutMs, recordTask, requestId, onProgress),
   remoteManageCodex: async (
     hostAlias: string,
     action: RemoteCodexAction,
