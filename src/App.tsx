@@ -73,6 +73,7 @@ import {
   loadMockSettings,
   normalizeSettings,
   normalizeResourceMonitorRefreshSeconds,
+  normalizeResourceMonitorSampleTimeoutSeconds,
   resolvePlatformAppearance,
   workspaceTerminalPreferences
 } from "./settings";
@@ -376,7 +377,6 @@ const DEFAULT_PROFILE_PROVIDER = "openai";
 const DEFAULT_PROFILE_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_PROFILE_API_KEY_ENV_VAR = "OPENAI_API_KEY";
 const APP_UPDATE_DAILY_CHECK_HOUR = 4;
-const RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS = 10_000;
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env;
 const PREVIEW_SIDEBAR_UPDATE_BUTTON =
   viteEnv?.DEV === true && viteEnv?.VITE_CODEXHUB_PREVIEW_UPDATE_BUTTON === "1";
@@ -563,6 +563,8 @@ export const uiCopy = {
       refreshing: "Refreshing",
       autoRefresh: "Auto refresh",
       refreshEvery: "Refresh every",
+      sampleTimeout: "Sample timeout",
+      secondsShort: "s",
       seconds: "seconds",
       lastUpdated: "Last updated",
       never: "Never",
@@ -1476,6 +1478,8 @@ export const uiCopy = {
       refreshing: "刷新中",
       autoRefresh: "自动刷新",
       refreshEvery: "刷新间隔",
+      sampleTimeout: "采样超时",
+      secondsShort: "秒",
       seconds: "秒",
       lastUpdated: "上次更新",
       never: "未刷新",
@@ -3182,7 +3186,7 @@ function App() {
       const requestId = `resource-monitor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const result = await api.sampleHostResources(
         hostAliases,
-        RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS,
+        settings.resourceMonitorSampleTimeoutSeconds * 1000,
         recordTask,
         requestId,
         (event) => {
@@ -3219,7 +3223,7 @@ function App() {
       setResourceBusy(false);
       setResourcePendingHostAliases(new Set());
     }
-  }, [copy.common.justNow, copy.monitor, resourceHostAliases, setErrorNotice, setInfoNotice]);
+  }, [copy.common.justNow, copy.monitor, resourceHostAliases, settings.resourceMonitorSampleTimeoutSeconds, setErrorNotice, setInfoNotice]);
 
   useEffect(() => {
     if (loading || activeSection !== "monitor") return;
@@ -4825,6 +4829,7 @@ function App() {
             hosts={hosts}
             hostOrder={settings.resourceMonitorHostOrder}
             refreshSeconds={settings.resourceMonitorRefreshSeconds}
+            sampleTimeoutSeconds={settings.resourceMonitorSampleTimeoutSeconds}
             refreshingHostAliases={resourcePendingHostAliases}
             settingsSaving={settingsSaving}
             snapshots={resourceSnapshots}
@@ -4835,6 +4840,12 @@ function App() {
               persistSettings({
                 ...settings,
                 resourceMonitorRefreshSeconds: normalizeResourceMonitorRefreshSeconds(resourceMonitorRefreshSeconds)
+              })
+            }
+            onSampleTimeoutSecondsChange={(resourceMonitorSampleTimeoutSeconds) =>
+              persistSettings({
+                ...settings,
+                resourceMonitorSampleTimeoutSeconds: normalizeResourceMonitorSampleTimeoutSeconds(resourceMonitorSampleTimeoutSeconds)
               })
             }
           />
@@ -5762,6 +5773,130 @@ function MetricCard({
   );
 }
 
+function MonitorSecondsInput({
+  disabled,
+  label,
+  max,
+  min,
+  unit,
+  value,
+  onCommit
+}: {
+  disabled: boolean;
+  label: string;
+  max: number;
+  min: number;
+  unit: string;
+  value: number;
+  onCommit: (seconds: number) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const editingRef = useRef(false);
+
+  useEffect(() => {
+    if (!editingRef.current) setDraft(String(value));
+  }, [value]);
+
+  const commit = async (raw: string) => {
+    editingRef.current = false;
+    // 完成编辑后再校验和保存，允许清空后连续输入多位数。
+    const parsed = raw.trim() === "" ? Number.NaN : Number(raw);
+    const next = Number.isFinite(parsed) ? Math.round(Math.min(max, Math.max(min, parsed))) : value;
+    setDraft(String(next));
+    if (next !== value && !(await onCommit(next))) setDraft(String(value));
+  };
+
+  return (
+    <label className="monitorIntervalCompact" title={`${label}: ${min}–${max} ${unit}`}>
+      <span className="monitorTimingLabel">{label}</span>
+      <span className="monitorTimingValue">
+        <input
+          aria-label={label}
+          disabled={disabled}
+          inputMode="numeric"
+          max={max}
+          min={min}
+          onBlur={(event) => void commit(event.currentTarget.value)}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          onFocus={() => { editingRef.current = true; }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              setDraft(String(value));
+            }
+          }}
+          step={1}
+          type="number"
+          value={draft}
+        />
+        <span>{unit}</span>
+      </span>
+    </label>
+  );
+}
+
+export function MonitorTimingControls({
+  autoRefresh,
+  copy,
+  refreshSeconds,
+  sampleTimeoutSeconds,
+  settingsSaving,
+  onAutoRefreshChange,
+  onRefreshSecondsChange,
+  onSampleTimeoutSecondsChange
+}: {
+  autoRefresh: boolean;
+  copy: UICopy;
+  refreshSeconds: number;
+  sampleTimeoutSeconds: number;
+  settingsSaving: boolean;
+  onAutoRefreshChange: (enabled: boolean) => void;
+  onRefreshSecondsChange: (seconds: number) => Promise<boolean>;
+  onSampleTimeoutSecondsChange: (seconds: number) => Promise<boolean>;
+}) {
+  return (
+    <div className="monitorTimingControls" aria-busy={settingsSaving}>
+      <div className="monitorAutoRefreshControl">
+        <span>{copy.monitor.autoRefresh}</span>
+        <button
+          className="pillToggle"
+          data-enabled={autoRefresh}
+          role="switch"
+          aria-checked={autoRefresh}
+          aria-label={copy.monitor.autoRefresh}
+          disabled={settingsSaving}
+          type="button"
+          onClick={() => onAutoRefreshChange(!autoRefresh)}
+        >
+          <span className="pillToggleThumb" aria-hidden="true" />
+        </button>
+      </div>
+      <MonitorSecondsInput
+        disabled={settingsSaving || !autoRefresh}
+        label={copy.monitor.refreshEvery}
+        max={300}
+        min={15}
+        unit={copy.monitor.secondsShort}
+        value={refreshSeconds}
+        onCommit={onRefreshSecondsChange}
+      />
+      <MonitorSecondsInput
+        disabled={settingsSaving}
+        label={copy.monitor.sampleTimeout}
+        max={60}
+        min={1}
+        unit={copy.monitor.secondsShort}
+        value={sampleTimeoutSeconds}
+        onCommit={onSampleTimeoutSecondsChange}
+      />
+    </div>
+  );
+}
+
 function MonitorView({
   autoRefresh,
   busy,
@@ -5771,13 +5906,15 @@ function MonitorView({
   hosts,
   hostOrder,
   refreshSeconds,
+  sampleTimeoutSeconds,
   refreshingHostAliases,
   settingsSaving,
   snapshots,
   onAutoRefreshChange,
   onHostOrderChange,
   onRefresh,
-  onRefreshSecondsChange
+  onRefreshSecondsChange,
+  onSampleTimeoutSecondsChange
 }: {
   autoRefresh: boolean;
   busy: boolean;
@@ -5787,13 +5924,15 @@ function MonitorView({
   hosts: Host[];
   hostOrder: string[];
   refreshSeconds: number;
+  sampleTimeoutSeconds: number;
   refreshingHostAliases: ReadonlySet<string>;
   settingsSaving: boolean;
   snapshots: HostResourceSnapshot[];
   onAutoRefreshChange: (enabled: boolean) => void;
   onHostOrderChange: (hostOrder: string[]) => void;
   onRefresh: () => Promise<HostResourceBatchResult | null>;
-  onRefreshSecondsChange: (seconds: number) => void;
+  onRefreshSecondsChange: (seconds: number) => Promise<boolean>;
+  onSampleTimeoutSecondsChange: (seconds: number) => Promise<boolean>;
 }) {
   const personalInfo = usePersonalInfoMasking();
   const [dragState, setDragState] = useState<MonitorDragState | null>(null);
@@ -6017,35 +6156,16 @@ function MonitorView({
               <ActionIcon name="refresh" />
               <span>{busy ? copy.monitor.refreshing : copy.monitor.refreshNow}</span>
             </button>
-            <div className="monitorAutoRefreshControl">
-              <span>{copy.monitor.autoRefresh}</span>
-              <button
-                className="pillToggle"
-                data-enabled={autoRefresh}
-                role="switch"
-                aria-checked={autoRefresh}
-                aria-label={copy.monitor.autoRefresh}
-                disabled={settingsSaving}
-                type="button"
-                onClick={() => onAutoRefreshChange(!autoRefresh)}
-              >
-                <span className="pillToggleThumb" aria-hidden="true" />
-              </button>
-              {autoRefresh ? (
-                <label className="monitorIntervalCompact">
-                  <input
-                    aria-label={copy.monitor.refreshEvery}
-                    disabled={settingsSaving}
-                    max={300}
-                    min={15}
-                    onChange={(event) => onRefreshSecondsChange(Number(event.currentTarget.value))}
-                    type="number"
-                    value={refreshSeconds}
-                  />
-                  <span>{copy.monitor.seconds}</span>
-                </label>
-              ) : null}
-            </div>
+            <MonitorTimingControls
+              autoRefresh={autoRefresh}
+              copy={copy}
+              refreshSeconds={refreshSeconds}
+              sampleTimeoutSeconds={sampleTimeoutSeconds}
+              settingsSaving={settingsSaving}
+              onAutoRefreshChange={onAutoRefreshChange}
+              onRefreshSecondsChange={onRefreshSecondsChange}
+              onSampleTimeoutSecondsChange={onSampleTimeoutSecondsChange}
+            />
           </CommandBar>
         </div>
 

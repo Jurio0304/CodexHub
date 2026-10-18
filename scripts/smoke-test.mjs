@@ -121,7 +121,7 @@ for (const file of requiredFiles) {
 }
 
 const packageJson = JSON.parse(read("package.json"));
-if (packageJson.version !== "0.5.5") fail("package version should be 0.5.5");
+if (packageJson.version !== "0.5.6") fail("package version should be 0.5.6");
 for (const script of ["tauri", "dev", "dev:web", "dev:mock", "build", "build:tauri", "build:tauri:dev", "build:linux:release", "build:linux:updater", "build:macos:release", "build:macos:updater", "build:installer:nsis", "build:installer:nsis:updater", "build:installer:nsis:dev", "build:installer:msi", "build:installer:msi:dev", "release:portable", "release:portable:dev", "release:updater-feed", "release:linux-updater-feed", "release:macos-updater-feed", "validate:release", "validate:release:dev", "audit:public", "smoke", "smoke:mock", "test"]) {
   if (!packageJson.scripts?.[script]) fail(`missing package script ${script}`);
 }
@@ -152,11 +152,11 @@ const devTauriConfig = JSON.parse(read("src-tauri/tauri.dev.conf.json"));
 const updaterTauriConfig = JSON.parse(read("src-tauri/tauri.updater.conf.json"));
 if (tauriConfig.productName !== "CodexHub") fail("stable productName should be CodexHub");
 if (tauriConfig.identifier !== "app.codexhub.desktop") fail("stable identifier should be app.codexhub.desktop");
-if (tauriConfig.version !== "0.5.5") fail("stable Tauri version should be 0.5.5");
+if (tauriConfig.version !== "0.5.6") fail("stable Tauri version should be 0.5.6");
 if (tauriConfig.app?.windows?.[0]?.title !== "CodexHub") fail("stable window title should be CodexHub");
 if (devTauriConfig.productName !== "CodexHub Dev") fail("dev productName should be CodexHub Dev");
 if (devTauriConfig.identifier !== "dev.codexhub.desktop") fail("dev identifier should be dev.codexhub.desktop");
-if (devTauriConfig.version !== "0.5.5") fail("dev Tauri version should be 0.5.5");
+if (devTauriConfig.version !== "0.5.6") fail("dev Tauri version should be 0.5.6");
 if (devTauriConfig.app?.windows?.[0]?.title !== "CodexHub Dev") fail("dev window title should be CodexHub Dev");
 if (tauriConfig.identifier === devTauriConfig.identifier) fail("stable and dev identifiers must differ for app data isolation");
 if (tauriConfig.identifier?.endsWith(".app")) fail("Tauri identifier should not end with .app");
@@ -272,7 +272,7 @@ for (const workflowPath of [
     fail("Windows release metadata fetch must brace the PowerShell tag variable before the refspec colon");
   }
   const guards = [
-    'default: "v0.5.5"',
+    'default: "v0.5.6"',
     isWindowsWorkflow ? "$tag = $tag.Trim()" : 'process.env.INPUT_TAG ?? "").trim()',
     isWindowsWorkflow ? '$expectedTag = "v$($packageJson.version)"' : 'EXPECTED_TAG="v$VERSION"',
     'git fetch --force origin "refs/tags/',
@@ -283,7 +283,7 @@ for (const workflowPath of [
   if (metadataBlocks === 0) fail(`${workflowPath} should resolve release metadata`);
   for (const guard of guards) {
     const guardCount = workflow.split(guard).length - 1;
-    if (guard === 'default: "v0.5.5"' ? guardCount !== 1 : guardCount !== metadataBlocks) {
+    if (guard === 'default: "v0.5.6"' ? guardCount !== 1 : guardCount !== metadataBlocks) {
       fail(`${workflowPath} should apply every release metadata guard: ${guard}`);
     }
   }
@@ -293,9 +293,9 @@ const requiredText = [
   [readme, "CodexHub is a desktop control console"],
   [zhReadme, "通用桌面控制台，支持 Windows、macOS 和 Linux"],
   [readme, "latest stable build"],
-  [readme, "CodexHub_0.5.5_aarch64.dmg"],
-  [readme, "CodexHub_0.5.5_amd64.deb"],
-  [readme, "CodexHub_0.5.5_arm64.deb"],
+  [readme, "CodexHub_0.5.6_aarch64.dmg"],
+  [readme, "CodexHub_0.5.6_amd64.deb"],
+  [readme, "CodexHub_0.5.6_arm64.deb"],
   [readme, "update checks fail"],
   [zhReadme, "检查更新失败"],
   [readme, "Use Workspace Terminal, Files, Split, and Transfers"],
@@ -2267,7 +2267,7 @@ if (styles.includes("taskDrawer") || styles.includes("persistentFeedback")) {
 for (const token of ['.feedbackToast[data-tone="info"]', '.feedbackToast[data-tone="success"]', '.feedbackToast[data-tone="warning"]', '.feedbackToast[data-tone="error"]', "animation: feedback-enter 1000ms", "animation: feedback-exit 1000ms", "filter: blur(8px)", "translate3d(0, 10px, 0)", "box-shadow: 0 18px 44px", "left: calc(250px + (100vw - 250px) / 2)", '.feedbackToastViewport[data-placement="global"]']) {
   if (!styles.includes(token)) fail(`missing elevated semantic feedback style: ${token}`);
 }
-for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNotice(copy.notices.newApiConfig, "global")', 'refreshResourceMonitor("initial")', 'refreshResourceMonitor("manual")', 'refreshResourceMonitor("auto")', 'const recordTask = shouldRecordResourceSample(trigger)', 'const showFeedback = recordTask', 'RESOURCE_MONITOR_SAMPLE_TIMEOUT_MS,\n        recordTask', 'placement: "global", tone: "info"']) {
+for (const token of ['setInfoNotice(copy.notices.addHost, "global")', 'setInfoNotice(copy.notices.newApiConfig, "global")', 'refreshResourceMonitor("initial")', 'refreshResourceMonitor("manual")', 'refreshResourceMonitor("auto")', 'const recordTask = shouldRecordResourceSample(trigger)', 'const showFeedback = recordTask', 'settings.resourceMonitorSampleTimeoutSeconds * 1000,\n        recordTask', 'placement: "global", tone: "info"']) {
   if (!app.includes(token)) fail(`missing scoped information or monitor feedback token: ${token}`);
 }
 for (const token of ["record_task.unwrap_or(true)", "if should_record_task", "if !should_record_task", "run_resource_sample"]) {

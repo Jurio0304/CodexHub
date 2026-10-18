@@ -174,14 +174,27 @@ test("Mock recorded resource sampling keeps one typed log per host plus a warnin
   await mockApi.clearTaskHistory();
 });
 
-test("Mock resource timeout reports SSH offline at the ten-second boundary", async () => {
+test("Mock resource timeout reports SSH offline at the thirty-second boundary", async () => {
   const result = await mockApi.sampleHostResources(["mock-timeout-host"]);
   expect(result.snapshots[0]).toEqual(expect.objectContaining({
     status: "failed",
     sshStatus: "offline",
     timedOut: true,
-    latencyMs: null
+    latencyMs: null,
+    error: "Resource sampling timed out after 30000 ms."
   }));
+});
+
+test("Mock resource failures and task logs use the selected sample timeout", async () => {
+  await mockApi.clearTaskHistory();
+  const result = await mockApi.sampleHostResources(["mock-timeout-host"], 45000, true);
+  expect(result.snapshots[0]?.error).toBe("Resource sampling timed out after 45000 ms.");
+  const task = (await mockApi.queryTasks({ limit: 10, cursor: null })).items[0];
+  expect(task?.logs[0]?.durationMs).toBe(45000);
+
+  const capped = await mockApi.sampleHostResources(["mock-timeout-host"], 90000, false);
+  expect(capped.snapshots[0]?.error).toBe("Resource sampling timed out after 60000 ms.");
+  await mockApi.clearTaskHistory();
 });
 
 test("Mock Codex maintenance emits the ordered fallback chain without making a recovered task fail", async () => {
