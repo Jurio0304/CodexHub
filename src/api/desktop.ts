@@ -68,7 +68,7 @@ import type {
   TaskPage,
   TaskQuery
 } from "../generated/rust-contracts";
-import { normalizeSettings, saveDesktopSettingsCache } from "../settings";
+import { defaultSettings, normalizeSettings, saveDesktopSettingsCache } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import { desktopWorkspaceApi } from "./workspace";
 import type { TauriCommand } from "./commands";
@@ -247,7 +247,7 @@ export const desktopApi: CodexHubApi = {
     }),
   remoteProbeCodex: async (
     hostAlias: string,
-    timeoutMs = 10000,
+    timeoutMs = defaultSettings.resourceMonitorSampleTimeoutSeconds * 1000,
     requestId?: string,
     onProgress?: (event: HostOperationProgressEvent) => void
   ) => runWithHostOperationProgress(
@@ -262,7 +262,7 @@ export const desktopApi: CodexHubApi = {
   ),
   batchRemoteProbeCodex: async (
     hostAliases: string[],
-    timeoutMs = 10000,
+    timeoutMs = defaultSettings.resourceMonitorSampleTimeoutSeconds * 1000,
     requestId?: string,
     onProgress?: (event: HostOperationProgressEvent) => void,
     onItemCompleted?: (event: RemoteProbeBatchItemCompletedEvent) => void
@@ -278,7 +278,7 @@ export const desktopApi: CodexHubApi = {
   ),
   sampleHostResources: (
     hostAliases: string[],
-    timeoutMs = 30000,
+    timeoutMs = defaultSettings.resourceMonitorSampleTimeoutSeconds * 1000,
     recordTask = true,
     requestId?: string,
     onProgress?: (event: HostResourceProgressEvent) => void

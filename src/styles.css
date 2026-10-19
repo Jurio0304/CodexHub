@@ -2200,8 +2200,9 @@ tr:last-child td {
 .monitorProcessDetailsHeader,
 .monitorProcessDetailRow {
   display: grid;
-  grid-template-columns: minmax(56px, max-content) minmax(0, 1fr) minmax(64px, max-content) max-content;
-  gap: 8px;
+  /* Shared column widths keep headers and all users' process rows aligned. */
+  grid-template-columns: 56px minmax(0, 1fr) 48px 56px 64px;
+  gap: 6px;
   align-items: center;
 }
 
@@ -2230,13 +2231,8 @@ tr:last-child td {
   min-width: 0;
 }
 
-.monitorProcessDetailsHeader > span:nth-child(3),
-.monitorProcessDetailRow > span:nth-child(3) {
-  text-align: right;
-}
-
-.monitorProcessDetailsHeader > span:last-child,
-.monitorProcessDetailRow > span:last-child {
+.monitorProcessDetailsHeader > span:nth-child(n + 3),
+.monitorProcessDetailRow > span:nth-child(n + 3) {
   text-align: right;
 }
 

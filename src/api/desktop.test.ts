@@ -16,6 +16,18 @@ beforeEach(() => {
   invokeMocks.requiredInvoke.mockReset();
 });
 
+test("desktop host tests and resource samples share the default timeout", async () => {
+  invokeMocks.requiredInvoke.mockResolvedValue(undefined);
+  await desktopApi.remoteProbeCodex("host-a");
+  expect(invokeMocks.requiredInvoke).toHaveBeenLastCalledWith("remote_probe_codex", expect.objectContaining({ timeoutMs: 30000 }));
+
+  await desktopApi.batchRemoteProbeCodex(["host-a"]);
+  expect(invokeMocks.requiredInvoke).toHaveBeenLastCalledWith("batch_remote_probe_codex", expect.objectContaining({ timeoutMs: 30000 }));
+
+  await desktopApi.sampleHostResources(["host-a"]);
+  expect(invokeMocks.requiredInvoke).toHaveBeenLastCalledWith("sample_host_resources", expect.objectContaining({ timeoutMs: 30000 }));
+});
+
 test("desktop profile apply forwards explicit remote reload options", async () => {
   invokeMocks.requiredInvoke.mockResolvedValue({
     profileId: "profile-1",

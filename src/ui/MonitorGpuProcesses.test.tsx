@@ -102,9 +102,12 @@ describe("GPU process details", () => {
     expect(amaxRows[0]).toHaveTextContent(longProcessName);
     expect(amaxRows[0]).toHaveTextContent("412.7%");
     expect(amaxRows[0]).toHaveTextContent("8.0 GB");
-    expect(amaxRegion).not.toHaveTextContent("Runtime");
-    expect(amaxRegion).not.toHaveTextContent("2.0 h");
+    expect(Array.from(amaxRegion.querySelector(".monitorProcessDetailsHeader")!.children, (cell) => cell.textContent))
+      .toEqual(["PID", "Process name", "Runtime", "CPU load", "Process memory"]);
+    expect(amaxRows[0]!.children[2]).toHaveTextContent("2.0 h");
+    expect(amaxRows[0]!.children[3]).toHaveTextContent("412.7%");
     expect(amaxRows[1]).toHaveTextContent("101");
+    expect(amaxRows[1]!.children[2]).toHaveTextContent("45 s");
     expect(amaxRows[1]).toHaveTextContent("4%");
     expect(amaxRows[1]).toHaveTextContent("0 B");
     expect(amaxRegion).not.toHaveTextContent("jupyter-lab");
@@ -121,6 +124,30 @@ describe("GPU process details", () => {
     await user.click(screen.getByRole("button", { name: "Hide GPU process details for amax" }));
     expect(screen.queryByRole("region", { name: "GPU process details for amax" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "GPU process details for jy" })).toBeInTheDocument();
+  });
+
+  test("keeps the longest runtime in user summaries and each process runtime in its own row", async () => {
+    const user = userEvent.setup();
+    renderGpu("runtime-sample", [
+      { ...sampleProcesses[0]!, elapsedSeconds: 0 },
+      { ...sampleProcesses[1]!, elapsedSeconds: (6 * 24 + 13) * 3600 },
+      sampleProcesses[2]!
+    ]);
+
+    const amaxButton = screen.getByRole("button", { name: "Show GPU process details for amax" });
+    expect(amaxButton).toHaveTextContent("6d13h");
+    await user.click(amaxButton);
+
+    const rows = within(screen.getByRole("region", { name: "GPU process details for amax" })).getAllByRole("listitem");
+    expect(rows[0]!.children[2]).toHaveTextContent("0 s");
+    expect(rows[1]!.children[2]).toHaveTextContent("6d13h");
+    await user.click(amaxButton);
+    expect(amaxButton).toHaveAttribute("aria-expanded", "false");
+    expect(amaxButton).toHaveTextContent("6d13h");
+
+    await user.click(screen.getByRole("button", { name: "Show GPU process details for jy" }));
+    const unknownRow = within(screen.getByRole("region", { name: "GPU process details for jy" })).getByRole("listitem");
+    expect(unknownRow.children[2]).toHaveTextContent("Unknown");
   });
 
   test("keeps details open for ordinary rerenders and closes them for a new sample", async () => {

@@ -345,3 +345,16 @@ test("Mock batch update uses a six-host sliding pool and preserves input order",
   const firstFinished = events.findIndex((event) => aliases.slice(0, 6).includes(event.hostAlias) && event.step.stepId === "final-verification" && event.step.status === "success");
   expect(seventhStarted).toBeGreaterThan(firstFinished);
 });
+
+test.each<[number | undefined, number]>([
+  [undefined, 30000],
+  [1000, 1000],
+  [45000, 45000],
+  [90000, 60000]
+])("Mock host tests report the configured timeout %s ms", async (timeoutMs, expectedTimeout) => {
+  const single = await mockApi.remoteProbeCodex("mock-timeout-probe", timeoutMs);
+  expect(single.task.logs.find((log) => log.timedOut)?.durationMs).toBe(expectedTimeout);
+
+  const batch = await mockApi.batchRemoteProbeCodex(["mock-timeout-probe"], timeoutMs);
+  expect(batch.results[0]?.result?.task.logs.find((log) => log.timedOut)?.durationMs).toBe(expectedTimeout);
+});

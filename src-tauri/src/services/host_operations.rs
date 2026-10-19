@@ -1324,7 +1324,7 @@ pub(crate) fn run_remote_probe(
     timeout_ms: Option<u64>,
     request_id: Option<String>,
 ) -> Result<RemoteProbeResult, String> {
-    let timeout = ssh::normalize_health_check_timeout_ms(timeout_ms);
+    let timeout = resource_monitor::normalize_resource_sample_timeout_ms(timeout_ms);
     let alias_result = ssh::validate_ssh_alias(&host_alias);
     let alias = alias_result
         .clone()

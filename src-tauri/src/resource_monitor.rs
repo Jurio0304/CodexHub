@@ -265,8 +265,8 @@ where
     }
 }
 
-// 采样默认等待 30 秒，用户可调至 60 秒；继续复用 SSH 的最小超时校验。
-fn normalize_resource_sample_timeout_ms(timeout_ms: Option<u64>) -> u64 {
+// 主机测试与资源采样共用 30 秒默认值及 1–60 秒范围。
+pub(crate) fn normalize_resource_sample_timeout_ms(timeout_ms: Option<u64>) -> u64 {
     let timeout = timeout_ms.unwrap_or(DEFAULT_RESOURCE_SAMPLE_TIMEOUT_MS);
     ssh::normalize_timeout_ms(Some(timeout)).min(MAX_RESOURCE_SAMPLE_TIMEOUT_MS)
 }

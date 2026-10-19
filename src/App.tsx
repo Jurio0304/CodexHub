@@ -3003,6 +3003,7 @@ function App() {
   const [pendingSettings, setPendingSettings] = useState<AppSettings | null>(null);
   const [sshBusy, setSshBusy] = useState(false);
   const [hostBusy, setHostBusy] = useState<Record<string, HostBusyAction>>({});
+  const [batchHostTestBusy, setBatchHostTestBusy] = useState(false);
   const [hostModalOpen, setHostModalOpen] = useState(false);
   const [newProfileRequest, setNewProfileRequest] = useState(0);
   const [codexOperationModal, setCodexOperationModal] = useState<CodexOperationModalState | null>(null);
@@ -3271,8 +3272,8 @@ function App() {
     });
   };
 
-  const refreshLatestCodex = async (force = false) => {
-    const latest = await api.refreshLatestCodexVersion(force);
+  const refreshLatestCodex = async (force = false, timeoutMs?: number) => {
+    const latest = await api.refreshLatestCodexVersion(force, timeoutMs);
     setLatestCodexVersion(latest);
     return latest;
   };
@@ -3748,7 +3749,7 @@ function App() {
 
       let completedResult: RemoteProbeResult | null = null;
       try {
-        const probe = api.remoteProbeCodex(hostAlias, 10000, requestId, (event) => {
+        const probe = api.remoteProbeCodex(hostAlias, settings.resourceMonitorSampleTimeoutSeconds * 1000, requestId, (event) => {
           setHosts((current) => applyHostOperationProgressConnectivityToHosts(current, event));
           if (shouldShowProgressModal) {
             setCodexOperationModal((current) => applyHostOperationProgressEvent(current, event));
@@ -3757,7 +3758,7 @@ function App() {
         const result = includeLatestVersion
           ? (await Promise.all([
               probe,
-              refreshLatestCodex(true).catch((error): LatestCodexVersion => {
+              refreshLatestCodex(true, settings.resourceMonitorSampleTimeoutSeconds * 1000).catch((error): LatestCodexVersion => {
                 const latest = {
                   version: null,
                   checkedAt: null,
@@ -3833,6 +3834,7 @@ function App() {
       }
       const aliases = Array.from(new Set(sshConfigHosts.map((host) => host.alias).filter(Boolean)));
       if (aliases.length === 0) return { ok: true };
+      setBatchHostTestBusy(true);
       const requestId = `batch-host-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const showProgressModal = settings.hostOperationLogPopups;
       const targets = aliases.map((hostAlias) => ({
@@ -3860,6 +3862,14 @@ function App() {
       const applyCompletedItem = (item: RemoteProbeBatchItem) => {
         streamedResults.set(item.hostAlias.toLowerCase(), item);
         setHosts((current) => applyRemoteProbeBatchResultsToHosts(current, [item], copy.common.justNow));
+        // Settle each row immediately; the batch flag keeps shared actions busy.
+        setHostBusy((current) => {
+          const next = { ...current };
+          for (const alias of aliases) {
+            if (alias.toLowerCase() === item.hostAlias.toLowerCase() && next[alias] === "test") delete next[alias];
+          }
+          return next;
+        });
         if (item.result) {
           setTasks((current) => mergeTaskRunsForUi([normalizeTaskRunForUi(item.result!.task)], current));
           if (showProgressModal) {
@@ -3884,7 +3894,7 @@ function App() {
       try {
         const result = await api.batchRemoteProbeCodex(
           aliases,
-          10000,
+          settings.resourceMonitorSampleTimeoutSeconds * 1000,
           requestId,
           (event) => {
             if (hostOperationProgressConfirmsOffline(event)) {
@@ -3944,9 +3954,12 @@ function App() {
       } finally {
         setHostBusy((current) => {
           const next = { ...current };
-          for (const alias of aliases) delete next[alias];
+          for (const alias of aliases) {
+            if (next[alias] === "test") delete next[alias];
+          }
           return next;
         });
+        setBatchHostTestBusy(false);
       }
     });
   };
@@ -4696,6 +4709,7 @@ function App() {
       case "dashboard":
         return (
           <DashboardView
+            batchHostTestBusy={batchHostTestBusy}
             copy={copy}
             hostBusy={hostBusy}
             hosts={hosts}
@@ -4723,6 +4737,7 @@ function App() {
       case "hosts":
         return (
           <HostsView
+            batchHostTestBusy={batchHostTestBusy}
             copy={copy}
             hosts={hosts}
             hostBusy={hostBusy}
@@ -5682,6 +5697,7 @@ export function BatchCodexProcessConfirmModal({
 
 function DashboardView({
   appliedProfileCount,
+  batchHostTestBusy,
   copy,
   hostBusy,
   hosts,
@@ -5699,6 +5715,7 @@ function DashboardView({
   onTestAllSshHosts
 }: {
   appliedProfileCount: number;
+  batchHostTestBusy: boolean;
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
@@ -5726,6 +5743,7 @@ function DashboardView({
       </section>
 
       <ServerMatrix
+        batchHostTestBusy={batchHostTestBusy}
         copy={copy}
         hostBusy={hostBusy}
         hosts={hosts}
@@ -6547,6 +6565,7 @@ export function MonitorGpuBlock({
                     <div className="monitorProcessDetailsHeader">
                       <span>{copy.monitor.pid}</span>
                       <span>{copy.monitor.processName}</span>
+                      <span>{copy.monitor.runtime}</span>
                       <span>{copy.monitor.processCpuLoad}</span>
                       <span>{copy.monitor.processMemory}</span>
                     </div>
@@ -6564,6 +6583,10 @@ export function MonitorGpuBlock({
                           <span>
                             <small>{copy.monitor.processName}</small>
                             <strong title={process.name}>{process.name || copy.hosts.unknown}</strong>
+                          </span>
+                          <span>
+                            <small>{copy.monitor.runtime}</small>
+                            <strong>{formatDuration(process.elapsedSeconds, copy)}</strong>
                           </span>
                           <span>
                             <small>{copy.monitor.processCpuLoad}</small>
@@ -6697,6 +6720,7 @@ function MonitorMeter({ value, tone }: { value: number | null; tone: MonitorMete
 }
 
 function ServerMatrix({
+  batchHostTestBusy,
   copy,
   hostBusy,
   hosts,
@@ -6708,6 +6732,7 @@ function ServerMatrix({
   onConnectHost,
   onTestAllSshHosts
 }: {
+  batchHostTestBusy: boolean;
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
@@ -6720,8 +6745,8 @@ function ServerMatrix({
   onTestAllSshHosts: () => Promise<unknown>;
 }) {
   const personalInfo = usePersonalInfoMasking();
-  const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
-  const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
+  const anyHostBusy = batchHostTestBusy || sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
+  const testingAll = batchHostTestBusy;
   const hostInventoryByAlias = new Map(inventoryStatus.hostInventories.map((inventory) => [inventory.hostAlias.toLowerCase(), inventory]));
   const skillCounts = hosts.map((host) => dashboardHostSkillCount(host, hostInventoryByAlias.get(host.hostAlias.toLowerCase())));
   const onlineHostCount = hosts.filter((host) => host.status === "online").length;
@@ -6822,6 +6847,7 @@ function ServerMatrix({
 
 function HostsView({
   addHostOpen,
+  batchHostTestBusy,
   copy,
   hostBusy,
   hosts,
@@ -6844,6 +6870,7 @@ function HostsView({
   onUpdateOutdatedCodexHosts
 }: {
   addHostOpen: boolean;
+  batchHostTestBusy: boolean;
   copy: UICopy;
   hostBusy: Record<string, HostBusyAction>;
   hosts: Host[];
@@ -6879,8 +6906,8 @@ function HostsView({
   const [detectHostsBusy, setDetectHostsBusy] = useState(false);
   const selectedHost =
     selectedHostAlias ? hostByAlias.get(selectedHostAlias.toLowerCase()) ?? hosts.find((host) => host.hostAlias === selectedHostAlias) ?? null : hosts[0] ?? null;
-  const anyHostBusy = sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
-  const testingAll = sshConfigHosts.length > 0 && sshConfigHosts.every((host) => hostBusy[host.alias] === "test");
+  const anyHostBusy = batchHostTestBusy || sshConfigHosts.some((host) => Boolean(hostBusy[host.alias]));
+  const testingAll = batchHostTestBusy;
   const outdatedCodexAliases = sshConfigHosts.flatMap((sshHost) => {
     const host = hostByAlias.get(sshHost.alias.toLowerCase()) ?? null;
     return host && isHostCodexTested(host) && host.codexInstalled && isCodexVersionBehind(host.codexVersion, latestCodexVersion?.version) ? [sshHost.alias] : [];
@@ -6996,13 +7023,14 @@ function HostsView({
                 {sshConfigHosts.map((sshHost) => {
                   const host = hostByAlias.get(sshHost.alias.toLowerCase()) ?? null;
                   const busy = hostBusy[sshHost.alias];
+                  const hostActionBusy = batchHostTestBusy || Boolean(busy);
                   const hostStatus = host?.status ?? (busy === "test" ? "testing" : "unknown");
                   const codexStatus = hostCodexStatus(copy, host, busy, hosts, latestCodexVersion);
                   const latestStatus = latestCodexStatus(copy, latestCodexVersion);
                   const codexTested = isHostCodexTested(host);
-                  const installDisabled = Boolean(busy) || !codexTested || Boolean(host?.codexInstalled);
-                  const updateDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled || !isCodexVersionBehind(host.codexVersion, latestCodexVersion?.version);
-                  const uninstallDisabled = Boolean(busy) || !codexTested || !host?.codexInstalled;
+                  const installDisabled = hostActionBusy || !codexTested || Boolean(host?.codexInstalled);
+                  const updateDisabled = hostActionBusy || !codexTested || !host?.codexInstalled || !isCodexVersionBehind(host.codexVersion, latestCodexVersion?.version);
+                  const uninstallDisabled = hostActionBusy || !codexTested || !host?.codexInstalled;
 
                   return (
                     <tr className="selectableRow" data-selected={selectedHostAlias === sshHost.alias} key={sshHost.alias} onClick={() => setSelectedHostAlias(sshHost.alias)}>
@@ -7016,11 +7044,11 @@ function HostsView({
                       <td className="sshHostsLatestVersionCol"><Badge tone={latestStatus.tone} title={latestStatus.title}>{latestStatus.label}</Badge></td>
                       <td className="sshHostsActionsCol">
                         <CommandGroup className="tableActions sshHostsActionGroup">
-                          <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(sshHost.alias); }}>
+                          <button className="miniButton" disabled={hostActionBusy} type="button" onClick={(event) => { event.stopPropagation(); onTestHost(sshHost.alias); }}>
                             {busy === "test" ? copy.hosts.testing : copy.hosts.test}
                           </button>
-                          <button className="miniButton" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); handleEdit(sshHost); }}>{copy.hosts.edit}</button>
-                          <button className="miniButton danger" disabled={Boolean(busy)} type="button" onClick={(event) => { event.stopPropagation(); setDeleteHostAlias(sshHost.alias); }}>{copy.hosts.delete}</button>
+                          <button className="miniButton" disabled={hostActionBusy} type="button" onClick={(event) => { event.stopPropagation(); handleEdit(sshHost); }}>{copy.hosts.edit}</button>
+                          <button className="miniButton danger" disabled={hostActionBusy} type="button" onClick={(event) => { event.stopPropagation(); setDeleteHostAlias(sshHost.alias); }}>{copy.hosts.delete}</button>
                         </CommandGroup>
                       </td>
                       <td className="sshHostsCodexCol">
@@ -11687,6 +11715,7 @@ function aggregateGpuProcessUsers(
     current.processCount += 1;
     current.usedMemoryBytes += process.usedMemoryBytes ?? 0;
     if (typeof process.elapsedSeconds === "number") {
+      // User summaries show the longest runtime across that user's processes.
       current.elapsedSeconds = Math.max(current.elapsedSeconds ?? 0, process.elapsedSeconds);
     }
     users.set(user, current);

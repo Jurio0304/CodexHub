@@ -43,7 +43,7 @@ import type {
 } from "../models";
 import { getCodexSkillsPath, getPlatform } from "../platform";
 import type { AppSettings, CloseButtonBehavior } from "../settings";
-import { loadMockSettings, normalizeSettings, saveMockSettings } from "../settings";
+import { defaultSettings, loadMockSettings, normalizeSettings, saveMockSettings } from "../settings";
 import type { CodexHubApi } from "./contracts";
 import { unavailableWorkspaceApi } from "./workspace";
 import type { TaskEvent } from "../generated/rust-contracts";
@@ -658,7 +658,11 @@ async function mockSshBootstrapHostWithProgress(
   return mockSshBootstrapHost(draft);
 }
 
-function buildMockRemoteProbe(hostAlias: string): RemoteProbeResult {
+function normalizeMockProbeTimeoutMs(timeoutMs: number) {
+  return Math.min(60000, Math.max(1000, timeoutMs));
+}
+
+function buildMockRemoteProbe(hostAlias: string, timeoutMs: number): RemoteProbeResult {
   const host = fallbackHostForAlias(hostAlias);
   const taskId = `mock-probe-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const timestamp = new Date().toISOString();
@@ -667,7 +671,7 @@ function buildMockRemoteProbe(hostAlias: string): RemoteProbeResult {
   const failedProbeLog = {
     ...mockOperationLog(taskId, "ssh-check", "error", "Mock SSH connection failed.", `ssh ${host.hostAlias} echo ok`, "", probeTimedOut ? "mock timeout" : "mock connection refused", probeTimedOut ? undefined : 255),
     exitCode: probeTimedOut ? undefined : 255,
-    durationMs: probeTimedOut ? 10000 : 24,
+    durationMs: probeTimedOut ? normalizeMockProbeTimeoutMs(timeoutMs) : 24,
     timedOut: probeTimedOut
   };
   const task: TaskRun = {
@@ -749,10 +753,11 @@ function buildMockRemoteProbe(hostAlias: string): RemoteProbeResult {
 
 async function mockRemoteProbeWithProgress(
   hostAlias: string,
+  timeoutMs: number,
   requestId?: string,
   onProgress?: (event: HostOperationProgressEvent) => void
 ) {
-  const result = buildMockRemoteProbe(hostAlias);
+  const result = buildMockRemoteProbe(hostAlias, timeoutMs);
   const emit = mockOperationEmitter(requestId, result.task.id, result.hostAlias, "host-test", onProgress);
   const [sshStep, ...probeSteps] = result.task.steps;
   emit({ ...sshStep, status: "running", endedAt: null });
@@ -939,7 +944,7 @@ function mockResourceSampleTask(result: HostResourceBatchResult, timeoutMs: numb
 }
 
 function mockSampleHostResources(hostAliases: string[], timeoutMs: number, recordTask = true): HostResourceBatchResult {
-  const timeout = Math.min(60000, Math.max(1000, timeoutMs));
+  const timeout = normalizeMockProbeTimeoutMs(timeoutMs);
   const aliases = hostAliases.length > 0 ? hostAliases : ["mock-gpu-01", "mock-cpu-01", "mock-gpu-02"];
   const result: HostResourceBatchResult = {
     checkedAt: new Date().toISOString(),
@@ -1100,6 +1105,7 @@ async function mockRemoteManageCodexWithProgress(
 
 async function mockBatchRemoteProbeCodex(
   hostAliases: string[],
+  timeoutMs: number,
   requestId: string,
   onProgress?: (event: HostOperationProgressEvent) => void,
   onItemCompleted?: (event: RemoteProbeBatchItemCompletedEvent) => void
@@ -1107,7 +1113,7 @@ async function mockBatchRemoteProbeCodex(
   const results = await runMockConcurrencyPool(hostAliases, async (hostAlias): Promise<RemoteProbeBatchResult["results"][number]> => {
     let item: RemoteProbeBatchResult["results"][number];
     try {
-      const result = await mockRemoteProbeWithProgress(hostAlias, requestId, onProgress);
+      const result = await mockRemoteProbeWithProgress(hostAlias, timeoutMs, requestId, onProgress);
       item = { hostAlias, ok: result.task.status === "success", result };
     } catch (error) {
       item = { hostAlias, ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -1639,13 +1645,13 @@ export const mockApi: CodexHubApi = {
       user: "codex",
       identityFile: fallbackSshStatus().preferredIdentityFile
     }),
-  remoteProbeCodex: async (hostAlias: string, _timeoutMs = 10000, requestId?: string, onProgress?: (event: HostOperationProgressEvent) => void) =>
-    mockRemoteProbeWithProgress(hostAlias, requestId, onProgress),
-  batchRemoteProbeCodex: async (hostAliases: string[], _timeoutMs = 10000, requestId = `mock-batch-probe-${Date.now()}`, onProgress?: (event: HostOperationProgressEvent) => void, onItemCompleted?: (event: RemoteProbeBatchItemCompletedEvent) => void) =>
-    mockBatchRemoteProbeCodex(hostAliases, requestId, onProgress, onItemCompleted),
+  remoteProbeCodex: async (hostAlias: string, timeoutMs = defaultSettings.resourceMonitorSampleTimeoutSeconds * 1000, requestId?: string, onProgress?: (event: HostOperationProgressEvent) => void) =>
+    mockRemoteProbeWithProgress(hostAlias, timeoutMs, requestId, onProgress),
+  batchRemoteProbeCodex: async (hostAliases: string[], timeoutMs = defaultSettings.resourceMonitorSampleTimeoutSeconds * 1000, requestId = `mock-batch-probe-${Date.now()}`, onProgress?: (event: HostOperationProgressEvent) => void, onItemCompleted?: (event: RemoteProbeBatchItemCompletedEvent) => void) =>
+    mockBatchRemoteProbeCodex(hostAliases, timeoutMs, requestId, onProgress, onItemCompleted),
   sampleHostResources: async (
     hostAliases: string[],
-    timeoutMs = 30000,
+    timeoutMs = defaultSettings.resourceMonitorSampleTimeoutSeconds * 1000,
     recordTask = true,
     requestId?: string,
     onProgress?: (event: HostResourceProgressEvent) => void
